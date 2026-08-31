@@ -38,7 +38,11 @@ make_fixture() {
   cp "$source_root/tests/fixtures/update-bin/git" "$fixture/fake-bin/"
   cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
   cp "$source_root/config/settings.yaml" "$fixture/config/settings.yaml"
-  printf '%s\n' 'DSH_DEPLOYMENT_MODE=external' >"$fixture/.env"
+  {
+    printf '%s\n' 'DSH_DEPLOYMENT_MODE=external'
+    printf 'HOST_UID=%s\n' "$(id -u)"
+    printf 'HOST_GID=%s\n' "$(id -g)"
+  } >"$fixture/.env"
   : >"$fixture/git.log"
   : >"$fixture/docker.log"
   printf '%s\n' '1111111111111111111111111111111111111111' >"$fixture/git-head"
@@ -146,6 +150,30 @@ fi
 grep -Fq 'Persisted settings differ' "$fixture/output.log" \
   || fail "mismatched-settings diagnostic was not reported"
 
+make_fixture wrong-settings-mode matching
+chmod 0600 "$fixture/data/dsh/settings.yaml"
+run_update "$fixture" --external-ollama
+[ "$update_status" -ne 0 ] || fail "wrong settings mode unexpectedly passed"
+assert_status "$fixture" 'failure_type=configuration-verification'
+assert_status "$fixture" 'failure_stage=preflight-current-settings'
+assert_no_interruption "$fixture"
+grep -Fq 'expected 0644' "$fixture/output.log" \
+  || fail "settings-mode diagnostic was not reported"
+
+make_fixture wrong-settings-owner matching
+{
+  printf '%s\n' 'DSH_DEPLOYMENT_MODE=external'
+  printf 'HOST_UID=%s\n' "$(( $(id -u) + 1 ))"
+  printf 'HOST_GID=%s\n' "$(id -g)"
+} >"$fixture/.env"
+run_update "$fixture" --external-ollama
+[ "$update_status" -ne 0 ] || fail "wrong settings ownership unexpectedly passed"
+assert_status "$fixture" 'failure_type=configuration-verification'
+assert_status "$fixture" 'failure_stage=preflight-current-settings'
+assert_no_interruption "$fixture"
+grep -Fq 'expected service ownership' "$fixture/output.log" \
+  || fail "settings-ownership diagnostic was not reported"
+
 make_fixture target-settings-change matching
 TEST_TARGET_SETTINGS_OBJECT=different-settings-object
 run_update "$fixture" --external-ollama
@@ -181,7 +209,11 @@ unset TEST_GIT_DIRTY
 assert_status "$fixture" 'failure_type=git-state'
 
 make_fixture mode-inference-failure matching
-printf '%s\n' 'DSH_DEPLOYMENT_MODE=' >"$fixture/.env"
+{
+  printf '%s\n' 'DSH_DEPLOYMENT_MODE='
+  printf 'HOST_UID=%s\n' "$(id -u)"
+  printf 'HOST_GID=%s\n' "$(id -g)"
+} >"$fixture/.env"
 run_update "$fixture"
 [ "$update_status" -ne 0 ] || fail "unknown deployment mode unexpectedly passed"
 assert_status "$fixture" 'failure_type=deployment-mode-inference'

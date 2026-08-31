@@ -94,6 +94,36 @@ Both modes bind to loopback unless `--bind-address` is supplied. The router's
 admin ports remain loopback-only by default even when Harness is exposed on a
 trusted LAN.
 
+## Persisted settings lifecycle
+
+`config/settings.yaml` is the reviewed canonical configuration for this
+deployment: it selects the local `ai-router` provider, the `local-active`
+model, the captured reasoning levels, and the intended permission preset. It
+contains an environment-variable name for the provider key, not the key
+itself. Remote mode changes name resolution in Compose rather than changing
+this file.
+
+`scripts/configure.sh` atomically initializes a missing
+`data/dsh/settings.yaml` from that canonical file with the configured
+`HOST_UID:HOST_GID` ownership and mode `0644`. Container startup performs the
+same initialization defensively. It also recognizes and repairs the zero-byte
+mountpoint left by the repository's original nested settings bind mount, with a
+distinct diagnostic. Non-empty divergent settings are preserved and remain a
+maintenance blocker until separately reviewed; they are never overwritten by
+setup, startup, or maintenance.
+
+After confirming that the canonical file is intended for a particular existing
+consumer, an operator may explicitly reconcile only a zero-byte placeholder:
+
+```sh
+sudo ./scripts/initialize-persisted-settings.sh --replace-empty
+```
+
+The initializer refuses a non-empty divergent file even with that flag. It
+stages content in the persisted directory, applies service ownership and mode
+`0644`, rechecks the original state, and replaces the empty file atomically.
+The maintenance verifier requires canonical content and that metadata.
+
 ## First login and TLS
 
 The gateway generates a private local CA, server certificate, and random Basic
@@ -207,8 +237,9 @@ The maintenance command infers the current Ollama mode, requires a clean and
 fast-forwardable `main` checkout tracking the canonical `origin/main`, and
 checks the persisted `data/dsh/settings.yaml` before fetching. It also compares
 that file with the fetched target's canonical settings before merging. A
-mismatch stops maintenance before any Compose interruption and is never
-replaced automatically. After fast-forwarding, the original process transfers
+mismatch or incorrect service ownership/mode stops maintenance before any
+Compose interruption and is never replaced automatically. After
+fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
 before it can stop services. The updater then stops the selected Compose stack,

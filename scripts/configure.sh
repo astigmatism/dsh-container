@@ -139,6 +139,8 @@ mkdir -p \
   "$project_dir/data/router-runtime" \
   "$project_dir/secrets"
 
+"$script_dir/initialize-persisted-settings.sh" --preserve-divergent
+
 if [ ! -e "$project_dir/secrets/stt_api_key" ]; then
   umask 077
   : >"$project_dir/secrets/stt_api_key"

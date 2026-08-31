@@ -59,8 +59,10 @@ available.
 > noncanonical origin, or missing required file. Do not repair or override any
 > of those conditions. Before any fetch, compare
 > `data/dsh/settings.yaml` byte-for-byte with `config/settings.yaml` using
-> `cmp -s`. Stop if the persisted file is empty or the comparison fails. Do not
-> display either file and do not attempt to reconcile them.
+> `cmp -s`. Read only `HOST_UID` and `HOST_GID` from `.env`, and require the
+> persisted file to have that numeric ownership and mode `0644`. Stop if the
+> persisted file is empty, the comparison fails, or its metadata differs. Do
+> not display either file and do not attempt to reconcile them.
 >
 > ## Preserve the deployed mode
 >

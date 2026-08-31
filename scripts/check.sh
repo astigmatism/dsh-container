@@ -21,6 +21,7 @@ esac
 sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
 
 "$project_dir/tests/update-and-restart.test.sh"
+"$project_dir/tests/persisted-settings.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json
@@ -104,6 +105,18 @@ if [ "$build" -eq 1 ]; then
     test "$(cat /data/dsh/sessions/preserved-state)" = preserved
     cmp /opt/dsh-seed/profiles/web/package.json /data/dsh/profiles/web/package.json
     cmp /opt/dsh-seed/.dsh-plugins/dsh-web-search-free.js /data/dsh/.dsh-plugins/dsh-web-search-free.js
+  '
+
+  docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
+    DSH_CANONICAL_SETTINGS=/opt/dsh-defaults/settings.yaml \
+    DSH_RUNTIME_SETTINGS=/data/dsh/settings.yaml \
+    DSH_SETTINGS_UID=$(id -u) \
+    DSH_SETTINGS_GID=$(id -g) \
+      /usr/local/bin/dsh-initialize-persisted-settings
+    cmp /opt/dsh-defaults/settings.yaml /data/dsh/settings.yaml
+    test "$(stat -c %u /data/dsh/settings.yaml)" = "$(id -u)"
+    test "$(stat -c %g /data/dsh/settings.yaml)" = "$(id -g)"
+    test "$(stat -c %a /data/dsh/settings.yaml)" = 644
   '
 fi
 

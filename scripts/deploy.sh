@@ -54,21 +54,31 @@ esac
 # Paths are controlled by this script and contain no whitespace in the normal
 # clone layout. Splitting compose_files and build_flag is intentional.
 # shellcheck disable=SC2086
-docker compose --env-file "$project_dir/.env" $compose_files up -d $build_flag
+if ! docker compose --env-file "$project_dir/.env" $compose_files up -d $build_flag; then
+  echo "Docker Compose failed to build or start the deployment." >&2
+  exit 20
+fi
 
 "$script_dir/verify.sh" "--$mode-ollama"
 
 # Remember the successfully verified topology for unattended maintenance runs.
-temporary=$(mktemp "$project_dir/.env.XXXXXX")
-awk -v replacement="$mode" '
-  BEGIN { found = 0 }
-  index($0, "DSH_DEPLOYMENT_MODE=") == 1 {
-    print "DSH_DEPLOYMENT_MODE=" replacement
-    found = 1
-    next
-  }
-  { print }
-  END { if (!found) print "DSH_DEPLOYMENT_MODE=" replacement }
-' "$project_dir/.env" >"$temporary"
-chmod 0600 "$temporary"
-mv "$temporary" "$project_dir/.env"
+if ! temporary=$(mktemp "$project_dir/.env.XXXXXX"); then
+  echo "Could not prepare the deployment-mode update for .env." >&2
+  exit 21
+fi
+if ! awk -v replacement="$mode" '
+    BEGIN { found = 0 }
+    index($0, "DSH_DEPLOYMENT_MODE=") == 1 {
+      print "DSH_DEPLOYMENT_MODE=" replacement
+      found = 1
+      next
+    }
+    { print }
+    END { if (!found) print "DSH_DEPLOYMENT_MODE=" replacement }
+  ' "$project_dir/.env" >"$temporary" \
+  || ! chmod 0600 "$temporary" \
+  || ! mv "$temporary" "$project_dir/.env"; then
+  rm -f "$temporary"
+  echo "Could not record the verified deployment mode in .env." >&2
+  exit 21
+fi

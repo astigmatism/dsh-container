@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >>"${FAKE_GIT_LOG:?}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -c|-C) shift 2 ;;
+    *) break ;;
+  esac
+done
+
+case "${1:-}" in
+  symbolic-ref)
+    printf '%s\n' "${FAKE_GIT_BRANCH:-main}"
+    ;;
+  config)
+    case "${3:-}" in
+      branch.*.remote) printf '%s\n' "${FAKE_GIT_REMOTE:-origin}" ;;
+      branch.*.merge) printf '%s\n' "${FAKE_GIT_MERGE_REF:-refs/heads/main}" ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  remote)
+    printf '%s\n' "${FAKE_GIT_ORIGIN_URL:-https://github.com/astigmatism/dsh-container.git}"
+    ;;
+  status)
+    printf '%s' "${FAKE_GIT_DIRTY:-}"
+    ;;
+  fetch)
+    exit "${FAKE_GIT_FETCH_EXIT:-0}"
+    ;;
+  merge-base)
+    exit "${FAKE_GIT_MERGE_BASE_EXIT:-0}"
+    ;;
+  merge)
+    exit "${FAKE_GIT_MERGE_EXIT:-0}"
+    ;;
+  hash-object)
+    printf '%s\n' "${FAKE_RUNTIME_SETTINGS_OBJECT:-same-settings-object}"
+    ;;
+  rev-parse)
+    case "${2:-}" in
+      HEAD) printf '%s\n' "${FAKE_GIT_HEAD:-1111111111111111111111111111111111111111}" ;;
+      FETCH_HEAD) printf '%s\n' "${FAKE_GIT_TARGET:-2222222222222222222222222222222222222222}" ;;
+      --short) printf '%s\n' "${FAKE_GIT_SHORT_HEAD:-2222222}" ;;
+      *:config/settings.yaml) printf '%s\n' "${FAKE_TARGET_SETTINGS_OBJECT:-same-settings-object}" ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "Unexpected fake git invocation: $*" >&2
+    exit 99
+    ;;
+esac

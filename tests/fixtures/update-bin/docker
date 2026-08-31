@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
+
+case "${1:-}" in
+  info)
+    exit "${FAKE_DOCKER_INFO_EXIT:-0}"
+    ;;
+  inspect)
+    if [ -n "${FAKE_COMPOSE_LABELS:-}" ]; then
+      printf '%s\n' "$FAKE_COMPOSE_LABELS"
+      exit 0
+    fi
+    exit 1
+    ;;
+  compose)
+    for argument do
+      case "$argument" in
+        config) exit "${FAKE_COMPOSE_CONFIG_EXIT:-0}" ;;
+        images)
+          if [ -n "${FAKE_COMPOSE_IMAGES:-}" ]; then
+            printf '%s\n' "$FAKE_COMPOSE_IMAGES"
+          fi
+          exit "${FAKE_COMPOSE_IMAGES_EXIT:-0}"
+          ;;
+        stop) exit "${FAKE_COMPOSE_STOP_EXIT:-0}" ;;
+        start) exit "${FAKE_COMPOSE_START_EXIT:-0}" ;;
+      esac
+    done
+    exit 0
+    ;;
+  image)
+    exit 0
+    ;;
+  *)
+    echo "Unexpected fake docker invocation: $*" >&2
+    exit 99
+    ;;
+esac

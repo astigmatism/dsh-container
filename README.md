@@ -204,12 +204,21 @@ Apply later repository/plugin updates without changing per-host configuration:
 ```
 
 The maintenance command infers the current Ollama mode, requires a clean and
-fast-forwardable Git checkout, fetches updates while the existing service is
-still available, stops the selected Compose stack, rebuilds it, deploys it,
-and runs the normal verification. It creates no backup or rollback artifacts.
-After success it removes only superseded image IDs captured from this Compose
-project; it never runs a global Docker prune. A single overwritten status file
-is kept at `data/maintenance-status` for unattended/self-update reporting.
+fast-forwardable `main` checkout tracking the canonical `origin/main`, and
+checks the persisted `data/dsh/settings.yaml` before fetching. It also compares
+that file with the fetched target's canonical settings before merging. A
+mismatch stops maintenance before any Compose interruption and is never
+replaced automatically. After those preflights, the updater stops the selected
+Compose stack, rebuilds it, deploys it, and runs the normal verification. It
+creates no backup or rollback artifacts. After success it removes only
+superseded image IDs captured from this Compose project; it never runs a global
+Docker prune.
+
+A single atomically replaced status file is kept at
+`data/maintenance-status`. In addition to the mode, commits, and exit status,
+it records `failure_type`, `failure_stage`, and recovery outcome. Failure types
+distinguish Git state, deployment-mode inference, Docker/Compose, configuration
+verification, model-provider or credential access, and application health.
 
 Preview the operation or select a mode explicitly:
 

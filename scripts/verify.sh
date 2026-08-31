@@ -4,6 +4,10 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 mode=${1:---external-ollama}
+docker_compose_exit=20
+configuration_exit=21
+provider_exit=22
+application_health_exit=23
 
 if [ ! -f "$project_dir/.env" ]; then
   echo "Missing .env; run ./scripts/configure.sh first." >&2
@@ -31,6 +35,20 @@ esac
 # shellcheck disable=SC2086
 compose() { docker compose --env-file "$project_dir/.env" $compose_files "$@"; }
 
+if ! "$script_dir/verify-persisted-settings.sh"; then
+  exit "$configuration_exit"
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker Engine is unavailable." >&2
+  exit "$docker_compose_exit"
+fi
+
+if ! compose config --quiet; then
+  echo "Docker Compose configuration validation failed." >&2
+  exit "$docker_compose_exit"
+fi
+
 deadline=$(( $(date +%s) + 180 ))
 while :; do
   harness_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' deepseek-harness 2>/dev/null || true)
@@ -39,14 +57,25 @@ while :; do
     break
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
+    if ! docker info >/dev/null 2>&1; then
+      echo "Docker Engine became unavailable while waiting for Harness health." >&2
+      exit "$docker_compose_exit"
+    fi
     echo "Timed out waiting for Harness health (harness=$harness_health gateway=$gateway_health)." >&2
     compose ps >&2 || true
-    exit 1
+    exit "$application_health_exit"
   fi
   sleep 2
 done
 
-inventory=$(compose exec -T harness dsh plugin --profile web list)
+if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker Engine became unavailable while reading the plugin inventory." >&2
+    exit "$docker_compose_exit"
+  fi
+  echo "Harness did not return its plugin inventory." >&2
+  exit "$application_health_exit"
+fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
   'dsh-context@0.37.0' \
@@ -58,25 +87,42 @@ for expected in \
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
     echo "Missing captured plugin: $expected" >&2
-    exit 1
+    exit "$configuration_exit"
   }
 done
 
-expected_settings=$(sha256sum "$project_dir/config/settings.yaml" | awk '{print $1}')
-runtime_settings=$(compose exec -T harness sha256sum /data/dsh/settings.yaml | awk '{print $1}')
-if [ "$expected_settings" != "$runtime_settings" ]; then
-  echo "Runtime settings differ from config/settings.yaml." >&2
-  exit 1
+if ! compose exec -T harness node -e \
+  "fetch('http://ai-router:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker Engine became unavailable during model-provider verification." >&2
+    exit "$docker_compose_exit"
+  fi
+  echo "The configured model provider is unavailable or rejected access." >&2
+  exit "$provider_exit"
 fi
-
-compose exec -T harness node -e \
-  "fetch('http://ai-router:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 if [ "$mode" = --managed-ollama ]; then
-  compose exec -T ollama ollama show qwen3.8:27b-mtp-q8_0 >/dev/null
-  compose exec -T ai-router node -e \
-    "fetch('http://127.0.0.1:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  if ! compose exec -T ollama ollama show qwen3.8:27b-mtp-q8_0 >/dev/null; then
+    if ! docker info >/dev/null 2>&1; then
+      echo "Docker Engine became unavailable during managed-model verification." >&2
+      exit "$docker_compose_exit"
+    fi
+    echo "The required managed model is unavailable." >&2
+    exit "$provider_exit"
+  fi
+  if ! compose exec -T ai-router node -e \
+    "fetch('http://127.0.0.1:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
+    if ! docker info >/dev/null 2>&1; then
+      echo "Docker Engine became unavailable during managed-router verification." >&2
+      exit "$docker_compose_exit"
+    fi
+    echo "The managed model router is unavailable." >&2
+    exit "$provider_exit"
+  fi
 fi
 
-compose ps
+if ! compose ps; then
+  echo "Docker Compose could not report the verified deployment." >&2
+  exit "$docker_compose_exit"
+fi
 echo "Verified DSH 0.1.1-rc.2, canonical runtime settings/plugins, gateway health, and Ollama router reachability."

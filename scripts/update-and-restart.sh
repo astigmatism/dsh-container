@@ -9,6 +9,10 @@ dry_run=0
 stack_stopped=0
 before_commit=unknown
 target_commit=unknown
+branch=unknown
+failure_type=none
+failure_stage=initialization
+recovery=not-needed
 lock_dir=$project_dir/data/update-and-restart.lock
 status_file=$project_dir/data/maintenance-status
 
@@ -22,10 +26,12 @@ Modes:
   --managed-ollama    update the managed Ollama/router stack too
 
 With no mode flag, the script uses the running container's Compose labels,
-then DSH_DEPLOYMENT_MODE from .env, then external mode. It fast-forwards the
-current tracking branch, stops the selected stack, rebuilds/redeploys it,
-verifies it, and removes only superseded images captured from this project.
-It creates no backup, archive, stash, rollback tag, or rollback directory.
+then DSH_DEPLOYMENT_MODE from .env. It refuses to guess when neither source
+identifies the mode. It requires clean main tracking canonical origin/main,
+checks persisted settings before fetching and again against the fetched target,
+then fast-forwards, stops the selected stack, rebuilds/redeploys it, verifies
+it, and removes only superseded images captured from this project. It creates
+no backup, archive, stash, rollback tag, or rollback directory.
 EOF
 }
 
@@ -87,25 +93,117 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+git_repo() { git -c "safe.directory=$project_dir" -C "$project_dir" "$@"; }
+
+write_status() {
+  state=$1
+  exit_code=$2
+  reported_failure=none
+  if [ "$state" = failed ]; then
+    reported_failure=$failure_type
+  fi
+  temporary=$(mktemp "$project_dir/data/.maintenance-status.XXXXXX")
+  {
+    echo "state=$state"
+    echo "updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "mode=${mode:-unknown}"
+    echo "branch=${branch:-unknown}"
+    echo "from_commit=$before_commit"
+    echo "target_commit=$target_commit"
+    echo "exit_code=$exit_code"
+    echo "failure_type=$reported_failure"
+    echo "failure_stage=$failure_stage"
+    echo "recovery=$recovery"
+  } >"$temporary"
+  chmod 0600 "$temporary"
+  mv "$temporary" "$status_file"
+}
+
+finish() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ]; then
+    if [ "$stack_stopped" -eq 1 ]; then
+      echo "Maintenance failed after the stack stopped; attempting to start the existing containers." >&2
+      recovery=attempted
+      if compose start >&2; then
+        recovery=succeeded
+      else
+        recovery=failed
+      fi
+    fi
+    write_status failed "$status" || true
+  fi
+  rm -f "$lock_dir/pid"
+  rmdir "$lock_dir" 2>/dev/null || true
+  exit "$status"
+}
+
+if [ "$dry_run" -ne 1 ]; then
+  mkdir -p "$project_dir/data"
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    echo "Another maintenance run may be active: $lock_dir" >&2
+    exit 1
+  fi
+  printf '%s\n' "$$" >"$lock_dir/pid"
+  trap finish EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  write_status running 0
+fi
+
+failure_type=git-state
+failure_stage=prerequisites
 command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 1; }
+
+failure_type=docker-compose
 command -v docker >/dev/null 2>&1 || { echo "docker is required." >&2; exit 1; }
+
+failure_type=configuration-verification
 [ -f "$env_file" ] || { echo "Missing .env; run ./scripts/configure.sh first." >&2; exit 1; }
 
+failure_type=docker-compose
+failure_stage=docker-engine
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker Engine is unavailable." >&2
+  exit 1
+fi
+
+failure_type=deployment-mode-inference
+failure_stage=deployment-mode
 if [ -z "$mode" ]; then
   config_files=$(docker inspect deepseek-harness \
     --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' 2>/dev/null || true)
   case "$config_files" in
-    *compose.managed-ollama.yaml*) mode=managed ;;
-    *compose.remote-ollama.yaml*) mode=remote ;;
+    *compose.managed-ollama.yaml*compose.remote-ollama.yaml*|*compose.remote-ollama.yaml*compose.managed-ollama.yaml*)
+      echo "Running Compose labels contain both managed and remote overlays." >&2
+      exit 2
+      ;;
+    *compose.managed-ollama.yaml*) label_mode=managed ;;
+    *compose.remote-ollama.yaml*) label_mode=remote ;;
+    *compose.yaml*) label_mode=external ;;
+    *) label_mode= ;;
   esac
-fi
-if [ -z "$mode" ]; then
-  mode=$(get_env DSH_DEPLOYMENT_MODE)
+  env_mode=$(get_env DSH_DEPLOYMENT_MODE)
+  case "$env_mode" in
+    external|remote|managed|'') ;;
+    *) echo "Invalid DSH_DEPLOYMENT_MODE in .env: $env_mode" >&2; exit 2 ;;
+  esac
+  if [ -n "$label_mode" ] && [ -n "$env_mode" ] && [ "$label_mode" != "$env_mode" ]; then
+    echo "Running Compose labels indicate $label_mode mode but .env records $env_mode mode." >&2
+    exit 2
+  fi
+  mode=${label_mode:-$env_mode}
 fi
 case "$mode" in
   external|remote|managed) ;;
-  '') mode=external ;;
-  *) echo "Invalid DSH_DEPLOYMENT_MODE in .env: $mode" >&2; exit 2 ;;
+  '')
+    echo "Could not infer the deployment mode from Compose labels or .env." >&2
+    echo "Review the existing deployment and pass one explicit mode flag." >&2
+    exit 2
+    ;;
+  *) echo "Invalid deployment mode: $mode" >&2; exit 2 ;;
 esac
 
 case "$mode" in
@@ -127,54 +225,9 @@ esac
 # clone layout. Splitting compose_files is intentional for POSIX sh.
 # shellcheck disable=SC2086
 compose() { docker compose --env-file "$env_file" $compose_files "$@"; }
-git_repo() { git -c "safe.directory=$project_dir" -C "$project_dir" "$@"; }
 
-write_status() {
-  state=$1
-  exit_code=$2
-  temporary=$(mktemp "$project_dir/data/.maintenance-status.XXXXXX")
-  {
-    echo "state=$state"
-    echo "updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "mode=$mode"
-    echo "branch=${branch:-unknown}"
-    echo "from_commit=$before_commit"
-    echo "target_commit=$target_commit"
-    echo "exit_code=$exit_code"
-  } >"$temporary"
-  chmod 0600 "$temporary"
-  mv "$temporary" "$status_file"
-}
-
-finish() {
-  status=$?
-  trap - EXIT
-  if [ "$status" -ne 0 ]; then
-    write_status failed "$status" || true
-    if [ "$stack_stopped" -eq 1 ]; then
-      echo "Maintenance failed after the stack stopped; attempting to start the existing containers." >&2
-      compose start >&2 || true
-    fi
-  fi
-  rm -f "$lock_dir/pid"
-  rmdir "$lock_dir" 2>/dev/null || true
-  exit "$status"
-}
-
-if [ "$dry_run" -ne 1 ]; then
-  mkdir -p "$project_dir/data"
-  if ! mkdir "$lock_dir" 2>/dev/null; then
-    echo "Another maintenance run may be active: $lock_dir" >&2
-    exit 1
-  fi
-  printf '%s\n' "$$" >"$lock_dir/pid"
-  trap finish EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  write_status running 0
-fi
-
+failure_type=git-state
+failure_stage=git-state
 branch=$(git_repo symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 [ -n "$branch" ] || { echo "The repository must be on a branch, not detached HEAD." >&2; exit 1; }
 remote=$(git_repo config --get "branch.$branch.remote" || true)
@@ -188,29 +241,54 @@ esac
   exit 1
 }
 
-dirty=$(git_repo status --porcelain)
-before_commit=$(git_repo rev-parse HEAD)
-if [ "$dry_run" -eq 1 ]; then
-  echo "Repository: $project_dir"
-  echo "Branch:     $branch -> $remote/$remote_branch"
-  echo "Commit:     $before_commit"
-  echo "Mode:       $mode"
-  if [ -z "$dirty" ]; then
-    echo "Worktree:   clean"
-  else
-    echo "Worktree:   dirty (a real maintenance run would refuse)"
-  fi
-  echo "Plan:       fetch/fast-forward, stop, rebuild, deploy, verify, remove superseded project images"
-  echo "Rollback:   no backups or rollback artifacts will be created"
-  exit 0
+if [ "$branch" != main ] || [ "$remote" != origin ] || [ "$remote_branch" != main ]; then
+  echo "Maintenance requires clean main tracking origin/main; found $branch tracking $remote/$remote_branch." >&2
+  exit 1
 fi
 
+origin_url=$(git_repo remote get-url origin 2>/dev/null || true)
+case "$origin_url" in
+  https://github.com/astigmatism/dsh-container|\
+  https://github.com/astigmatism/dsh-container.git|\
+  git@github.com:astigmatism/dsh-container|\
+  git@github.com:astigmatism/dsh-container.git|\
+  ssh://git@github.com/astigmatism/dsh-container|\
+  ssh://git@github.com/astigmatism/dsh-container.git) ;;
+  *)
+    echo "Refusing maintenance because origin is not the canonical dsh-container repository." >&2
+    exit 1
+    ;;
+esac
+
+dirty=$(git_repo status --porcelain)
+before_commit=$(git_repo rev-parse HEAD)
 if [ -n "$dirty" ]; then
   echo "Refusing to update a dirty repository. Commit or remove these changes first:" >&2
   printf '%s\n' "$dirty" >&2
   exit 1
 fi
 
+failure_type=configuration-verification
+failure_stage=preflight-current-settings
+if ! "$script_dir/verify-persisted-settings.sh"; then
+  echo "Configuration preflight failed before any fetch or service interruption." >&2
+  exit 1
+fi
+
+if [ "$dry_run" -eq 1 ]; then
+  echo "Repository: $project_dir"
+  echo "Branch:     $branch -> $remote/$remote_branch"
+  echo "Commit:     $before_commit"
+  echo "Mode:       $mode"
+  echo "Worktree:   clean"
+  echo "Settings:   match current canonical configuration"
+  echo "Plan:       fetch/check target settings/fast-forward, stop, rebuild, deploy, verify, remove superseded project images"
+  echo "Rollback:   no backups or rollback artifacts will be created"
+  exit 0
+fi
+
+failure_type=git-state
+failure_stage=fetch
 write_status running 0
 echo "Fetching $remote/$remote_branch while the current deployment remains available..."
 git_repo fetch --prune "$remote" "$remote_branch"
@@ -224,19 +302,85 @@ if ! git_repo merge-base --is-ancestor "$before_commit" "$target_commit"; then
   exit 1
 fi
 
+failure_type=configuration-verification
+failure_stage=preflight-target-settings
+target_settings_object=$(git_repo rev-parse "$target_commit:config/settings.yaml" 2>/dev/null || true)
+runtime_settings_object=$(git_repo hash-object "$project_dir/data/dsh/settings.yaml" 2>/dev/null || true)
+if [ -z "$target_settings_object" ] || [ -z "$runtime_settings_object" ] \
+  || [ "$target_settings_object" != "$runtime_settings_object" ]; then
+  echo "Persisted settings do not match config/settings.yaml in the fetched target." >&2
+  echo "Maintenance will not merge or interrupt services; an explicit configuration decision is required." >&2
+  exit 1
+fi
+
+failure_type=git-state
+failure_stage=fast-forward
 git_repo merge --ff-only "$target_commit"
-"$script_dir/configure.sh"
-old_image_ids=$(compose images -q 2>/dev/null | sort -u || true)
+
+failure_type=configuration-verification
+failure_stage=preflight-merged-settings
+if ! "$script_dir/verify-persisted-settings.sh"; then
+  echo "Configuration preflight failed after fast-forward and before service interruption." >&2
+  exit 1
+fi
+
+failure_type=docker-compose
+failure_stage=compose-configuration
+if ! compose config --quiet; then
+  echo "Docker Compose configuration validation failed before service interruption." >&2
+  exit 1
+fi
+if ! old_image_ids=$(compose images -q 2>/dev/null); then
+  echo "Docker Compose could not capture the currently deployed images." >&2
+  exit 1
+fi
+old_image_ids=$(printf '%s\n' "$old_image_ids" | sort -u)
 
 echo "Stopping the $mode deployment..."
+failure_stage=compose-stop
 stack_stopped=1
 compose stop
 
 echo "Rebuilding, deploying, and verifying commit $(git_repo rev-parse --short HEAD)..."
+failure_stage=compose-deploy
+set +e
 "$script_dir/deploy.sh" "$mode_flag"
+deploy_status=$?
+set -e
+if [ "$deploy_status" -ne 0 ]; then
+  case "$deploy_status" in
+    20)
+      failure_type=docker-compose
+      failure_stage=compose-deploy
+      ;;
+    21)
+      failure_type=configuration-verification
+      failure_stage=deployment-verification
+      ;;
+    22)
+      failure_type=model-provider-or-credential
+      failure_stage=model-provider-verification
+      ;;
+    23)
+      failure_type=application-health
+      failure_stage=application-health-verification
+      ;;
+    *)
+      failure_type=docker-compose
+      failure_stage=compose-deploy
+      ;;
+  esac
+  exit "$deploy_status"
+fi
 stack_stopped=0
 
-new_image_ids=$(compose images -q 2>/dev/null | sort -u || true)
+failure_type=docker-compose
+failure_stage=image-inventory
+if ! new_image_ids=$(compose images -q 2>/dev/null); then
+  echo "Docker Compose could not capture the newly deployed images." >&2
+  exit 1
+fi
+new_image_ids=$(printf '%s\n' "$new_image_ids" | sort -u)
 obsolete_image_ids=
 for image_id in $old_image_ids; do
   if ! printf '%s\n' "$new_image_ids" | grep -Fxq "$image_id"; then
@@ -280,6 +424,8 @@ else
 fi
 
 target_commit=$(git_repo rev-parse HEAD)
+failure_type=none
+failure_stage=complete
 write_status ok 0
 echo "Maintenance complete: $before_commit -> $target_commit ($mode mode)."
 echo "No backup or rollback artifacts were created."

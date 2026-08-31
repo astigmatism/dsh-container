@@ -18,7 +18,9 @@ case "${1:-}" in
     ;;
 esac
 
-sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh
+sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
+
+"$project_dir/tests/update-and-restart.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json

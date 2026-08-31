@@ -1,0 +1,135 @@
+x-router-image: &router-image
+  build:
+    context: ./ollama-router
+  image: "${ROUTER_IMAGE:-local/deepseek-harness-ollama-router:0.1.0}"
+
+services:
+  harness:
+    depends_on:
+      ai-router:
+        condition: service_healthy
+        restart: true
+      ollama-model-init:
+        condition: service_completed_successfully
+
+  ollama:
+    image: "${OLLAMA_IMAGE:-ollama/ollama@sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82}"
+    container_name: deepseek-harness-ollama
+    restart: unless-stopped
+    gpus: all
+    expose:
+      - "11434"
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /root/.ollama/models
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:--1}"
+      OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-262144}"
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+      OLLAMA_MAX_LOADED_MODELS: "${OLLAMA_MAX_LOADED_MODELS:-1}"
+      OLLAMA_FLASH_ATTENTION: "${OLLAMA_FLASH_ATTENTION:-1}"
+      OLLAMA_KV_CACHE_TYPE: "${OLLAMA_KV_CACHE_TYPE:-f16}"
+      OLLAMA_SCHED_SPREAD: "${OLLAMA_SCHED_SPREAD:-1}"
+      OLLAMA_LOAD_TIMEOUT: "${OLLAMA_LOAD_TIMEOUT:-20m}"
+      LLAMA_ARG_TENSOR_SPLIT: "${LLAMA_ARG_TENSOR_SPLIT:-15,10,8}"
+      CUDA_VISIBLE_DEVICES: "${GPU_DEVICE_IDS:-0,1,2}"
+      NVIDIA_VISIBLE_DEVICES: "${GPU_DEVICE_IDS:-0,1,2}"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - "${OLLAMA_STORE_DIR:-./data/ollama}:/root/.ollama"
+    networks:
+      ollama_net:
+        aliases:
+          - ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 30s
+      retries: 30
+      start_period: 10s
+
+  ollama-model-init:
+    image: "${OLLAMA_IMAGE:-ollama/ollama@sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82}"
+    restart: "no"
+    entrypoint: ["/opt/dsh/init-ollama-models.sh"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      PULL_OLLAMA_MODELS: "${PULL_OLLAMA_MODELS:-1}"
+    volumes:
+      - ./scripts/init-ollama-models.sh:/opt/dsh/init-ollama-models.sh:ro
+      - ./config/ollama-models.txt:/opt/dsh/ollama-models.txt:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - ollama_net
+
+  router-init:
+    <<: *router-image
+    restart: "no"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    entrypoint: ["/opt/dsh/init-router-runtime.sh"]
+    volumes:
+      - ./scripts/init-router-runtime.sh:/opt/dsh/init-router-runtime.sh:ro
+      - ./config/active-model.json:/opt/dsh/active-model.json:ro
+      - ./data/router-runtime:/app/runtime
+
+  ai-router:
+    <<: *router-image
+    container_name: deepseek-harness-ollama-router
+    restart: unless-stopped
+    init: true
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      ollama:
+        condition: service_healthy
+      router-init:
+        condition: service_completed_successfully
+    ports:
+      - "${ROUTER_BIND_ADDRESS:-127.0.0.1}:${ROUTER_PUBLIC_PORT:-11434}:11434"
+      - "${ROUTER_ADMIN_BIND_ADDRESS:-127.0.0.1}:${ROUTER_ADMIN_PORT:-11435}:11435"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "11434"
+      ADMIN_ENABLED: "${ROUTER_ADMIN_ENABLED:-true}"
+      ADMIN_BIND_HOST: 0.0.0.0
+      ADMIN_PORT: "11435"
+      ADMIN_TOKEN: "${ROUTER_ADMIN_TOKEN:-}"
+      ADMIN_SESSION_HEADER: X-Admin-Token
+      OLLAMA_UPSTREAM_URL: http://ollama:11434
+      OLLAMA_UPSTREAM_TIMEOUT_MS: "${OLLAMA_UPSTREAM_TIMEOUT_MS:-900000}"
+      RESPONSES_CONTEXT_SHIFT: "${RESPONSES_CONTEXT_SHIFT:-false}"
+      ACTIVE_MODEL_FILE: /app/runtime/active-model.json
+      MODEL_POLICY_MODE: "${MODEL_POLICY_MODE:-active-only}"
+      REWRITE_REQUESTED_MODEL_TO_ACTIVE: "${REWRITE_REQUESTED_MODEL_TO_ACTIVE:-true}"
+      FORCE_KEEP_ALIVE: "${FORCE_KEEP_ALIVE:--1}"
+      PROTECTED_MODEL_ENDPOINTS: /api/chat,/api/generate,/api/embed,/api/embeddings
+      USE_ACTIVE_MODEL_WHEN_MISSING: "${USE_ACTIVE_MODEL_WHEN_MISSING:-false}"
+      ALLOW_MODEL_MANAGEMENT: "${ALLOW_MODEL_MANAGEMENT:-false}"
+      DATA_DIR: /app/data
+      REQUEST_HISTORY_LIMIT: "${REQUEST_HISTORY_LIMIT:-500}"
+      EVENT_HISTORY_LIMIT: "${EVENT_HISTORY_LIMIT:-500}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-0}"
+      PROMPT_LOGGING: "${PROMPT_LOGGING:-metadata}"
+      ENABLE_NVIDIA_SMI: "${ENABLE_NVIDIA_SMI:-false}"
+      NVIDIA_SMI_BIN: nvidia-smi
+      GPU_TELEMETRY_TIMEOUT_MS: "${GPU_TELEMETRY_TIMEOUT_MS:-2500}"
+      MODELS_DIR_IN_CONTAINER: /models
+    volumes:
+      - ./data/router:/app/data
+      - ./data/router-runtime:/app/runtime
+      - "${UNIFIED_MODELS_DIR:-./data/ollama}:/models:ro"
+    networks:
+      ollama_net:
+        aliases:
+          - ai-router
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+networks:
+  ollama_net:
+    external: false
+    name: "${MANAGED_OLLAMA_NETWORK:-dsh-container_ollama}"

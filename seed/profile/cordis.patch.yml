@@ -1,0 +1,23 @@
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+- id: web-search-deepseek
+  disabled: true
+
+- id: web
+  config:
+    searchProvider: duckduckgo
+
+- insert:
+    - id: web-search-duckduckgo
+      name: '../../.dsh-plugins/dsh-web-search-free.js?v=2'
+      config:
+        baseURL: https://html.duckduckgo.com/html/
+
+- insert:
+    - id: loop-detector
+      name: 'dsh-loop-detector'
+      config:
+        minLen: 512
+        maxRetries: 1
+        checkReasoning: true

@@ -1,0 +1,24 @@
+{
+  "name": "local-ai-ollama-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Policy-enforcing Ollama-compatible router with admin dashboard, request history, and telemetry.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development node --watch src/server.js",
+    "test": "node --test",
+    "lint:syntax": "node --check src/server.js && node --check src/responses-api.js && node --check src/upstream.js"
+  },
+  "keywords": [
+    "ollama",
+    "router",
+    "proxy",
+    "telemetry",
+    "local-ai"
+  ],
+  "license": "UNLICENSED"
+}

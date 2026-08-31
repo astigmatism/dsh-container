@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+
+# Durable runtime state can contain sessions, workspace indexes, TLS private
+# keys, password hashes, model blobs, and request metadata.
+data/
+backups/
+
+secrets/*
+!secrets/.gitkeep
+
+*.tar
+*.tar.gz
+*.tgz
+__pycache__/
+*.py[cod]

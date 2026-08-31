@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+data
+secrets
+ollama-router
+backups
+*.tar
+*.tar.gz
+*.tgz

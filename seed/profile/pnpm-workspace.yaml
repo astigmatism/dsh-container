@@ -1,0 +1,8 @@
+packages:
+  - .
+
+nodeLinker: hoisted
+autoInstallPeers: false
+
+patchedDependencies:
+  dsh-loop-detector@1.0.0: patches/dsh-loop-detector@1.0.0.patch

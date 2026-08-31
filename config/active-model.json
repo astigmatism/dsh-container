@@ -1,0 +1,21 @@
+{
+  "profile": "daytime",
+  "model": "qwen3.8:27b-mtp-q8_0",
+  "keep_alive": -1,
+  "context_length": 262144,
+  "supported_think_levels": [
+    "low",
+    "medium",
+    "high",
+    "max"
+  ],
+  "reasoning_effort_map": {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "max",
+    "max": "max"
+  },
+  "source": "dsh-container captured configuration"
+}

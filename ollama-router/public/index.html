@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local AI Ollama Router Admin</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Local AI Ollama Router Admin</h1>
+      <p class="subtitle">Human dashboard for policy, keep-alive enforcement, request history, and Ollama telemetry.</p>
+      <p class="trust-note">No login or token is required. Keep this port on a trusted local/LAN network only.</p>
+    </div>
+    <div class="action-box">
+      <a class="api-link" href="/admin/api/summary">Summary JSON</a>
+      <button id="refresh">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="cards" id="cards"></section>
+
+    <section class="grid policy-grid">
+      <section class="panel">
+        <h2>Router policy and active marker</h2>
+        <div id="policy"></div>
+      </section>
+      <section class="panel">
+        <h2>Recent rejects and errors</h2>
+        <div id="issues"></div>
+      </section>
+    </section>
+
+    <section class="panel controls">
+      <h2>Controls</h2>
+      <p class="panel-note">These actions are intentionally unauthenticated on the admin port.</p>
+      <div class="button-row">
+        <button id="prewarm">Prewarm active model</button>
+        <button id="test-chat">Run test chat</button>
+        <button id="reload-config">Reload active marker</button>
+        <button id="toggle-maintenance">Toggle maintenance</button>
+      </div>
+      <pre id="control-output"></pre>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <h2>Request history</h2>
+        <div class="table-toolbar">
+          <label for="request-filter">Show</label>
+          <select id="request-filter">
+            <option value="all">All requests</option>
+            <option value="prompt">Prompt calls only</option>
+            <option value="status">Status &amp; pings only</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="table-wrap"><table id="requests-table"></table></div>
+      </section>
+      <section class="panel">
+        <h2>Activity timeline</h2>
+        <div id="events"></div>
+      </section>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <h2>Loaded models from Ollama /api/ps</h2>
+        <pre id="ps"></pre>
+      </section>
+      <section class="panel">
+        <h2>Metrics</h2>
+        <pre id="metrics"></pre>
+      </section>
+    </section>
+  </main>
+
+  <script src="/admin/app.js"></script>
+</body>
+</html>

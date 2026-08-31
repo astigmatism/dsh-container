@@ -1,0 +1,206 @@
+diff --git a/lib/index.js b/lib/index.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191a1658c6d
+--- /dev/null
++++ b/lib/index.js
+@@ -0,0 +1,179 @@
++import { createUserMessage } from '@deepseek-ai/dsh-llm'
++
++export const name = 'loop-detector'
++export const inject = ['agents']
++
++function detectRepetition(text) {
++  const window = 2048
++  const bigWindow = 8192
++  if (text.length < 128) return [false, '']
++
++  const tail = text.slice(-window)
++
++  for (let period = 8; period <= 256; period++) {
++    const need = period * 4
++    if (tail.length < need) break
++    const last = tail.slice(-need)
++    const first = last.slice(0, period)
++    let repeated = true
++    for (let occurrence = 1; occurrence < 4; occurrence++) {
++      if (last.slice(occurrence * period, (occurrence + 1) * period) !== first) {
++        repeated = false
++        break
++      }
++    }
++    if (repeated) return [true, `periodic repeat: period=${period}`]
++  }
++
++  const seen = new Map()
++  for (let offset = 0; offset + 64 <= tail.length; offset += 64) {
++    const segment = tail.slice(offset, offset + 64)
++    const count = (seen.get(segment) ?? 0) + 1
++    if (count >= 3) return [true, `n-gram repeat: 64-char block seen ${count}x`]
++    seen.set(segment, count)
++  }
++
++  const big = text.slice(-bigWindow)
++  if (big.length >= 1024) {
++    const anchor = big.slice(-512)
++    const head = big.slice(0, -512)
++    const index = head.lastIndexOf(anchor)
++    if (index !== -1) {
++      let match = 512
++      let left = index - 1
++      let right = big.length - 513
++      while (left >= 0 && right >= 0 && big[left] === big[right]) {
++        match++
++        left--
++        right--
++      }
++      if (match >= 512) return [true, `large-scale repeat: ${match} chars repeated 2x+`]
++    }
++  }
++
++  return [false, '']
++}
++
++export function apply(ctx, config = {}) {
++  const minLen = config.minLen ?? 512
++  const maxRetries = config.maxRetries ?? 1
++  const checkReasoning = config.checkReasoning ?? true
++
++  const buffers = new Map()
++  const retries = new Map()
++  const searchHistories = new Map()
++  const stallCounts = new Map()
++
++  ctx.on('session/event', (session, event) => {
++    if (event.type === 'turn/end') {
++      const sessionId = String(session.id)
++      buffers.delete(sessionId)
++      retries.delete(sessionId)
++      searchHistories.delete(sessionId)
++      stallCounts.delete(sessionId)
++      return
++    }
++
++    if (event.type !== 'assistant/chunk') return
++    const chunk = event.data.chunk
++    if (chunk.type !== 'text-delta' && !(checkReasoning && chunk.type === 'reasoning-delta')) return
++
++    const sessionId = String(session.id)
++    const buffer = (buffers.get(sessionId) ?? '') + chunk.text
++    buffers.set(sessionId, buffer)
++    if (buffer.length < minLen) return
++
++    const [isLoop, reason] = detectRepetition(buffer)
++    if (!isLoop) return
++
++    const agent = ctx.agents.get(session.id)
++    buffers.set(sessionId, '')
++    if (!agent) return
++
++    const attempts = retries.get(sessionId) ?? 0
++    if (attempts < maxRetries) {
++      retries.set(sessionId, attempts + 1)
++      ctx.logger.warn(
++        `[loop-detector] session ${sessionId} detected a loop (${attempts + 1}/${maxRetries}): ${reason}; steering a retry`,
++      )
++      agent.steer(createUserMessage({
++        content: [{
++          type: 'text',
++          text: '[loop-detector] Repeated output was detected. Stop the current approach and answer again without repeating any text already produced. Give a concise, complete final answer.',
++        }],
++        source: { kind: 'user' },
++      }))
++    } else {
++      retries.delete(sessionId)
++      ctx.logger.error(
++        `[loop-detector] session ${sessionId} still looped after ${maxRetries} retries; cancelling: ${reason}`,
++      )
++      agent.cancel({ kind: 'hook', reason: `loop-detected: ${reason}` })
++    }
++  })
++
++  function extractTokens(query) {
++    return new Set(
++      query.toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/).filter((token) => token.length >= 2),
++    )
++  }
++
++  ctx.on('tools/execute', (execution, next) => {
++    if (execution?.name !== 'web_search') return next()
++    const sessionId = execution.agent?.id
++    if (!sessionId) return next()
++    const query = typeof execution.arguments?.query === 'string' ? execution.arguments.query : ''
++    if (!query) return next()
++
++    const tokens = extractTokens(query)
++    if (tokens.size === 0) return next()
++
++    const history = searchHistories.get(sessionId) ?? []
++    const topic = new Set()
++    for (const previousQuery of history.slice(-3)) {
++      for (const token of extractTokens(previousQuery)) topic.add(token)
++    }
++
++    let novelRatio = 1
++    if (topic.size > 0) {
++      const novel = [...tokens].filter((token) => !topic.has(token)).length
++      novelRatio = novel / tokens.size
++    }
++    history.push(query)
++    searchHistories.set(sessionId, history.slice(-6))
++
++    if (novelRatio < 0.25) {
++      const count = (stallCounts.get(sessionId) ?? 0) + 1
++      stallCounts.set(sessionId, count)
++      if (count >= 2) {
++        stallCounts.delete(sessionId)
++        const agent = ctx.agents.get(sessionId)
++        if (agent) {
++          const attempts = retries.get(sessionId) ?? 0
++          if (attempts < maxRetries) {
++            retries.set(sessionId, attempts + 1)
++            ctx.logger.warn(
++              `[loop-detector] session ${sessionId} searched the same topic ${count} times without new information: "${query}"; steering it to stop`,
++            )
++            agent.steer(createUserMessage({
++              content: [{
++                type: 'text',
++                text: '[loop-detector] Repeated searches on the same topic were detected. Stop searching and answer directly from the information already collected. Do not call web_search again.',
++              }],
++              source: { kind: 'user' },
++            }))
++          } else {
++            retries.delete(sessionId)
++            ctx.logger.error(
++              `[loop-detector] session ${sessionId} continued repeated searches after ${maxRetries} retries; cancelling`,
++            )
++            agent.cancel({ kind: 'hook', reason: 'repeated-search-same-topic' })
++          }
++        }
++      }
++    } else {
++      stallCounts.delete(sessionId)
++    }
++    return next()
++  })
++}
+diff --git a/package.json b/package.json
+index ff8b5a2d1b919f09a49a832357fad9016e4f0d2b..714f67122bb22e66ce2902dfd93a82d22d5c5e0e 100644
+--- a/package.json
++++ b/package.json
+@@ -3,12 +3,13 @@
+   "version": "1.0.0",
+   "description": "死循环/重复输出检测插件 for DeepSeek Harness (dsh): 文本重复检测 + 工具调用意图级重复检测, 命中后自动 steer 重试 / cancel 强制中断",
+   "type": "module",
+-  "main": "src/index.ts",
++  "main": "lib/index.js",
+   "files": [
+-    "src"
++    "src",
++    "lib"
+   ],
+   "scripts": {
+-    "check": "node --import tsx/esm -e \"import('./src/index.ts').then(m => { console.log('OK', m.name); if (typeof m.apply !== 'function') process.exit(1) }).catch(e => { console.error(e); process.exit(1) })\""
++    "check": "node -e \"import('./lib/index.js').then(m => { console.log('OK', m.name); if (typeof m.apply !== 'function') process.exit(1) }).catch(e => { console.error(e); process.exit(1) })\""
+   },
+   "keywords": [
+     "dsh",

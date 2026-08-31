@@ -1,0 +1,3 @@
+- insert:
+    - id: local-speech-input
+      name: dsh-local-speech-input

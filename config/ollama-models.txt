@@ -1,0 +1,4 @@
+# Models present on the source host. The managed deployment checks each one
+# and pulls only missing models. Lines beginning with # are ignored.
+qwen3.8:27b-mtp-q8_0
+orcarouter/qwen3.8-27b-uncensored:q8_0

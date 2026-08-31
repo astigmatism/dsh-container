@@ -208,11 +208,13 @@ fast-forwardable `main` checkout tracking the canonical `origin/main`, and
 checks the persisted `data/dsh/settings.yaml` before fetching. It also compares
 that file with the fetched target's canonical settings before merging. A
 mismatch stops maintenance before any Compose interruption and is never
-replaced automatically. After those preflights, the updater stops the selected
-Compose stack, rebuilds it, deploys it, and runs the normal verification. It
-creates no backup or rollback artifacts. After success it removes only
-superseded image IDs captured from this Compose project; it never runs a global
-Docker prune.
+replaced automatically. After fast-forwarding, the original process transfers
+its maintenance lock and status to the fetched updater and re-executes it. The
+fetched code therefore performs the final preflight and Compose validation
+before it can stop services. The updater then stops the selected Compose stack,
+rebuilds it, deploys it, and runs the normal verification. It creates no backup
+or rollback artifacts. After success it removes only superseded image IDs
+captured from this Compose project; it never runs a global Docker prune.
 
 A single atomically replaced status file is kept at
 `data/maintenance-status`. In addition to the mode, commits, and exit status,

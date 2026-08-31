@@ -104,8 +104,10 @@ available.
 >
 > The updater must check the current persisted settings before fetch and compare
 > them with the fetched target before merge or service interruption. It must not
-> change persisted settings. On a configuration preflight failure, do not run
-> Compose stop, rebuild, deploy, or any attempted fix.
+> change persisted settings. After fast-forwarding, it must re-exec the fetched
+> updater under the existing maintenance lock before any service interruption.
+> On a configuration preflight failure, do not run Compose stop, rebuild,
+> deploy, or any attempted fix.
 >
 > ## Validate independently
 >

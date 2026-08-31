@@ -3,9 +3,11 @@ set -eu
 
 printf '%s\n' "$*" >>"${FAKE_GIT_LOG:?}"
 
+repo_dir=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -c|-C) shift 2 ;;
+    -c) shift 2 ;;
+    -C) repo_dir=$2; shift 2 ;;
     *) break ;;
   esac
 done
@@ -34,14 +36,34 @@ case "${1:-}" in
     exit "${FAKE_GIT_MERGE_BASE_EXIT:-0}"
     ;;
   merge)
-    exit "${FAKE_GIT_MERGE_EXIT:-0}"
+    merge_exit=${FAKE_GIT_MERGE_EXIT:-0}
+    [ "$merge_exit" -eq 0 ] || exit "$merge_exit"
+    if [ -n "${FAKE_FAST_FORWARD_SOURCE:-}" ]; then
+      for source_file in "$FAKE_FAST_FORWARD_SOURCE"/scripts/*; do
+        target_name=${source_file##*/}
+        temporary=$(mktemp "${repo_dir:?missing fake repository path}/scripts/.fast-forward.XXXXXX")
+        cp "$source_file" "$temporary"
+        chmod 0755 "$temporary"
+        mv "$temporary" "$repo_dir/scripts/$target_name"
+      done
+    fi
+    if [ -n "${FAKE_GIT_STATE_FILE:-}" ]; then
+      printf '%s\n' "${FAKE_GIT_TARGET:-2222222222222222222222222222222222222222}" \
+        >"$FAKE_GIT_STATE_FILE"
+    fi
     ;;
   hash-object)
     printf '%s\n' "${FAKE_RUNTIME_SETTINGS_OBJECT:-same-settings-object}"
     ;;
   rev-parse)
     case "${2:-}" in
-      HEAD) printf '%s\n' "${FAKE_GIT_HEAD:-1111111111111111111111111111111111111111}" ;;
+      HEAD)
+        if [ -s "${FAKE_GIT_STATE_FILE:-}" ]; then
+          cat "$FAKE_GIT_STATE_FILE"
+        else
+          printf '%s\n' "${FAKE_GIT_HEAD:-1111111111111111111111111111111111111111}"
+        fi
+        ;;
       FETCH_HEAD) printf '%s\n' "${FAKE_GIT_TARGET:-2222222222222222222222222222222222222222}" ;;
       --short) printf '%s\n' "${FAKE_GIT_SHORT_HEAD:-2222222}" ;;
       *:config/settings.yaml) printf '%s\n' "${FAKE_TARGET_SETTINGS_OBJECT:-same-settings-object}" ;;

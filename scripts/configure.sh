@@ -4,6 +4,8 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 env_file=$project_dir/.env
+maintenance_lock=$project_dir/data/update-and-restart.lock
+maintenance_status=$project_dir/data/maintenance-status
 force=0
 bind_address=127.0.0.1
 host_uid=$(id -u)
@@ -21,6 +23,20 @@ if [ -d "$host_home/Projects" ]; then
   host_workspace=$host_home/Projects
 elif [ -d "$host_home/projects" ]; then
   host_workspace=$host_home/projects
+fi
+
+# update-and-restart.sh from the first maintenance release invokes the newly
+# fetched configure.sh after its fast-forward but before Compose is stopped.
+# Keep this guard in configure.sh so that invocation also receives the target
+# release's persisted-settings policy. Normal first-time configuration is not
+# maintenance and must remain able to create an initially empty data directory.
+if [ -f "$maintenance_lock/pid" ] \
+  && [ -f "$maintenance_status" ] \
+  && grep -Fxq 'state=running' "$maintenance_status"; then
+  if ! "$script_dir/verify-persisted-settings.sh"; then
+    echo "Configuration validation failed during active maintenance; services remain unchanged." >&2
+    exit 1
+  fi
 fi
 
 usage() {

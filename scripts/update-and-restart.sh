@@ -15,6 +15,15 @@ failure_stage=initialization
 recovery=not-needed
 lock_dir=$project_dir/data/update-and-restart.lock
 status_file=$project_dir/data/maintenance-status
+resume_file=$lock_dir/resume
+resume=${DSH_UPDATE_RESUME:-0}
+resume_temporary=
+unset DSH_UPDATE_RESUME
+
+case "$resume" in
+  0|1) ;;
+  *) echo "Invalid internal maintenance resume state." >&2; exit 2 ;;
+esac
 
 usage() {
   cat <<'EOF'
@@ -93,6 +102,11 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+if [ "$resume" -eq 1 ] && [ "$dry_run" -eq 1 ]; then
+  echo "Maintenance resume cannot be combined with --dry-run." >&2
+  exit 2
+fi
+
 git_repo() { git -c "safe.directory=$project_dir" -C "$project_dir" "$@"; }
 
 write_status() {
@@ -134,22 +148,43 @@ finish() {
     fi
     write_status failed "$status" || true
   fi
-  rm -f "$lock_dir/pid"
+  if [ -n "$resume_temporary" ]; then
+    rm -f "$resume_temporary"
+  fi
+  rm -f "$lock_dir/pid" "$resume_file"
   rmdir "$lock_dir" 2>/dev/null || true
   exit "$status"
 }
 
 if [ "$dry_run" -ne 1 ]; then
   mkdir -p "$project_dir/data"
-  if ! mkdir "$lock_dir" 2>/dev/null; then
+  if [ "$resume" -eq 1 ]; then
+    if [ ! -f "$lock_dir/pid" ] \
+      || [ "$(cat "$lock_dir/pid" 2>/dev/null || true)" != "$$" ] \
+      || [ ! -f "$resume_file" ]; then
+      echo "Refusing an invalid maintenance resume; the original lock is not owned by this process." >&2
+      exit 1
+    fi
+  elif ! mkdir "$lock_dir" 2>/dev/null; then
     echo "Another maintenance run may be active: $lock_dir" >&2
     exit 1
   fi
-  printf '%s\n' "$$" >"$lock_dir/pid"
+  if [ "$resume" -ne 1 ]; then
+    printf '%s\n' "$$" >"$lock_dir/pid"
+  fi
   trap finish EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  if [ "$resume" -eq 1 ]; then
+    before_commit=$(awk -F= '$1 == "from_commit" { print $2; exit }' "$resume_file")
+    target_commit=$(awk -F= '$1 == "target_commit" { print $2; exit }' "$resume_file")
+    resume_mode=$(awk -F= '$1 == "mode" { print $2; exit }' "$resume_file")
+    if [ -z "$before_commit" ] || [ -z "$target_commit" ] || [ -z "$resume_mode" ]; then
+      echo "Refusing an invalid maintenance resume record." >&2
+      exit 1
+    fi
+  fi
   write_status running 0
 fi
 
@@ -205,6 +240,10 @@ case "$mode" in
     ;;
   *) echo "Invalid deployment mode: $mode" >&2; exit 2 ;;
 esac
+if [ "$resume" -eq 1 ] && [ "$mode" != "$resume_mode" ]; then
+  echo "Refusing maintenance because the resumed deployment mode changed from $resume_mode to $mode." >&2
+  exit 1
+fi
 
 case "$mode" in
   external)
@@ -261,7 +300,17 @@ case "$origin_url" in
 esac
 
 dirty=$(git_repo status --porcelain)
-before_commit=$(git_repo rev-parse HEAD)
+current_commit=$(git_repo rev-parse HEAD)
+if [ "$resume" -eq 1 ]; then
+  if [ "$current_commit" != "$target_commit" ]; then
+    echo "Refusing maintenance because HEAD changed before the fetched updater resumed." >&2
+    echo "Expected: $target_commit" >&2
+    echo "Current:  $current_commit" >&2
+    exit 1
+  fi
+else
+  before_commit=$current_commit
+fi
 if [ -n "$dirty" ]; then
   echo "Refusing to update a dirty repository. Commit or remove these changes first:" >&2
   printf '%s\n' "$dirty" >&2
@@ -269,9 +318,17 @@ if [ -n "$dirty" ]; then
 fi
 
 failure_type=configuration-verification
-failure_stage=preflight-current-settings
+if [ "$resume" -eq 1 ]; then
+  failure_stage=preflight-merged-settings
+else
+  failure_stage=preflight-current-settings
+fi
 if ! "$script_dir/verify-persisted-settings.sh"; then
-  echo "Configuration preflight failed before any fetch or service interruption." >&2
+  if [ "$resume" -eq 1 ]; then
+    echo "Configuration preflight failed after fast-forward and before service interruption." >&2
+  else
+    echo "Configuration preflight failed before any fetch or service interruption." >&2
+  fi
   exit 1
 fi
 
@@ -287,40 +344,53 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-failure_type=git-state
-failure_stage=fetch
-write_status running 0
-echo "Fetching $remote/$remote_branch while the current deployment remains available..."
-git_repo fetch --prune "$remote" "$remote_branch"
-target_commit=$(git_repo rev-parse FETCH_HEAD)
-write_status running 0
+if [ "$resume" -ne 1 ]; then
+  failure_type=git-state
+  failure_stage=fetch
+  write_status running 0
+  echo "Fetching $remote/$remote_branch while the current deployment remains available..."
+  git_repo fetch --prune "$remote" "$remote_branch"
+  target_commit=$(git_repo rev-parse FETCH_HEAD)
+  write_status running 0
 
-if ! git_repo merge-base --is-ancestor "$before_commit" "$target_commit"; then
-  echo "Refusing a non-fast-forward update; local and remote history differ." >&2
-  echo "Local:  $before_commit" >&2
-  echo "Remote: $target_commit" >&2
-  exit 1
-fi
+  if ! git_repo merge-base --is-ancestor "$before_commit" "$target_commit"; then
+    echo "Refusing a non-fast-forward update; local and remote history differ." >&2
+    echo "Local:  $before_commit" >&2
+    echo "Remote: $target_commit" >&2
+    exit 1
+  fi
 
-failure_type=configuration-verification
-failure_stage=preflight-target-settings
-target_settings_object=$(git_repo rev-parse "$target_commit:config/settings.yaml" 2>/dev/null || true)
-runtime_settings_object=$(git_repo hash-object "$project_dir/data/dsh/settings.yaml" 2>/dev/null || true)
-if [ -z "$target_settings_object" ] || [ -z "$runtime_settings_object" ] \
-  || [ "$target_settings_object" != "$runtime_settings_object" ]; then
-  echo "Persisted settings do not match config/settings.yaml in the fetched target." >&2
-  echo "Maintenance will not merge or interrupt services; an explicit configuration decision is required." >&2
-  exit 1
-fi
+  failure_type=configuration-verification
+  failure_stage=preflight-target-settings
+  target_settings_object=$(git_repo rev-parse "$target_commit:config/settings.yaml" 2>/dev/null || true)
+  runtime_settings_object=$(git_repo hash-object "$project_dir/data/dsh/settings.yaml" 2>/dev/null || true)
+  if [ -z "$target_settings_object" ] || [ -z "$runtime_settings_object" ] \
+    || [ "$target_settings_object" != "$runtime_settings_object" ]; then
+    echo "Persisted settings do not match config/settings.yaml in the fetched target." >&2
+    echo "Maintenance will not merge or interrupt services; an explicit configuration decision is required." >&2
+    exit 1
+  fi
 
-failure_type=git-state
-failure_stage=fast-forward
-git_repo merge --ff-only "$target_commit"
+  failure_type=git-state
+  failure_stage=fast-forward
+  git_repo merge --ff-only "$target_commit"
 
-failure_type=configuration-verification
-failure_stage=preflight-merged-settings
-if ! "$script_dir/verify-persisted-settings.sh"; then
-  echo "Configuration preflight failed after fast-forward and before service interruption." >&2
+  resume_temporary=$(mktemp "$lock_dir/.resume.XXXXXX")
+  {
+    echo "from_commit=$before_commit"
+    echo "target_commit=$target_commit"
+    echo "mode=$mode"
+  } >"$resume_temporary"
+  chmod 0600 "$resume_temporary"
+  mv "$resume_temporary" "$resume_file"
+  resume_temporary=
+
+  failure_stage=updater-resume
+  write_status running 0
+  echo "Restarting maintenance under the fetched updater before service interruption..."
+  export DSH_UPDATE_RESUME=1
+  exec "$script_dir/update-and-restart.sh" "$mode_flag"
+  echo "Could not restart maintenance under the fetched updater." >&2
   exit 1
 fi
 

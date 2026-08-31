@@ -3,6 +3,7 @@ set -eu
 
 test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source_root=$(CDPATH= cd -- "$test_dir/.." && pwd)
+legacy_updater_commit=05f68939f5f3c81e1ef54464fd80281c953d5dc4
 temporary_root=$(mktemp -d)
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
 
@@ -31,6 +32,7 @@ make_fixture() {
   fixture=$temporary_root/$fixture_name
   mkdir -p "$fixture/scripts" "$fixture/config" "$fixture/data/dsh" "$fixture/fake-bin"
   cp "$source_root/scripts/update-and-restart.sh" "$fixture/scripts/"
+  cp "$source_root/scripts/configure.sh" "$fixture/scripts/"
   cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/scripts/"
   cp "$source_root/tests/fixtures/deploy-stub.sh" "$fixture/scripts/deploy.sh"
   cp "$source_root/tests/fixtures/update-bin/git" "$fixture/fake-bin/"
@@ -39,9 +41,11 @@ make_fixture() {
   printf '%s\n' 'DSH_DEPLOYMENT_MODE=external' >"$fixture/.env"
   : >"$fixture/git.log"
   : >"$fixture/docker.log"
+  printf '%s\n' '1111111111111111111111111111111111111111' >"$fixture/git-head"
   case "$runtime_kind" in
     matching) cp "$fixture/config/settings.yaml" "$fixture/data/dsh/settings.yaml" ;;
     empty) : >"$fixture/data/dsh/settings.yaml" ;;
+    missing) ;;
     mismatched) printf '%s\n' 'models: {}' >"$fixture/data/dsh/settings.yaml" ;;
     *) fail "unknown runtime fixture kind: $runtime_kind" ;;
   esac
@@ -53,6 +57,8 @@ run_update() {
   set +e
   PATH="$fixture_path/fake-bin:$PATH" \
     FAKE_GIT_LOG="$fixture_path/git.log" \
+    FAKE_GIT_STATE_FILE="$fixture_path/git-head" \
+    FAKE_FAST_FORWARD_SOURCE="${TEST_FAST_FORWARD_SOURCE:-}" \
     FAKE_DOCKER_LOG="$fixture_path/docker.log" \
     FAKE_GIT_DIRTY="${TEST_GIT_DIRTY:-}" \
     FAKE_DOCKER_INFO_EXIT="${TEST_DOCKER_INFO_EXIT:-0}" \
@@ -64,6 +70,51 @@ run_update() {
   update_status=$?
   set -e
 }
+
+make_legacy_fixture() {
+  fixture_name=$1
+  runtime_kind=$2
+  make_fixture "$fixture_name" "$runtime_kind"
+  mkdir -p "$fixture/target/scripts"
+  cp "$source_root/scripts/update-and-restart.sh" "$fixture/target/scripts/"
+  cp "$source_root/scripts/configure.sh" "$fixture/target/scripts/"
+  cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/target/scripts/"
+  cp "$source_root/tests/fixtures/deploy-stub.sh" "$fixture/target/scripts/deploy.sh"
+  git -C "$source_root" show "$legacy_updater_commit:scripts/update-and-restart.sh" \
+    >"$fixture/scripts/update-and-restart.sh"
+  git -C "$source_root" show "$legacy_updater_commit:scripts/configure.sh" \
+    >"$fixture/scripts/configure.sh"
+}
+
+for runtime_kind in missing empty mismatched
+do
+  make_legacy_fixture "legacy-$runtime_kind-settings" "$runtime_kind"
+  if [ -e "$fixture/data/dsh/settings.yaml" ]; then
+    legacy_before=$(cksum "$fixture/data/dsh/settings.yaml")
+  else
+    legacy_before=missing
+  fi
+  TEST_FAST_FORWARD_SOURCE=$fixture/target
+  run_update "$fixture" --external-ollama
+  unset TEST_FAST_FORWARD_SOURCE
+  if [ "$update_status" -eq 0 ]; then
+    sed -n '1,240p' "$fixture/output.log" >&2
+    sed -n '1,240p' "$fixture/git.log" >&2
+    fail "legacy updater accepted $runtime_kind settings"
+  fi
+  assert_no_interruption "$fixture"
+  grep -Fq 'merge --ff-only' "$fixture/git.log" \
+    || fail "legacy $runtime_kind test did not simulate a fast-forward"
+  grep -Fq 'Configuration validation failed during active maintenance' "$fixture/output.log" \
+    || fail "target configure guard did not reject legacy $runtime_kind settings"
+  if [ "$legacy_before" = missing ]; then
+    [ ! -e "$fixture/data/dsh/settings.yaml" ] \
+      || fail "legacy guard created missing settings"
+  else
+    [ "$legacy_before" = "$(cksum "$fixture/data/dsh/settings.yaml")" ] \
+      || fail "legacy guard modified $runtime_kind settings"
+  fi
+done
 
 make_fixture empty-settings empty
 empty_before=$(cksum "$fixture/data/dsh/settings.yaml")
@@ -109,6 +160,19 @@ if grep -Fq 'merge --ff-only' "$fixture/git.log"; then
   fail "target settings mismatch was merged"
 fi
 
+make_fixture updater-resume matching
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "updater resume path failed"
+assert_status "$fixture" 'state=ok'
+assert_status "$fixture" 'from_commit=1111111111111111111111111111111111111111'
+assert_status "$fixture" 'target_commit=2222222222222222222222222222222222222222'
+grep -Fq 'Restarting maintenance under the fetched updater before service interruption' "$fixture/output.log" \
+  || fail "updater did not re-exec after fast-forward"
+[ "$(grep -Fc 'fetch --prune origin main' "$fixture/git.log")" -eq 1 ] \
+  || fail "resumed updater fetched more than once"
+[ ! -e "$fixture/data/update-and-restart.lock" ] \
+  || fail "successful updater left its transferred lock behind"
+
 make_fixture git-state-failure matching
 TEST_GIT_DIRTY=' M config/settings.yaml'
 run_update "$fixture" --external-ollama
@@ -147,4 +211,4 @@ do
   assert_status "$fixture" 'recovery=succeeded'
 done
 
-echo "ok - updater preflight preserves settings, avoids interruption, and classifies failures"
+echo "ok - updater re-exec and legacy preflight preserve settings, avoid interruption, and classify failures"

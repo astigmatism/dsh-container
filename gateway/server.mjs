@@ -19,6 +19,12 @@ const sttMaxRecordSeconds = integer('STT_MAX_RECORD_SECONDS', 300)
 const sttBaseUrl = (process.env.STT_BASE_URL || '').replace(/\/+$/, '')
 const sttModel = process.env.STT_MODEL || 'large-v3-turbo'
 const sttKeyFile = process.env.STT_API_KEY_FILE || '/run/secrets/stt_api_key'
+const ttsMaxBytes = integer('TTS_MAX_BYTES', 1024 * 1024)
+const ttsTimeoutMs = integer('TTS_TIMEOUT_MS', 180000)
+const ttsBaseUrl = (process.env.TTS_BASE_URL || '').replace(/\/+$/, '')
+const ttsModel = process.env.TTS_MODEL || 'tts-1'
+const ttsVoice = process.env.TTS_VOICE || 'af_heart'
+const ttsKeyFile = process.env.TTS_API_KEY_FILE || '/run/secrets/tts_api_key'
 
 function integer(name, fallback) {
   const value = Number.parseInt(process.env[name] || '', 10)
@@ -201,7 +207,7 @@ async function readBody(req, maxBytes) {
   let size = 0
   for await (const chunk of req) {
     size += chunk.length
-    if (size > maxBytes) throw Object.assign(new Error('Recording exceeds the configured upload limit'), { statusCode: 413 })
+    if (size > maxBytes) throw Object.assign(new Error('Request exceeds the configured upload limit'), { statusCode: 413 })
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
@@ -239,6 +245,61 @@ async function transcribe(req, res) {
       'cache-control': 'no-store',
       'content-length': String(responseBody.length),
       'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+    })
+    res.end(responseBody)
+  } catch (error) {
+    const status = Number.isInteger(error?.statusCode) ? error.statusCode : 502
+    json(res, status, { error: { message: error instanceof Error ? error.message : String(error) } })
+  }
+}
+
+async function synthesize(req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { allow: 'POST' })
+    res.end()
+    return
+  }
+  const contentType = req.headers['content-type'] || ''
+  if (!contentType.toLowerCase().startsWith('application/json')) {
+    json(res, 415, { error: { message: 'Expected a JSON speech request' } })
+    return
+  }
+  const key = readSecret(ttsKeyFile)
+  if (ttsBaseUrl === '' || key === null) {
+    json(res, 503, { error: { message: 'Text-to-speech is not configured' } })
+    return
+  }
+  try {
+    const requestBody = await readBody(req, ttsMaxBytes)
+    let payload
+    try {
+      payload = JSON.parse(requestBody.toString('utf8'))
+    } catch {
+      json(res, 400, { error: { message: 'Speech request is not valid JSON' } })
+      return
+    }
+    if (payload === null || Array.isArray(payload) || typeof payload !== 'object') {
+      json(res, 400, { error: { message: 'Speech request must be a JSON object' } })
+      return
+    }
+    if (typeof payload.model !== 'string' || payload.model === '') payload.model = ttsModel
+    if (typeof payload.voice !== 'string' || payload.voice === '') payload.voice = ttsVoice
+    const body = Buffer.from(JSON.stringify(payload))
+    const upstream = await fetch(`${ttsBaseUrl}/audio/speech`, {
+      method: 'POST',
+      headers: {
+        accept: req.headers.accept || 'audio/mpeg',
+        authorization: `Bearer ${key}`,
+        'content-type': contentType,
+      },
+      body,
+      signal: AbortSignal.timeout(ttsTimeoutMs),
+    })
+    const responseBody = Buffer.from(await upstream.arrayBuffer())
+    res.writeHead(upstream.status, {
+      'cache-control': 'no-store',
+      'content-length': String(responseBody.length),
+      'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
     })
     res.end(responseBody)
   } catch (error) {
@@ -355,6 +416,20 @@ const httpsServer = createHttpsServer({
   }
   if (path === '/local-stt/transcriptions') {
     await transcribe(req, res)
+    return
+  }
+  if (path === '/local-tts/config') {
+    const key = readSecret(ttsKeyFile)
+    json(res, 200, {
+      enabled: ttsBaseUrl !== '' && key !== null,
+      model: ttsModel,
+      voice: ttsVoice,
+      ...(ttsBaseUrl === '' || key === null ? { reason: 'Text-to-speech credentials are unavailable' } : {}),
+    })
+    return
+  }
+  if (path === '/local-tts/speech') {
+    await synthesize(req, res)
     return
   }
   proxy(req, res)

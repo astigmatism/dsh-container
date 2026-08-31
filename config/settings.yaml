@@ -6,6 +6,12 @@ agent-default-model:
 permission:
   defaultPreset: danger-full-access
 
+# DSH saves this acknowledgement atomically at runtime. Keeping the captured
+# version in the seeded writable settings file prevents a fresh deployment
+# from being trapped behind the internal-testing notice.
+ui-onboarding:
+  welcomeNoticeVersion: "2026-08-13.1"
+
 llm-pi-ai:
   providers:
     local-ollama:

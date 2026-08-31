@@ -1,0 +1,163 @@
+name: deepseek-harness-speech
+
+networks:
+  voice_net:
+    name: deepseek-harness-voice
+
+services:
+  whisper-stt:
+    build:
+      context: "https://github.com/hwdsl2/docker-whisper.git#26480113aee9fa2a0ff01ed35f8274c770196403"
+      dockerfile: Dockerfile.cuda
+    image: "${WHISPER_IMAGE:-local/deepseek-harness-whisper:26480113-cuda}"
+    container_name: deepseek-harness-whisper-stt
+    restart: unless-stopped
+    networks:
+      - voice_net
+    ports:
+      - "${VOICE_BIND_ADDRESS:-127.0.0.1}:9000:9000/tcp"
+    environment:
+      WHISPER_MODEL: "${WHISPER_MODEL:-large-v3-turbo}"
+      WHISPER_LANGUAGE: "${WHISPER_LANGUAGE:-auto}"
+      WHISPER_PORT: "9000"
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: "${WHISPER_COMPUTE_TYPE:-float16}"
+      WHISPER_THREADS: "${WHISPER_THREADS:-4}"
+      WHISPER_LOG_LEVEL: INFO
+      WHISPER_BEAM: "${WHISPER_BEAM:-1}"
+      WHISPER_MAX_UPLOAD_MB: "${WHISPER_MAX_UPLOAD_MB:-256}"
+    command:
+      - /bin/sh
+      - -eu
+      - -c
+      - |
+        export WHISPER_API_KEY="$$(cat /run/secrets/stt_api_key)"
+        exec /opt/src/run.sh
+    secrets:
+      - stt_api_key
+    volumes:
+      - "${SPEECH_MODEL_ROOT:-./data/models}/whisper:/var/lib/whisper"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_FAST_UUID:?set GPU_FAST_UUID in speech/.env}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  kokoro-tts:
+    image: "${KOKORO_IMAGE:-ghcr.io/remsky/kokoro-fastapi-gpu@sha256:63176e12e476470f020e29dfb3203bac249fa66c8fdf95e44b7482546eb4e974}"
+    container_name: deepseek-harness-kokoro-tts
+    restart: unless-stopped
+    networks:
+      - voice_net
+    ports:
+      - "${VOICE_LOOPBACK_ADDRESS:-127.0.0.1}:8880:8880/tcp"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "${GPU_FAST_UUID:?set GPU_FAST_UUID in speech/.env}"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - "${SPEECH_MODEL_ROOT:-./data/models}/kokoro:/models/kokoro"
+      - "${SPEECH_AUDIO_ROOT:-./data/audio}/output:/audio/output"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_FAST_UUID:?set GPU_FAST_UUID in speech/.env}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8880/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+
+  chatterbox-tts:
+    build:
+      context: ./chatterbox-tts-api
+      dockerfile: docker/Dockerfile.gpu
+    image: "${CHATTERBOX_IMAGE:-local/deepseek-harness-chatterbox:a5f46612}"
+    container_name: deepseek-harness-chatterbox-tts
+    restart: unless-stopped
+    networks:
+      - voice_net
+    ports:
+      - "${VOICE_LOOPBACK_ADDRESS:-127.0.0.1}:4123:4123/tcp"
+    environment:
+      PORT: "4123"
+      HOST: 0.0.0.0
+      DEVICE: cuda
+      MODEL_CACHE_DIR: /cache
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
+      TORCH_HOME: /root/.cache/torch
+      VOICE_LIBRARY_DIR: /voices
+      VOICE_SAMPLE_PATH: /app/voice-sample.mp3
+      LONG_TEXT_DATA_DIR: /data/long_text_jobs
+      LONG_TEXT_MAX_CONCURRENT_JOBS: "1"
+      NVIDIA_VISIBLE_DEVICES: "${GPU_CHATTERBOX_UUID:?set GPU_CHATTERBOX_UUID in speech/.env}"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - "${SPEECH_MODEL_ROOT:-./data/models}/chatterbox:/cache"
+      - "${SPEECH_MODEL_ROOT:-./data/models}/huggingface:/root/.cache/huggingface"
+      - "${SPEECH_MODEL_ROOT:-./data/models}/torch:/root/.cache/torch"
+      - "${SPEECH_AUDIO_ROOT:-./data/audio}/reference-voices:/voices"
+      - "${SPEECH_AUDIO_ROOT:-./data/audio}/output/chatterbox-long-text:/data/long_text_jobs"
+      - ./chatterbox-tts-api/voice-sample.mp3:/app/voice-sample.mp3:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_CHATTERBOX_UUID:?set GPU_CHATTERBOX_UUID in speech/.env}"]
+              capabilities: [gpu]
+
+  tts-router:
+    build:
+      context: ./tts-router
+    image: "${TTS_ROUTER_IMAGE:-local/deepseek-harness-tts-router:2026-06-26}"
+    container_name: deepseek-harness-tts-router
+    restart: unless-stopped
+    networks:
+      - voice_net
+    ports:
+      - "${VOICE_BIND_ADDRESS:-127.0.0.1}:8000:8000/tcp"
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - |
+        export TTS_ROUTER_API_KEY="$$(cat /run/secrets/tts_api_key)"
+        exec uvicorn app:app --host 0.0.0.0 --port 8000
+    environment:
+      KOKORO_BASE_URL: http://kokoro-tts:8880/v1
+      CHATTERBOX_BASE_URL: http://chatterbox-tts:4123/v1
+      DEFAULT_TTS_BACKEND: "${DEFAULT_TTS_BACKEND:-kokoro}"
+      KOKORO_TIMEOUT_SECONDS: "${KOKORO_TIMEOUT_SECONDS:-60}"
+      CHATTERBOX_TIMEOUT_SECONDS: "${CHATTERBOX_TIMEOUT_SECONDS:-180}"
+      CHATTERBOX_CONCURRENCY: "${CHATTERBOX_CONCURRENCY:-1}"
+      CHATTERBOX_QUEUE_TIMEOUT_SECONDS: "${CHATTERBOX_QUEUE_TIMEOUT_SECONDS:-30}"
+    secrets:
+      - tts_api_key
+    depends_on:
+      kokoro-tts:
+        condition: service_healthy
+      chatterbox-tts:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+secrets:
+  stt_api_key:
+    file: ../secrets/stt_api_key
+  tts_api_key:
+    file: ../secrets/tts_api_key

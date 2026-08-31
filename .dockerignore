@@ -5,6 +5,7 @@
 data
 secrets
 ollama-router
+speech
 backups
 *.tar
 *.tar.gz

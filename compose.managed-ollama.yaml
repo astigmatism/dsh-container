@@ -16,7 +16,13 @@ services:
     image: "${OLLAMA_IMAGE:-ollama/ollama@sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82}"
     container_name: deepseek-harness-ollama
     restart: unless-stopped
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     expose:
       - "11434"
     environment:

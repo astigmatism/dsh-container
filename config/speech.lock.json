@@ -1,0 +1,62 @@
+{
+  "capturedAtUtc": "2026-08-31T06:15:00Z",
+  "sourceTopology": {
+    "voiceHost": "192.168.1.22",
+    "sttBaseUrl": "http://192.168.1.22:9000/v1",
+    "ttsBaseUrl": "http://192.168.1.22:8000/v1",
+    "transport": "private-LAN HTTP; Harness clients use the authenticated HTTPS gateway proxies"
+  },
+  "stt": {
+    "contract": "POST /v1/audio/transcriptions (multipart/form-data, Bearer authentication)",
+    "implementation": "hwdsl2/docker-whisper",
+    "sourceRevision": "26480113aee9fa2a0ff01ed35f8274c770196403",
+    "capturedLocalImageId": "sha256:eaf0a0c90cf5c1f5c050321318a21c1bfc1369a20c25d77ce421870893ced006",
+    "note": "The captured image digest is no longer available from the mutable cuda tag; speech/compose.yaml rebuilds its recorded source revision.",
+    "model": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "settings": {
+      "model": "large-v3-turbo",
+      "language": "auto",
+      "device": "cuda",
+      "computeType": "float16",
+      "threads": 4,
+      "beamSize": 1,
+      "maxUploadMb": 256
+    }
+  },
+  "tts": {
+    "contract": "POST /v1/audio/speech (JSON, Bearer authentication)",
+    "routerSource": "speech/tts-router",
+    "routerBaseImage": "python@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217",
+    "defaultBackend": "kokoro",
+    "defaultModel": "tts-1",
+    "defaultVoice": "af_heart",
+    "kokoro": {
+      "image": "ghcr.io/remsky/kokoro-fastapi-gpu@sha256:63176e12e476470f020e29dfb3203bac249fa66c8fdf95e44b7482546eb4e974",
+      "model": "hexgrad/Kokoro-82M (v1.0; bundled in image)"
+    },
+    "chatterbox": {
+      "source": "https://github.com/travisvn/chatterbox-tts-api",
+      "sourceRevision": "a5f466128e4baa8e4cceb3bba9b7ca9de6f7ec6b",
+      "vendoredAt": "speech/chatterbox-tts-api",
+      "dependencyRevision": "c33cc0286ad166f14dd143c02c2a1c3309ab4727",
+      "model": "ResembleAI/chatterbox",
+      "modelSnapshot": "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18"
+    }
+  },
+  "secretContract": {
+    "stt": "secrets/stt_api_key; identical to the voice server WHISPER_API_KEY",
+    "tts": "secrets/tts_api_key; identical to the TTS router TTS_ROUTER_API_KEY",
+    "keysAreDistinct": true,
+    "trackedValues": false
+  },
+  "capturedValidation": {
+    "phrase": "DSH speech round trip test.",
+    "ttsStatus": 200,
+    "ttsContentType": "audio/mpeg",
+    "ttsBytes": 36140,
+    "ttsLatencyMs": 277,
+    "sttStatus": 200,
+    "sttLatencyMs": 506,
+    "transcriptExactMatch": true
+  }
+}

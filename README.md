@@ -26,6 +26,9 @@ needs the NVIDIA Container Toolkit.
   `f16` KV cache, and the captured reasoning-effort mapping.
 - The vendored router is from
   `astigmatism/local-ai-ollama-router@8bd89e17dd5d5c34dc4c66a60ab0db817e2bb257`.
+- OpenAI-compatible faster-whisper STT and routed Kokoro/Chatterbox TTS on the
+  captured voice host, with separate file-based keys and locked deployment
+  metadata in `config/speech.lock.json`.
 
 The locked web profile contains these seven plugins:
 
@@ -113,11 +116,22 @@ To replace the gateway password without putting it in shell history:
 docker compose restart gateway
 ```
 
-## Optional speech-to-text
+## Speech-to-text and text-to-speech
 
-The speech button is always included, but reports itself disabled when no STT
-endpoint/key is configured. Set `STT_BASE_URL` in `.env` and write the key to
-`secrets/stt_api_key` with mode `0600`.
+The captured `.env.example` points at the private voice host on `192.168.1.22`.
+The speech button sends recordings only to the authenticated gateway at
+`/local-stt/transcriptions`; the gateway adds the STT key and forwards them to
+faster-whisper. The corresponding TTS proxy is `/local-tts/speech`, defaulting
+to model `tts-1` and Kokoro voice `af_heart` when a client omits them.
+
+The distinct keys are stored in ignored mode-0600 files:
+
+- `secrets/stt_api_key`
+- `secrets/tts_api_key`
+
+An empty URL or key disables only that speech service. Neither key is built
+into an image, returned in the `/local-stt/config` or `/local-tts/config`
+responses, sent to the browser, or mounted into Harness.
 
 To import the configured key from an OpenWebUI SQLite database without printing
 it:
@@ -128,8 +142,16 @@ it:
   --output ./secrets/stt_api_key
 ```
 
-The key is mounted only into the gateway. It is not built into an image, sent
-to the browser, or mounted into Harness.
+To reproduce the full GPU voice stack on a Linux/NVIDIA host, review
+`speech/README.md`, copy `speech/.env.example` to `speech/.env`, and deploy
+`speech/compose.yaml`. Its source revisions, image digests, model identifiers,
+and captured reference test are in `config/speech.lock.json`.
+
+Run a live TTS-to-STT round trip against the configured voice services:
+
+```sh
+./scripts/verify-speech.sh
+```
 
 ## Moving existing runtime state
 

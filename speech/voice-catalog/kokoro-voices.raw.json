@@ -1,0 +1,272 @@
+{
+  "voices": [
+    {
+      "id": "af_alloy",
+      "name": "af_alloy"
+    },
+    {
+      "id": "af_aoede",
+      "name": "af_aoede"
+    },
+    {
+      "id": "af_bella",
+      "name": "af_bella"
+    },
+    {
+      "id": "af_heart",
+      "name": "af_heart"
+    },
+    {
+      "id": "af_jadzia",
+      "name": "af_jadzia"
+    },
+    {
+      "id": "af_jessica",
+      "name": "af_jessica"
+    },
+    {
+      "id": "af_kore",
+      "name": "af_kore"
+    },
+    {
+      "id": "af_nicole",
+      "name": "af_nicole"
+    },
+    {
+      "id": "af_nova",
+      "name": "af_nova"
+    },
+    {
+      "id": "af_river",
+      "name": "af_river"
+    },
+    {
+      "id": "af_sarah",
+      "name": "af_sarah"
+    },
+    {
+      "id": "af_sky",
+      "name": "af_sky"
+    },
+    {
+      "id": "af_v0",
+      "name": "af_v0"
+    },
+    {
+      "id": "af_v0bella",
+      "name": "af_v0bella"
+    },
+    {
+      "id": "af_v0irulan",
+      "name": "af_v0irulan"
+    },
+    {
+      "id": "af_v0nicole",
+      "name": "af_v0nicole"
+    },
+    {
+      "id": "af_v0sarah",
+      "name": "af_v0sarah"
+    },
+    {
+      "id": "af_v0sky",
+      "name": "af_v0sky"
+    },
+    {
+      "id": "am_adam",
+      "name": "am_adam"
+    },
+    {
+      "id": "am_echo",
+      "name": "am_echo"
+    },
+    {
+      "id": "am_eric",
+      "name": "am_eric"
+    },
+    {
+      "id": "am_fenrir",
+      "name": "am_fenrir"
+    },
+    {
+      "id": "am_liam",
+      "name": "am_liam"
+    },
+    {
+      "id": "am_michael",
+      "name": "am_michael"
+    },
+    {
+      "id": "am_onyx",
+      "name": "am_onyx"
+    },
+    {
+      "id": "am_puck",
+      "name": "am_puck"
+    },
+    {
+      "id": "am_santa",
+      "name": "am_santa"
+    },
+    {
+      "id": "am_v0adam",
+      "name": "am_v0adam"
+    },
+    {
+      "id": "am_v0gurney",
+      "name": "am_v0gurney"
+    },
+    {
+      "id": "am_v0michael",
+      "name": "am_v0michael"
+    },
+    {
+      "id": "bf_alice",
+      "name": "bf_alice"
+    },
+    {
+      "id": "bf_emma",
+      "name": "bf_emma"
+    },
+    {
+      "id": "bf_lily",
+      "name": "bf_lily"
+    },
+    {
+      "id": "bf_v0emma",
+      "name": "bf_v0emma"
+    },
+    {
+      "id": "bf_v0isabella",
+      "name": "bf_v0isabella"
+    },
+    {
+      "id": "bm_daniel",
+      "name": "bm_daniel"
+    },
+    {
+      "id": "bm_fable",
+      "name": "bm_fable"
+    },
+    {
+      "id": "bm_george",
+      "name": "bm_george"
+    },
+    {
+      "id": "bm_lewis",
+      "name": "bm_lewis"
+    },
+    {
+      "id": "bm_v0george",
+      "name": "bm_v0george"
+    },
+    {
+      "id": "bm_v0lewis",
+      "name": "bm_v0lewis"
+    },
+    {
+      "id": "ef_dora",
+      "name": "ef_dora"
+    },
+    {
+      "id": "em_alex",
+      "name": "em_alex"
+    },
+    {
+      "id": "em_santa",
+      "name": "em_santa"
+    },
+    {
+      "id": "ff_siwis",
+      "name": "ff_siwis"
+    },
+    {
+      "id": "hf_alpha",
+      "name": "hf_alpha"
+    },
+    {
+      "id": "hf_beta",
+      "name": "hf_beta"
+    },
+    {
+      "id": "hm_omega",
+      "name": "hm_omega"
+    },
+    {
+      "id": "hm_psi",
+      "name": "hm_psi"
+    },
+    {
+      "id": "if_sara",
+      "name": "if_sara"
+    },
+    {
+      "id": "im_nicola",
+      "name": "im_nicola"
+    },
+    {
+      "id": "jf_alpha",
+      "name": "jf_alpha"
+    },
+    {
+      "id": "jf_gongitsune",
+      "name": "jf_gongitsune"
+    },
+    {
+      "id": "jf_nezumi",
+      "name": "jf_nezumi"
+    },
+    {
+      "id": "jf_tebukuro",
+      "name": "jf_tebukuro"
+    },
+    {
+      "id": "jm_kumo",
+      "name": "jm_kumo"
+    },
+    {
+      "id": "pf_dora",
+      "name": "pf_dora"
+    },
+    {
+      "id": "pm_alex",
+      "name": "pm_alex"
+    },
+    {
+      "id": "pm_santa",
+      "name": "pm_santa"
+    },
+    {
+      "id": "zf_xiaobei",
+      "name": "zf_xiaobei"
+    },
+    {
+      "id": "zf_xiaoni",
+      "name": "zf_xiaoni"
+    },
+    {
+      "id": "zf_xiaoxiao",
+      "name": "zf_xiaoxiao"
+    },
+    {
+      "id": "zf_xiaoyi",
+      "name": "zf_xiaoyi"
+    },
+    {
+      "id": "zm_yunjian",
+      "name": "zm_yunjian"
+    },
+    {
+      "id": "zm_yunxi",
+      "name": "zm_yunxi"
+    },
+    {
+      "id": "zm_yunxia",
+      "name": "zm_yunxia"
+    },
+    {
+      "id": "zm_yunyang",
+      "name": "zm_yunyang"
+    }
+  ]
+}

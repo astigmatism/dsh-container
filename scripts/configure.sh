@@ -9,9 +9,18 @@ bind_address=127.0.0.1
 host_uid=$(id -u)
 host_gid=$(id -g)
 host_username=$(id -un)
-host_workspace=$(getent passwd "$host_uid" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')
-if [ -z "$host_workspace" ]; then
-  host_workspace=/home/$host_username
+host_home=
+if command -v getent >/dev/null 2>&1; then
+  host_home=$(getent passwd "$host_uid" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')
+fi
+if [ -z "$host_home" ]; then
+  host_home=${HOME:-/home/$host_username}
+fi
+host_workspace=$host_home
+if [ -d "$host_home/Projects" ]; then
+  host_workspace=$host_home/Projects
+elif [ -d "$host_home/projects" ]; then
+  host_workspace=$host_home/projects
 fi
 
 usage() {
@@ -68,7 +77,10 @@ esac
 
 docker_gid=999
 if [ -S /var/run/docker.sock ]; then
-  docker_gid=$(stat -c '%g' /var/run/docker.sock)
+  case "$(uname -s)" in
+    Darwin) docker_gid=$(stat -f '%g' /var/run/docker.sock) ;;
+    *) docker_gid=$(stat -c '%g' /var/run/docker.sock) ;;
+  esac
 fi
 
 set_env() {
@@ -116,6 +128,11 @@ if [ ! -e "$project_dir/secrets/stt_api_key" ]; then
   : >"$project_dir/secrets/stt_api_key"
 fi
 chmod 0600 "$project_dir/secrets/stt_api_key"
+if [ ! -e "$project_dir/secrets/tts_api_key" ]; then
+  umask 077
+  : >"$project_dir/secrets/tts_api_key"
+fi
+chmod 0600 "$project_dir/secrets/tts_api_key"
 
 docker compose --env-file "$env_file" -f "$project_dir/compose.yaml" config --quiet
 docker compose --env-file "$env_file" \

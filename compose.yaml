@@ -30,7 +30,6 @@ services:
       HARNESS_TRUSTED_HOSTS: "${HARNESS_TRUSTED_HOSTS:-127.0.0.1:3443,deepseek-harness.local:3443,localhost:3443}"
     volumes:
       - ./data/dsh:/data/dsh
-      - ./config/settings.yaml:/data/dsh/settings.yaml
       - "${HOST_WORKSPACE_ROOT:-/workspace}:${HOST_WORKSPACE_ROOT:-/workspace}"
       - /etc/passwd:/etc/passwd:ro
       - /etc/group:/etc/group:ro
@@ -75,10 +74,17 @@ services:
       STT_TIMEOUT_MS: "${STT_TIMEOUT_MS:-120000}"
       STT_MAX_RECORD_SECONDS: "${STT_MAX_RECORD_SECONDS:-300}"
       STT_API_KEY_FILE: /run/secrets/stt_api_key
+      TTS_BASE_URL: "${TTS_BASE_URL:-}"
+      TTS_MODEL: "${TTS_MODEL:-tts-1}"
+      TTS_VOICE: "${TTS_VOICE:-af_heart}"
+      TTS_MAX_BYTES: "${TTS_MAX_BYTES:-1048576}"
+      TTS_TIMEOUT_MS: "${TTS_TIMEOUT_MS:-180000}"
+      TTS_API_KEY_FILE: /run/secrets/tts_api_key
     volumes:
       - ./data/gateway:/data/gateway
     secrets:
       - stt_api_key
+      - tts_api_key
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3081/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -89,6 +95,8 @@ services:
 secrets:
   stt_api_key:
     file: ./secrets/stt_api_key
+  tts_api_key:
+    file: ./secrets/tts_api_key
 
 networks:
   ollama_net:

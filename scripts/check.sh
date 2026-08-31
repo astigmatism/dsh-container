@@ -29,6 +29,7 @@ root = Path(sys.argv[1])
 for relative in (
     "config/active-model.json",
     "config/plugins.lock.json",
+    "config/speech.lock.json",
     "seed/profile/package.json",
     "seed/profile/pnpm-lock.yaml",
     "ollama-router/package.json",
@@ -51,6 +52,8 @@ docker compose --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.managed-ollama.yaml" \
   config --quiet
+docker compose --env-file "$project_dir/speech/.env.example" \
+  -f "$project_dir/speech/compose.yaml" config --quiet
 
 node_image=node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
 docker run --rm --network none --read-only --tmpfs /tmp \

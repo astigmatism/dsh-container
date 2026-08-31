@@ -56,6 +56,18 @@ cd dsh-container
 ./scripts/deploy.sh --external-ollama
 ```
 
+Remote Ollama mode is for machines whose router is on another host. Harness
+still uses the canonical `http://ai-router:11434/v1` setting; Compose maps that
+name to `REMOTE_OLLAMA_HOST`, so tracked settings do not diverge by machine.
+
+```sh
+git clone https://github.com/astigmatism/dsh-container.git
+cd dsh-container
+./scripts/configure.sh --bind-address 192.168.1.50
+# Set REMOTE_OLLAMA_HOST in .env to the router host's address.
+./scripts/deploy.sh --remote-ollama
+```
+
 Managed Ollama mode is the self-contained option. It adds the pinned Ollama
 image, the vendored router, the captured active-model marker, and both models
 present on the source host.
@@ -122,19 +134,22 @@ to the browser, or mounted into Harness.
 ## Moving existing runtime state
 
 Fresh deployment is the safer default. To retain existing sessions and the
-same gateway identity, stop the source stack and securely copy these ignored
-directories to the same paths in this checkout:
+same gateway identity, stop the source stack and securely copy ignored runtime
+state into the same paths in this checkout. To keep the canonical software and
+plugin set, do not copy `data/dsh/profiles/`, `data/dsh/.dsh-plugins/`, or an
+old `settings.yaml`; the container will seed those from the repository image.
 
-- `data/dsh/` — sessions, profile state, indexes, and workspace metadata.
+- selected contents of `data/dsh/` — sessions, indexes, and workspace metadata,
+  excluding the software/profile paths named above.
 - `data/gateway/` — password hash, local CA private key, and certificates.
 - `data/router/` and `data/router-runtime/` — managed-router logs and active
   model marker, if using managed mode.
 - `data/ollama/` — optional large Ollama store; copying it avoids model pulls.
 
-Do not commit any of those directories. Existing `data/dsh` takes precedence
-over the image seed so user sessions and later profile changes are preserved.
-For a clean plugin reset, archive `data/dsh` elsewhere and start with an empty
-directory.
+Do not commit any of those directories. A copied `data/dsh/profiles/web`
+takes precedence over the image seed and intentionally creates a divergent
+plugin set. Archive that directory and start without it when standardizing a
+machine on this repository.
 
 ## Host maintenance boundary
 
@@ -159,10 +174,11 @@ Validate the repository and generated Compose configuration:
 ./scripts/check.sh
 ```
 
-Verify a running external or managed deployment:
+Verify a running external, remote, or managed deployment:
 
 ```sh
 ./scripts/verify.sh --external-ollama
+./scripts/verify.sh --remote-ollama
 ./scripts/verify.sh --managed-ollama
 ```
 
@@ -173,6 +189,14 @@ docker compose ps
 docker compose logs -f --tail=200
 docker compose restart
 docker compose down
+```
+
+For remote mode, include its overlay:
+
+```sh
+docker compose -f compose.yaml -f compose.remote-ollama.yaml ps
+docker compose -f compose.yaml -f compose.remote-ollama.yaml logs -f --tail=200
+docker compose -f compose.yaml -f compose.remote-ollama.yaml down
 ```
 
 For managed mode, include the overlay:

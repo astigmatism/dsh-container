@@ -1,0 +1,9 @@
+services:
+  harness:
+    extra_hosts:
+      - "ai-router:${REMOTE_OLLAMA_HOST:-192.168.1.21}"
+
+networks:
+  ollama_net:
+    external: false
+    name: "${DSH_NETWORK:-deepseek-harness_default}"

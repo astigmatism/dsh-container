@@ -45,6 +45,10 @@ docker compose --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" config --quiet
 docker compose --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" \
+  -f "$project_dir/compose.remote-ollama.yaml" \
+  config --quiet
+docker compose --env-file "$project_dir/.env.example" \
+  -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.managed-ollama.yaml" \
   config --quiet
 

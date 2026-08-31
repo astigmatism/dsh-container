@@ -120,9 +120,14 @@ chmod 0600 "$project_dir/secrets/stt_api_key"
 docker compose --env-file "$env_file" -f "$project_dir/compose.yaml" config --quiet
 docker compose --env-file "$env_file" \
   -f "$project_dir/compose.yaml" \
+  -f "$project_dir/compose.remote-ollama.yaml" \
+  config --quiet
+docker compose --env-file "$env_file" \
+  -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.managed-ollama.yaml" \
   config --quiet
 
 echo "Configuration is valid."
 echo "External Ollama: ./scripts/deploy.sh --external-ollama"
+echo "Remote Ollama:   ./scripts/deploy.sh --remote-ollama"
 echo "Managed Ollama:  ./scripts/deploy.sh --managed-ollama"

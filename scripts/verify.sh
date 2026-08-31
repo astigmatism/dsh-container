@@ -14,11 +14,14 @@ case "$mode" in
   --external-ollama)
     compose_files="-f $project_dir/compose.yaml"
     ;;
+  --remote-ollama)
+    compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.remote-ollama.yaml"
+    ;;
   --managed-ollama)
     compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.managed-ollama.yaml"
     ;;
   *)
-    echo "usage: ./scripts/verify.sh [--external-ollama|--managed-ollama]" >&2
+    echo "usage: ./scripts/verify.sh [--external-ollama|--remote-ollama|--managed-ollama]" >&2
     exit 2
     ;;
 esac

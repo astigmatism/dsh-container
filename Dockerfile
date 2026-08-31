@@ -43,6 +43,7 @@ COPY entrypoint.sh /usr/local/bin/dsh-entrypoint
 COPY scripts/nvidia-smi-proxy.sh /usr/local/bin/nvidia-smi
 COPY scripts/host-exec.sh /usr/local/bin/host-exec
 COPY scripts/host-enter.sh /usr/local/bin/host-enter
+COPY scripts/sync-runtime-profile.sh /usr/local/bin/dsh-sync-runtime-profile
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 
 # Generate DSH's base web profile, then overlay the exact live plugin manifest,
@@ -67,7 +68,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-ui-appearance@0.1.6' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
-    && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter \
+    && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store
 
 ENV DSH_HOME=/data/dsh \

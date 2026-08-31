@@ -88,6 +88,18 @@ if [ "$build" -eq 1 ]; then
       exit 1
     }
   done
+
+  docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
+    mkdir -p /data/dsh/profiles/web /data/dsh/.dsh-plugins /data/dsh/sessions
+    touch /data/dsh/profiles/web/divergent-package /data/dsh/.dsh-plugins/divergent-plugin
+    printf preserved >/data/dsh/sessions/preserved-state
+    /usr/local/bin/dsh-sync-runtime-profile
+    test ! -e /data/dsh/profiles/web/divergent-package
+    test ! -e /data/dsh/.dsh-plugins/divergent-plugin
+    test "$(cat /data/dsh/sessions/preserved-state)" = preserved
+    cmp /opt/dsh-seed/profiles/web/package.json /data/dsh/profiles/web/package.json
+    cmp /opt/dsh-seed/.dsh-plugins/dsh-web-search-free.js /data/dsh/.dsh-plugins/dsh-web-search-free.js
+  '
 fi
 
 if [ "$build" -eq 1 ]; then

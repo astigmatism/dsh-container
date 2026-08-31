@@ -46,7 +46,7 @@ while :; do
   sleep 2
 done
 
-inventory=$(compose exec -T -e DSH_HOME=/opt/dsh-seed harness dsh plugin --profile web list)
+inventory=$(compose exec -T harness dsh plugin --profile web list)
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
   'dsh-context@0.37.0' \
@@ -62,6 +62,13 @@ do
   }
 done
 
+expected_settings=$(sha256sum "$project_dir/config/settings.yaml" | awk '{print $1}')
+runtime_settings=$(compose exec -T harness sha256sum /data/dsh/settings.yaml | awk '{print $1}')
+if [ "$expected_settings" != "$runtime_settings" ]; then
+  echo "Runtime settings differ from config/settings.yaml." >&2
+  exit 1
+fi
+
 compose exec -T harness node -e \
   "fetch('http://ai-router:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
@@ -72,4 +79,4 @@ if [ "$mode" = --managed-ollama ]; then
 fi
 
 compose ps
-echo "Verified DSH 0.1.1-rc.2, all seven captured plugins, gateway health, and Ollama router reachability."
+echo "Verified DSH 0.1.1-rc.2, canonical runtime settings/plugins, gateway health, and Ollama router reachability."

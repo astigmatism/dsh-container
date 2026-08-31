@@ -147,9 +147,10 @@ old `settings.yaml`; the container will seed those from the repository image.
 - `data/ollama/` — optional large Ollama store; copying it avoids model pulls.
 
 Do not commit any of those directories. A copied `data/dsh/profiles/web`
-takes precedence over the image seed and intentionally creates a divergent
-plugin set. Archive that directory and start without it when standardizing a
-machine on this repository.
+is replaced from the image on every container start, as is
+`data/dsh/.dsh-plugins`. This makes the repository authoritative for plugin
+additions, removals, versions, patches, and lockfiles while preserving session
+and workspace data.
 
 ## Host maintenance boundary
 
@@ -173,6 +174,16 @@ Validate the repository and generated Compose configuration:
 ./scripts/configure.sh
 ./scripts/check.sh
 ```
+
+Apply later repository/plugin updates without changing per-host configuration:
+
+```sh
+git pull --ff-only
+./scripts/deploy.sh --external-ollama  # or --remote-ollama / --managed-ollama
+```
+
+The rebuild refreshes the canonical profile in the image, and container start
+atomically replaces the runtime software-managed profile from that image.
 
 Verify a running external, remote, or managed deployment:
 

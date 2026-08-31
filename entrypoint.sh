@@ -6,9 +6,10 @@ runtime_home=${DSH_HOME:-/data/dsh}
 
 mkdir -p "$runtime_home"
 
-if [ ! -f "$runtime_home/profiles/web/package.json" ]; then
-  cp -R "$seed_home"/. "$runtime_home"/
-fi
+# The repository is authoritative for software-managed profile state. Re-sync
+# it at every start so a normal image rebuild applies plugin additions,
+# removals, upgrades, lockfile changes, and local plugin updates uniformly.
+/usr/local/bin/dsh-sync-runtime-profile
 
 if [ ! -f "$runtime_home/settings.yaml" ]; then
   cp /opt/dsh-defaults/settings.yaml "$runtime_home/settings.yaml"

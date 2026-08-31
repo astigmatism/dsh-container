@@ -57,3 +57,18 @@ esac
 docker compose --env-file "$project_dir/.env" $compose_files up -d $build_flag
 
 "$script_dir/verify.sh" "--$mode-ollama"
+
+# Remember the successfully verified topology for unattended maintenance runs.
+temporary=$(mktemp "$project_dir/.env.XXXXXX")
+awk -v replacement="$mode" '
+  BEGIN { found = 0 }
+  index($0, "DSH_DEPLOYMENT_MODE=") == 1 {
+    print "DSH_DEPLOYMENT_MODE=" replacement
+    found = 1
+    next
+  }
+  { print }
+  END { if (!found) print "DSH_DEPLOYMENT_MODE=" replacement }
+' "$project_dir/.env" >"$temporary"
+chmod 0600 "$temporary"
+mv "$temporary" "$project_dir/.env"

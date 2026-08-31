@@ -200,9 +200,28 @@ Validate the repository and generated Compose configuration:
 Apply later repository/plugin updates without changing per-host configuration:
 
 ```sh
-git pull --ff-only
-./scripts/deploy.sh --external-ollama  # or --remote-ollama / --managed-ollama
+./scripts/update-and-restart.sh
 ```
+
+The maintenance command infers the current Ollama mode, requires a clean and
+fast-forwardable Git checkout, fetches updates while the existing service is
+still available, stops the selected Compose stack, rebuilds it, deploys it,
+and runs the normal verification. It creates no backup or rollback artifacts.
+After success it removes only superseded image IDs captured from this Compose
+project; it never runs a global Docker prune. A single overwritten status file
+is kept at `data/maintenance-status` for unattended/self-update reporting.
+
+Preview the operation or select a mode explicitly:
+
+```sh
+./scripts/update-and-restart.sh --dry-run
+./scripts/update-and-restart.sh --remote-ollama
+```
+
+When invoked by an AI inside Harness, the command delegates to a temporary
+maintenance container so stopping Harness cannot interrupt its own update.
+That helper and its Docker logs remove themselves afterward. See
+`docs/maintenance-agent-prompt.md` for a reusable agent prompt.
 
 The rebuild refreshes the canonical profile in the image, and container start
 atomically replaces the runtime software-managed profile from that image.

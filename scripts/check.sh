@@ -118,6 +118,25 @@ if [ "$build" -eq 1 ]; then
     test "$(stat -c %g /data/dsh/settings.yaml)" = "$(id -g)"
     test "$(stat -c %a /data/dsh/settings.yaml)" = 644
   '
+
+  docker run --rm --user 0:0 --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
+    service_uid=$(id -u node)
+    service_gid=$(id -g node)
+    chown "$service_uid:$service_gid" /data/dsh
+    : >/data/dsh/settings.yaml
+    chown 0:0 /data/dsh/settings.yaml
+    chmod 0644 /data/dsh/settings.yaml
+    runuser -u node -- env \
+      DSH_CANONICAL_SETTINGS=/opt/dsh-defaults/settings.yaml \
+      DSH_RUNTIME_SETTINGS=/data/dsh/settings.yaml \
+      DSH_SETTINGS_UID="$service_uid" \
+      DSH_SETTINGS_GID="$service_gid" \
+      /usr/local/bin/dsh-initialize-persisted-settings --replace-empty
+    cmp /opt/dsh-defaults/settings.yaml /data/dsh/settings.yaml
+    test "$(stat -c %u /data/dsh/settings.yaml)" = "$service_uid"
+    test "$(stat -c %g /data/dsh/settings.yaml)" = "$service_gid"
+    test "$(stat -c %a /data/dsh/settings.yaml)" = 644
+  '
 fi
 
 if [ "$build" -eq 1 ]; then

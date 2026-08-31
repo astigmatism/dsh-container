@@ -53,7 +53,9 @@ available.
 > - `git status --porcelain` is empty; and
 > - `.env`, `compose.yaml`, `config/settings.yaml`, and
 >   `data/dsh/settings.yaml` exist. Inspect only the single
->   `DSH_DEPLOYMENT_MODE` line from `.env`; never display the whole file.
+>   `DSH_DEPLOYMENT_MODE` line from `.env`; require it to occur exactly once
+>   with one of `external`, `remote`, or `managed`, and never display the whole
+>   file.
 >
 > Stop on a dirty worktree, detached HEAD, wrong branch, wrong upstream,
 > noncanonical origin, or missing required file. Do not repair or override any

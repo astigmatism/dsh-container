@@ -22,6 +22,7 @@ sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/te
 
 "$project_dir/tests/update-and-restart.test.sh"
 "$project_dir/tests/persisted-settings.test.sh"
+"$project_dir/tests/deployment-mode.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json
@@ -40,7 +41,11 @@ for relative in (
     path = root / relative
     if path.suffix == ".json":
         json.loads(path.read_text(encoding="utf-8"))
-for relative in ("scripts/change-password.py", "scripts/import-openwebui-stt.py"):
+for relative in (
+    "scripts/change-password.py",
+    "scripts/import-openwebui-stt.py",
+    "scripts/record-deployment-mode.py",
+):
     source = (root / relative).read_text(encoding="utf-8")
     compile(source, relative, "exec")
 PY

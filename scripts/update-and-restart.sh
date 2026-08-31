@@ -34,13 +34,14 @@ Modes:
   --remote-ollama     use the router at REMOTE_OLLAMA_HOST
   --managed-ollama    update the managed Ollama/router stack too
 
-With no mode flag, the script uses the running container's Compose labels,
-then DSH_DEPLOYMENT_MODE from .env. It refuses to guess when neither source
-identifies the mode. It requires clean main tracking canonical origin/main,
-checks persisted settings before fetching and again against the fetched target,
-then fast-forwards, stops the selected stack, rebuilds/redeploys it, verifies
-it, and removes only superseded images captured from this project. It creates
-no backup, archive, stash, rollback tag, or rollback directory.
+With no mode flag, the script uses the running container's Compose labels and
+the required DSH_DEPLOYMENT_MODE from .env. It refuses missing, empty,
+duplicated, invalid, or conflicting mode state. It requires clean main tracking
+canonical origin/main, checks persisted settings before fetching and again
+against the fetched target, then fast-forwards, stops the selected stack,
+rebuilds/redeploys it, verifies it, and removes only superseded images captured
+from this project. It creates no backup, archive, stash, rollback tag, or
+rollback directory.
 EOF
 }
 
@@ -101,6 +102,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+requested_mode=$mode
 
 if [ "$resume" -eq 1 ] && [ "$dry_run" -eq 1 ]; then
   echo "Maintenance resume cannot be combined with --dry-run." >&2
@@ -207,37 +209,40 @@ fi
 
 failure_type=deployment-mode-inference
 failure_stage=deployment-mode
-if [ -z "$mode" ]; then
-  config_files=$(docker inspect deepseek-harness \
-    --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' 2>/dev/null || true)
-  case "$config_files" in
-    *compose.managed-ollama.yaml*compose.remote-ollama.yaml*|*compose.remote-ollama.yaml*compose.managed-ollama.yaml*)
-      echo "Running Compose labels contain both managed and remote overlays." >&2
-      exit 2
-      ;;
-    *compose.managed-ollama.yaml*) label_mode=managed ;;
-    *compose.remote-ollama.yaml*) label_mode=remote ;;
-    *compose.yaml*) label_mode=external ;;
-    *) label_mode= ;;
-  esac
-  env_mode=$(get_env DSH_DEPLOYMENT_MODE)
-  case "$env_mode" in
-    external|remote|managed|'') ;;
-    *) echo "Invalid DSH_DEPLOYMENT_MODE in .env: $env_mode" >&2; exit 2 ;;
-  esac
-  if [ -n "$label_mode" ] && [ -n "$env_mode" ] && [ "$label_mode" != "$env_mode" ]; then
-    echo "Running Compose labels indicate $label_mode mode but .env records $env_mode mode." >&2
-    exit 2
-  fi
-  mode=${label_mode:-$env_mode}
-fi
-case "$mode" in
-  external|remote|managed) ;;
-  '')
-    echo "Could not infer the deployment mode from Compose labels or .env." >&2
-    echo "Review the existing deployment and pass one explicit mode flag." >&2
+config_files=$(docker inspect deepseek-harness \
+  --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' 2>/dev/null || true)
+case "$config_files" in
+  *compose.managed-ollama.yaml*compose.remote-ollama.yaml*|*compose.remote-ollama.yaml*compose.managed-ollama.yaml*)
+    echo "Running Compose labels contain both managed and remote overlays." >&2
     exit 2
     ;;
+  *compose.managed-ollama.yaml*) label_mode=managed ;;
+  *compose.remote-ollama.yaml*) label_mode=remote ;;
+  *compose.yaml*) label_mode=external ;;
+  *) label_mode= ;;
+esac
+
+mode_entry_count=$(awk -F= '$1 == "DSH_DEPLOYMENT_MODE" { count++ } END { print count + 0 }' "$env_file")
+if [ "$mode_entry_count" -ne 1 ]; then
+  echo "DSH_DEPLOYMENT_MODE must occur exactly once in .env; found $mode_entry_count entries." >&2
+  exit 2
+fi
+env_mode=$(get_env DSH_DEPLOYMENT_MODE)
+case "$env_mode" in
+  external|remote|managed) ;;
+  *) echo "Invalid or empty DSH_DEPLOYMENT_MODE in .env." >&2; exit 2 ;;
+esac
+if [ -n "$label_mode" ] && [ "$label_mode" != "$env_mode" ]; then
+  echo "Running Compose labels indicate $label_mode mode but .env records $env_mode mode." >&2
+  exit 2
+fi
+if [ -n "$requested_mode" ] && [ "$requested_mode" != "$env_mode" ]; then
+  echo "Requested $requested_mode mode but .env records $env_mode mode." >&2
+  exit 2
+fi
+mode=${requested_mode:-${label_mode:-$env_mode}}
+case "$mode" in
+  external|remote|managed) ;;
   *) echo "Invalid deployment mode: $mode" >&2; exit 2 ;;
 esac
 if [ "$resume" -eq 1 ] && [ "$mode" != "$resume_mode" ]; then

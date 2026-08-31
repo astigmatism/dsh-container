@@ -26,6 +26,7 @@ case "${1:-}" in
           ;;
         stop) exit "${FAKE_COMPOSE_STOP_EXIT:-0}" ;;
         start) exit "${FAKE_COMPOSE_START_EXIT:-0}" ;;
+        up) exit "${FAKE_COMPOSE_UP_EXIT:-0}" ;;
       esac
     done
     exit 0

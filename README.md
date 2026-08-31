@@ -94,6 +94,14 @@ Both modes bind to loopback unless `--bind-address` is supplied. The router's
 admin ports remain loopback-only by default even when Harness is exposed on a
 trusted LAN.
 
+`DSH_DEPLOYMENT_MODE` starts blank in a newly generated `.env`.
+`deploy.sh` atomically records its explicit external, remote, or managed mode
+before it can change Compose state, so even a failed first deployment retains
+an unambiguous intended topology. It refuses a duplicated or conflicting
+existing value. Maintenance requires exactly one non-empty mode and refuses
+any disagreement with the running Compose labels, including when a mode flag
+is supplied explicitly.
+
 ## Persisted settings lifecycle
 
 `config/settings.yaml` is the reviewed canonical configuration for this
@@ -235,7 +243,9 @@ Apply later repository/plugin updates without changing per-host configuration:
 
 The maintenance command infers the current Ollama mode, requires a clean and
 fast-forwardable `main` checkout tracking the canonical `origin/main`, and
-checks the persisted `data/dsh/settings.yaml` before fetching. It also compares
+requires exactly one recorded deployment mode consistent with the running
+Compose labels. It checks the persisted `data/dsh/settings.yaml` before
+fetching and also compares
 that file with the fetched target's canonical settings before merging. A
 mismatch or incorrect service ownership/mode stops maintenance before any
 Compose interruption and is never replaced automatically. After

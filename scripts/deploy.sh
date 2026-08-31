@@ -33,6 +33,14 @@ if [ ! -f "$project_dir/.env" ]; then
   "$script_dir/configure.sh"
 fi
 
+# Record the explicitly selected topology before any Compose mutation. A
+# failed first deployment therefore remains safely resumable, while an
+# existing conflicting or duplicated mode is never overwritten.
+if ! "$script_dir/record-deployment-mode.py" "$mode"; then
+  echo "Could not record the requested deployment mode before deployment." >&2
+  exit 21
+fi
+
 case "$mode" in
   external)
     ollama_network=$(awk -F= '$1 == "OLLAMA_NETWORK" { print substr($0, index($0, "=") + 1); exit }' "$project_dir/.env")
@@ -60,25 +68,3 @@ if ! docker compose --env-file "$project_dir/.env" $compose_files up -d $build_f
 fi
 
 "$script_dir/verify.sh" "--$mode-ollama"
-
-# Remember the successfully verified topology for unattended maintenance runs.
-if ! temporary=$(mktemp "$project_dir/.env.XXXXXX"); then
-  echo "Could not prepare the deployment-mode update for .env." >&2
-  exit 21
-fi
-if ! awk -v replacement="$mode" '
-    BEGIN { found = 0 }
-    index($0, "DSH_DEPLOYMENT_MODE=") == 1 {
-      print "DSH_DEPLOYMENT_MODE=" replacement
-      found = 1
-      next
-    }
-    { print }
-    END { if (!found) print "DSH_DEPLOYMENT_MODE=" replacement }
-  ' "$project_dir/.env" >"$temporary" \
-  || ! chmod 0600 "$temporary" \
-  || ! mv "$temporary" "$project_dir/.env"; then
-  rm -f "$temporary"
-  echo "Could not record the verified deployment mode in .env." >&2
-  exit 21
-fi

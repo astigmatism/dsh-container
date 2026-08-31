@@ -218,6 +218,41 @@ run_update "$fixture"
 [ "$update_status" -ne 0 ] || fail "unknown deployment mode unexpectedly passed"
 assert_status "$fixture" 'failure_type=deployment-mode-inference'
 
+make_fixture missing-mode-entry matching
+{
+  printf 'HOST_UID=%s\n' "$(id -u)"
+  printf 'HOST_GID=%s\n' "$(id -g)"
+} >"$fixture/.env"
+TEST_COMPOSE_LABELS="$fixture/compose.yaml,$fixture/compose.remote-ollama.yaml"
+run_update "$fixture"
+unset TEST_COMPOSE_LABELS
+[ "$update_status" -ne 0 ] || fail "missing deployment-mode entry unexpectedly passed"
+assert_status "$fixture" 'failure_type=deployment-mode-inference'
+grep -Fq 'found 0 entries' "$fixture/output.log" \
+  || fail "missing deployment-mode diagnostic was not reported"
+
+make_fixture duplicate-mode-entry matching
+{
+  printf '%s\n' 'DSH_DEPLOYMENT_MODE=remote'
+  printf '%s\n' 'DSH_DEPLOYMENT_MODE=remote'
+  printf 'HOST_UID=%s\n' "$(id -u)"
+  printf 'HOST_GID=%s\n' "$(id -g)"
+} >"$fixture/.env"
+TEST_COMPOSE_LABELS="$fixture/compose.yaml,$fixture/compose.remote-ollama.yaml"
+run_update "$fixture"
+unset TEST_COMPOSE_LABELS
+[ "$update_status" -ne 0 ] || fail "duplicate deployment-mode entries unexpectedly passed"
+assert_status "$fixture" 'failure_type=deployment-mode-inference'
+grep -Fq 'found 2 entries' "$fixture/output.log" \
+  || fail "duplicate deployment-mode diagnostic was not reported"
+
+make_fixture explicit-mode-conflict matching
+TEST_COMPOSE_LABELS="$fixture/compose.yaml,$fixture/compose.remote-ollama.yaml"
+run_update "$fixture" --remote-ollama
+unset TEST_COMPOSE_LABELS
+[ "$update_status" -ne 0 ] || fail "explicit mode bypassed label/.env conflict"
+assert_status "$fixture" 'failure_type=deployment-mode-inference'
+
 make_fixture docker-failure matching
 TEST_DOCKER_INFO_EXIT=1
 run_update "$fixture" --external-ollama

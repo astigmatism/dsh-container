@@ -24,12 +24,12 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     group_add:
       - "${DOCKER_GID:-999}"
-    working_dir: "${HOST_WORKSPACE_ROOT:-/workspace}"
+    working_dir: "${HARNESS_WORKSPACE_ROOT:-/host}"
     environment:
       DSH_HOME: /data/dsh
       DSH_TELEMETRY_DISABLED: "1"
       DSH_PERMISSION_MODE: danger-full-access
-      HOME: "${HOST_WORKSPACE_ROOT:-/workspace}"
+      HOME: "${HARNESS_WORKSPACE_ROOT:-/host}"
       USER: "${HOST_USERNAME:-harness}"
       LOGNAME: "${HOST_USERNAME:-harness}"
       NVIDIA_SMI_IMAGE: "${NVIDIA_SMI_IMAGE:-ollama/ollama@sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82}"
@@ -38,7 +38,12 @@ services:
       HARNESS_TRUSTED_HOSTS: "${HARNESS_TRUSTED_HOSTS:-127.0.0.1:3443,deepseek-harness.local:3443,localhost:3443}"
     volumes:
       - ./data/dsh:/data/dsh
-      - "${HOST_WORKSPACE_ROOT:-/workspace}:${HOST_WORKSPACE_ROOT:-/workspace}"
+      - type: bind
+        # Native Windows Compose exposes SystemDrive (normally C:). With no
+        # Windows drive, the fallback is Unix root. The stable container path
+        # keeps sessions portable even though host path syntax differs.
+        source: "${HOST_FILESYSTEM_SOURCE:-${SYSTEMDRIVE:-${SystemDrive:-}}/}"
+        target: "${HARNESS_WORKSPACE_ROOT:-/host}"
       - /etc/passwd:/etc/passwd:ro
       - /etc/group:/etc/group:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -50,7 +55,7 @@ services:
     extra_hosts:
       - "ai-router:${REMOTE_OLLAMA_HOST:-192.168.1.21}"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3081/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3080/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 12
@@ -68,7 +73,7 @@ services:
     network_mode: service:harness
     depends_on:
       harness:
-        condition: service_started
+        condition: service_healthy
         restart: true
     environment:
       HARNESS_AUTH_USERNAME: astigmatism

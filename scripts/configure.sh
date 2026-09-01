@@ -18,12 +18,7 @@ fi
 if [ -z "$host_home" ]; then
   host_home=${HOME:-/home/$host_username}
 fi
-host_workspace=$host_home
-if [ -d "$host_home/Projects" ]; then
-  host_workspace=$host_home/Projects
-elif [ -d "$host_home/projects" ]; then
-  host_workspace=$host_home/projects
-fi
+host_workspace=/
 
 # update-and-restart.sh from the first maintenance release invokes the newly
 # fetched configure.sh after its fast-forward but before Compose is stopped.
@@ -45,7 +40,7 @@ usage: ./scripts/configure.sh [options]
 
 Options:
   --bind-address IP   HTTPS/CA bind address and TLS IP (default: 127.0.0.1)
-  --workspace PATH    host workspace mounted at the same absolute path
+  --workspace PATH    host filesystem scope mounted at /host (default: /)
   --username NAME     gateway username and in-container USER value
   --force             replace an existing .env
   -h, --help          show this help
@@ -122,7 +117,8 @@ else
   set_env HOST_UID "$host_uid"
   set_env HOST_GID "$host_gid"
   set_env HOST_USERNAME "$host_username"
-  set_env HOST_WORKSPACE_ROOT "$host_workspace"
+  set_env HOST_FILESYSTEM_SOURCE "$host_workspace"
+  set_env HARNESS_WORKSPACE_ROOT /host
   set_env DOCKER_GID "$docker_gid"
   set_env HARNESS_BIND_ADDRESS "$bind_address"
   set_env HARNESS_TLS_IP "$bind_address"

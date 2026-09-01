@@ -71,9 +71,21 @@ its private network rather than requesting an external network, but
 `deploy.sh` remains the recommended entrypoint because it records the mode and
 performs post-start verification.
 
-On Windows, run these POSIX deployment scripts from a WSL 2 distribution with
-Docker Desktop's WSL integration and Linux containers enabled. Keeping the
-checkout in the WSL filesystem also avoids slow Windows-filesystem bind mounts.
+The container-only default exposes as much of the host filesystem as the
+platform permits at the stable Linux path `/host`. Native Windows Compose
+mounts the Windows system drive there; native Linux mounts `/`. Existing `.env`
+files do not need a platform-specific path. Set `HOST_FILESYSTEM_SOURCE` only
+when intentionally limiting Harness to a narrower drive or directory.
+
+Docker Desktop for macOS keeps containers inside a Linux VM and exposes only
+locations allowed by its file-sharing settings. `/host` therefore contains the
+VM root and its shared host locations (commonly below `/host/host_mnt`), rather
+than unrestricted macOS root. Add needed locations in Docker Desktop's file
+sharing settings when they are outside the defaults.
+
+The POSIX deployment and maintenance scripts can also run from a WSL 2
+distribution with Docker Desktop's WSL integration and Linux containers
+enabled. A checkout in the WSL filesystem avoids slow source-code bind mounts.
 
 External Ollama mode matches the source host most closely. It joins an existing
 Docker network, and that network must expose the Responses-compatible router
@@ -243,11 +255,19 @@ and workspace data.
 
 ## Host maintenance boundary
 
-Harness runs as the host UID/GID, mounts one host workspace at the same absolute
-path, and has the Docker socket. `nvidia-smi` is a constrained disposable
-container proxy. `host-exec` is intentionally more powerful: it launches a
-short-lived privileged helper, enters the host namespaces, and executes as host
-root.
+Harness runs as the configured UID/GID, mounts the broadest portable host
+filesystem scope at `/host`, and has the Docker socket. This is Unix root on a
+native Linux Docker Engine and the system drive on native Windows Compose. The
+`--workspace` configuration option can deliberately narrow that scope while
+keeping the container path `/host`. `nvidia-smi` is a constrained disposable
+container proxy. `host-exec` is intentionally more powerful on a native Linux
+host: it launches a short-lived privileged helper, enters the host namespaces,
+and executes as host root.
+
+Docker Desktop's Linux VM is not the Windows kernel. On Windows, Harness can
+manage the mounted Windows files and Docker resources, but `host-exec` cannot
+run native Windows programs or administer Windows services. That requires a
+separate Windows-native helper rather than a Linux-container setting.
 
 The default Harness permission preset is `danger-full-access`. This is a server
 maintenance agent with effective host-root capability, not a multi-tenant web

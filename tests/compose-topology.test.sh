@@ -18,6 +18,7 @@ render default
 render remote -f "$project_dir/compose.remote-ollama.yaml"
 render external -f "$project_dir/compose.external-ollama.yaml"
 render managed -f "$project_dir/compose.managed-ollama.yaml"
+SYSTEMDRIVE="$temporary_root/windows-drive" render windows
 
 python3 - "$temporary_root" <<'PY'
 import json
@@ -39,6 +40,31 @@ default = load("default")
 remote = load("remote")
 external = load("external")
 managed = load("managed")
+windows = load("windows")
+
+harness = default["services"]["harness"]
+healthcheck = " ".join(harness["healthcheck"]["test"])
+if "127.0.0.1:3080" not in healthcheck:
+    raise SystemExit("harness readiness does not check the actual backend")
+depends_on = default["services"]["gateway"]["depends_on"]
+if depends_on.get("harness", {}).get("condition") != "service_healthy":
+    raise SystemExit("gateway can start before the harness backend is ready")
+
+workspace = next(
+    volume for volume in windows["services"]["harness"]["volumes"]
+    if volume.get("target") == "/host"
+)
+if Path(workspace["source"]).resolve() != (root / "windows-drive").resolve():
+    raise SystemExit(f"native Windows system drive is not the workspace source: {workspace!r}")
+
+unix_workspace = next(
+    volume for volume in default["services"]["harness"]["volumes"]
+    if volume.get("target") == "/host"
+)
+if Path(unix_workspace["source"]).resolve() != Path("/").resolve():
+    raise SystemExit(f"Unix root is not the default workspace source: {unix_workspace!r}")
+if harness["working_dir"] != "/host" or harness["environment"].get("HOME") != "/host":
+    raise SystemExit("Harness does not default its workspace picker to /host")
 
 for name, config in (("default", default), ("remote", remote)):
     network = config["networks"]["ollama_net"]

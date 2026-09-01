@@ -24,6 +24,7 @@ sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/te
 "$project_dir/tests/persisted-settings.test.sh"
 "$project_dir/tests/deployment-mode.test.sh"
 "$project_dir/tests/service-portal.test.sh"
+"$project_dir/tests/compose-topology.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json
@@ -53,6 +54,10 @@ PY
 
 docker compose --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" config --quiet
+docker compose --env-file "$project_dir/.env.example" \
+  -f "$project_dir/compose.yaml" \
+  -f "$project_dir/compose.external-ollama.yaml" \
+  config --quiet
 docker compose --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.remote-ollama.yaml" \

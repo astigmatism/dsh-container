@@ -3,7 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-mode=external
+mode=
 build_flag=--build
 
 usage() {
@@ -14,6 +14,8 @@ External mode joins OLLAMA_NETWORK and expects the router alias `ai-router`.
 Remote mode maps `ai-router` to REMOTE_OLLAMA_HOST on a private Docker network.
 Managed mode starts the pinned Ollama image, pulls the captured model set, and
 builds the vendored Responses-compatible router.
+With no mode flag, an existing recorded mode is reused; a new deployment uses
+remote mode as the portable default.
 EOF
 }
 
@@ -33,7 +35,19 @@ if [ ! -f "$project_dir/.env" ]; then
   "$script_dir/configure.sh"
 fi
 
-# Record the explicitly selected topology before any Compose mutation. A
+if [ -z "$mode" ]; then
+  recorded_mode=$(awk -F= '$1 == "DSH_DEPLOYMENT_MODE" { print substr($0, index($0, "=") + 1); exit }' "$project_dir/.env")
+  case "$recorded_mode" in
+    external|remote|managed) mode=$recorded_mode ;;
+    '') mode=remote ;;
+    *)
+      echo "Invalid DSH_DEPLOYMENT_MODE in .env: $recorded_mode" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+# Record the selected topology before any Compose mutation. A
 # failed first deployment therefore remains safely resumable, while an
 # existing conflicting or duplicated mode is never overwritten.
 if ! "$script_dir/record-deployment-mode.py" "$mode"; then
@@ -49,7 +63,7 @@ case "$mode" in
       echo "Create it or use --remote-ollama/--managed-ollama." >&2
       exit 1
     fi
-    compose_files="-f $project_dir/compose.yaml"
+    compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.external-ollama.yaml"
     ;;
   remote)
     compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.remote-ollama.yaml"

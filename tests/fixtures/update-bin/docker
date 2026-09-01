@@ -14,6 +14,9 @@ case "${1:-}" in
     fi
     exit 1
     ;;
+  network)
+    exit "${FAKE_DOCKER_NETWORK_EXIT:-0}"
+    ;;
   compose)
     for argument do
       case "$argument" in

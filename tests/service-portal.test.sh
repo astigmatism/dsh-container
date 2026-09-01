@@ -58,7 +58,9 @@ for name, service in services.items():
 PY
 }
 
-check_project external -f "$project_dir/compose.yaml"
+check_project external \
+  -f "$project_dir/compose.yaml" \
+  -f "$project_dir/compose.external-ollama.yaml"
 check_project remote \
   -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.remote-ollama.yaml"

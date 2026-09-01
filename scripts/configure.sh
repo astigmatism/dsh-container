@@ -155,6 +155,10 @@ chmod 0600 "$project_dir/secrets/tts_api_key"
 docker compose --env-file "$env_file" -f "$project_dir/compose.yaml" config --quiet
 docker compose --env-file "$env_file" \
   -f "$project_dir/compose.yaml" \
+  -f "$project_dir/compose.external-ollama.yaml" \
+  config --quiet
+docker compose --env-file "$env_file" \
+  -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.remote-ollama.yaml" \
   config --quiet
 docker compose --env-file "$env_file" \

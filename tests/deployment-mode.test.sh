@@ -156,4 +156,39 @@ assert_remote_env "$fixture"
 grep -Fq ' up -d ' "$fixture/docker.log" \
   || fail "simulated deployment did not reach Compose up"
 
-echo "ok - deployment mode recording is atomic, conflict-safe, and precedes Compose"
+make_env portable-default ''
+mkdir -p "$fixture/scripts" "$fixture/fake-bin"
+cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
+cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
+cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+: >"$fixture/docker.log"
+set +e
+PATH="$fixture/fake-bin:$PATH" \
+  FAKE_DOCKER_LOG="$fixture/docker.log" \
+  FAKE_COMPOSE_UP_EXIT=1 \
+  sh "$fixture/scripts/deploy.sh" >"$fixture/deploy.log" 2>&1
+deploy_status=$?
+set -e
+[ "$deploy_status" -eq 20 ] || fail "portable default did not reach remote Compose deployment"
+assert_remote_env "$fixture"
+grep -Fq -- "-f $fixture/compose.yaml -f $fixture/compose.remote-ollama.yaml up -d" "$fixture/docker.log" \
+  || fail "no-flag deployment did not select the remote overlay"
+
+make_env recorded-external external
+mkdir -p "$fixture/scripts" "$fixture/fake-bin"
+cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
+cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
+cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+: >"$fixture/docker.log"
+set +e
+PATH="$fixture/fake-bin:$PATH" \
+  FAKE_DOCKER_LOG="$fixture/docker.log" \
+  FAKE_COMPOSE_UP_EXIT=1 \
+  sh "$fixture/scripts/deploy.sh" --no-build >"$fixture/deploy.log" 2>&1
+deploy_status=$?
+set -e
+[ "$deploy_status" -eq 20 ] || fail "recorded external mode did not reach Compose deployment"
+grep -Fq -- "-f $fixture/compose.yaml -f $fixture/compose.external-ollama.yaml up -d" "$fixture/docker.log" \
+  || fail "no-flag deployment did not preserve the recorded external mode"
+
+echo "ok - deployment mode recording is atomic, conflict-safe, portable by default, and precedes Compose"

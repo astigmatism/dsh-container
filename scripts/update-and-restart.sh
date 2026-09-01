@@ -219,13 +219,16 @@ failure_stage=deployment-mode
 config_files=$(docker inspect deepseek-harness \
   --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' 2>/dev/null || true)
 case "$config_files" in
+  *compose.external-ollama.yaml*compose.remote-ollama.yaml*|*compose.remote-ollama.yaml*compose.external-ollama.yaml*|\
+  *compose.external-ollama.yaml*compose.managed-ollama.yaml*|*compose.managed-ollama.yaml*compose.external-ollama.yaml*|\
   *compose.managed-ollama.yaml*compose.remote-ollama.yaml*|*compose.remote-ollama.yaml*compose.managed-ollama.yaml*)
-    echo "Running Compose labels contain both managed and remote overlays." >&2
+    echo "Running Compose labels contain conflicting deployment overlays." >&2
     exit 2
     ;;
   *compose.managed-ollama.yaml*) label_mode=managed ;;
+  *compose.external-ollama.yaml*) label_mode=external ;;
   *compose.remote-ollama.yaml*) label_mode=remote ;;
-  *compose.yaml*) label_mode=external ;;
+  *compose.yaml*) label_mode=remote ;;
   *) label_mode= ;;
 esac
 
@@ -260,7 +263,7 @@ fi
 case "$mode" in
   external)
     mode_flag=--external-ollama
-    compose_files="-f $project_dir/compose.yaml"
+    compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.external-ollama.yaml"
     ;;
   remote)
     mode_flag=--remote-ollama

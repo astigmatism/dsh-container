@@ -5,6 +5,8 @@ x-router-image: &router-image
 
 services:
   harness:
+    # Managed mode resolves the bundled ai-router service through Docker DNS.
+    extra_hosts: !reset []
     depends_on:
       ai-router:
         condition: service_healthy

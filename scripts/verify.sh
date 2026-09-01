@@ -3,7 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-mode=${1:---external-ollama}
+mode=${1:-}
 docker_compose_exit=20
 configuration_exit=21
 provider_exit=22
@@ -14,9 +14,21 @@ if [ ! -f "$project_dir/.env" ]; then
   exit 1
 fi
 
+if [ -z "$mode" ]; then
+  recorded_mode=$(awk -F= '$1 == "DSH_DEPLOYMENT_MODE" { print substr($0, index($0, "=") + 1); exit }' "$project_dir/.env")
+  case "$recorded_mode" in
+    external|remote|managed) mode=--$recorded_mode-ollama ;;
+    '') mode=--remote-ollama ;;
+    *)
+      echo "Invalid DSH_DEPLOYMENT_MODE in .env: $recorded_mode" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 case "$mode" in
   --external-ollama)
-    compose_files="-f $project_dir/compose.yaml"
+    compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.external-ollama.yaml"
     ;;
   --remote-ollama)
     compose_files="-f $project_dir/compose.yaml -f $project_dir/compose.remote-ollama.yaml"

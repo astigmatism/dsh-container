@@ -1,0 +1,10 @@
+services:
+  harness:
+    # External mode resolves ai-router through Docker DNS on the shared
+    # network, not through the portable remote-host mapping in compose.yaml.
+    extra_hosts: !reset []
+
+networks:
+  ollama_net:
+    external: true
+    name: "${OLLAMA_NETWORK:-local-ai-ollama_default}"

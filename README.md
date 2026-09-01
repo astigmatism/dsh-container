@@ -2,8 +2,8 @@
 
 This repository reconstructs the live `deepseek-harness` deployment captured
 on 2026-08-31. It produces a reusable Harness image plus its authenticated HTTPS
-gateway and can either join an existing Ollama router network or start a managed,
-pinned Ollama/router stack.
+gateway and can reach a router elsewhere on the LAN, join an existing local
+router network, or start a managed, pinned Ollama/router stack.
 
 The image is reproducible configuration, not a `docker commit` snapshot. Plugin
 versions and patches are locked in Git; sessions, credentials, TLS private keys,
@@ -50,9 +50,35 @@ keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 
 ## Choose a deployment mode
 
+Remote Ollama mode is the portable default and is intended for deploying
+Harness on another machine on the LAN. Harness uses the canonical
+`http://ai-router:11434/v1` setting while Compose maps that name to
+`REMOTE_OLLAMA_HOST`, so tracked application settings do not diverge by host.
+
+```sh
+git clone https://github.com/astigmatism/dsh-container.git
+cd dsh-container
+./scripts/configure.sh --bind-address 192.168.1.50
+# Set REMOTE_OLLAMA_HOST in .env to the router host's LAN address.
+./scripts/deploy.sh
+```
+
+The no-flag deploy command selects remote mode for a new deployment and reuses
+the recorded mode on an existing deployment. A plain
+`docker compose up -d --build` now has the same network topology and creates
+its private network rather than requesting an external network, but
+`deploy.sh` remains the recommended entrypoint because it records the mode and
+performs post-start verification.
+
+On Windows, run these POSIX deployment scripts from a WSL 2 distribution with
+Docker Desktop's WSL integration and Linux containers enabled. Keeping the
+checkout in the WSL filesystem also avoids slow Windows-filesystem bind mounts.
+
 External Ollama mode matches the source host most closely. It joins an existing
 Docker network, and that network must expose the Responses-compatible router
-under the alias `ai-router`.
+under the alias `ai-router`. Docker bridge networks are local to one Docker
+Engine, so this mode is only appropriate when Harness and the existing router
+run on the same machine.
 
 ```sh
 git clone https://github.com/astigmatism/dsh-container.git
@@ -60,18 +86,6 @@ cd dsh-container
 ./scripts/configure.sh --bind-address 192.168.1.50
 # Edit OLLAMA_NETWORK in .env if it is not local-ai-ollama_default.
 ./scripts/deploy.sh --external-ollama
-```
-
-Remote Ollama mode is for machines whose router is on another host. Harness
-still uses the canonical `http://ai-router:11434/v1` setting; Compose maps that
-name to `REMOTE_OLLAMA_HOST`, so tracked settings do not diverge by machine.
-
-```sh
-git clone https://github.com/astigmatism/dsh-container.git
-cd dsh-container
-./scripts/configure.sh --bind-address 192.168.1.50
-# Set REMOTE_OLLAMA_HOST in .env to the router host's address.
-./scripts/deploy.sh --remote-ollama
 ```
 
 Managed Ollama mode is the self-contained option. It adds the pinned Ollama
@@ -93,7 +107,7 @@ the selected models. Its first start pulls approximately 58 GB. Set
 source stack selected three GPUs; review both `GPU_DEVICE_IDS` and the captured
 `15,10,8` tensor split whenever the destination GPU layout differs.
 
-Both modes bind to loopback unless `--bind-address` is supplied. The router's
+All modes bind to loopback unless `--bind-address` is supplied. The router's
 admin ports remain loopback-only by default even when Harness is exposed on a
 trusted LAN.
 
@@ -315,7 +329,7 @@ Verify a running external, remote, or managed deployment:
 ./scripts/verify.sh --managed-ollama
 ```
 
-Routine Compose commands for external mode are standard:
+Routine Compose commands for the default remote mode are standard:
 
 ```sh
 docker compose ps
@@ -324,12 +338,12 @@ docker compose restart
 docker compose down
 ```
 
-For remote mode, include its overlay:
+For external mode, include its overlay:
 
 ```sh
-docker compose -f compose.yaml -f compose.remote-ollama.yaml ps
-docker compose -f compose.yaml -f compose.remote-ollama.yaml logs -f --tail=200
-docker compose -f compose.yaml -f compose.remote-ollama.yaml down
+docker compose -f compose.yaml -f compose.external-ollama.yaml ps
+docker compose -f compose.yaml -f compose.external-ollama.yaml logs -f --tail=200
+docker compose -f compose.yaml -f compose.external-ollama.yaml down
 ```
 
 For managed mode, include the overlay:

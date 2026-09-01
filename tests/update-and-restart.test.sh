@@ -230,9 +230,10 @@ grep -Fq 'Restarting maintenance under the fetched updater before service interr
 [ ! -e "$fixture/data/update-and-restart.lock" ] \
   || fail "successful updater left its transferred lock behind"
 
-config_line=$(line_number "compose --env-file $fixture/.env -f $fixture/compose.yaml config --quiet" "$fixture/docker.log")
-pull_line=$(line_number "compose --env-file $fixture/.env -f $fixture/compose.yaml pull --ignore-buildable" "$fixture/docker.log")
-build_line=$(line_number "compose --env-file $fixture/.env -f $fixture/compose.yaml build" "$fixture/docker.log")
+external_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.external-ollama.yaml"
+config_line=$(line_number "$external_prefix config --quiet" "$fixture/docker.log")
+pull_line=$(line_number "$external_prefix pull --ignore-buildable" "$fixture/docker.log")
+build_line=$(line_number "$external_prefix build" "$fixture/docker.log")
 deploy_line=$(line_number 'deploy --external-ollama --no-build' "$fixture/docker.log")
 [ "$config_line" -lt "$pull_line" ] \
   && [ "$pull_line" -lt "$build_line" ] \
@@ -353,6 +354,34 @@ unset TEST_COMPOSE_LABELS
 [ "$update_status" -ne 0 ] || fail "explicit mode bypassed label/.env conflict"
 assert_status "$fixture" 'failure_type=deployment-mode-inference'
 
+make_fixture portable-base-label matching
+{
+  printf '%s\n' 'DSH_DEPLOYMENT_MODE=remote'
+  printf 'HOST_UID=%s\n' "$(id -u)"
+  printf 'HOST_GID=%s\n' "$(id -g)"
+} >"$fixture/.env"
+TEST_COMPOSE_LABELS="$fixture/compose.yaml"
+run_update "$fixture"
+unset TEST_COMPOSE_LABELS
+[ "$update_status" -eq 0 ] || fail "base-only Compose labels were not inferred as remote mode"
+grep -Fq 'deploy --remote-ollama --no-build' "$fixture/docker.log" \
+  || fail "base-only Compose labels did not preserve remote mode"
+
+make_fixture explicit-external-label matching
+TEST_COMPOSE_LABELS="$fixture/compose.yaml,$fixture/compose.external-ollama.yaml"
+run_update "$fixture"
+unset TEST_COMPOSE_LABELS
+[ "$update_status" -eq 0 ] || fail "external overlay labels were not inferred as external mode"
+grep -Fq 'deploy --external-ollama --no-build' "$fixture/docker.log" \
+  || fail "external overlay labels did not preserve external mode"
+
+make_fixture conflicting-overlay-labels matching
+TEST_COMPOSE_LABELS="$fixture/compose.yaml,$fixture/compose.external-ollama.yaml,$fixture/compose.remote-ollama.yaml"
+run_update "$fixture"
+unset TEST_COMPOSE_LABELS
+[ "$update_status" -ne 0 ] || fail "conflicting external and remote overlays were accepted"
+assert_status "$fixture" 'failure_type=deployment-mode-inference'
+
 make_fixture docker-failure matching
 TEST_DOCKER_INFO_EXIT=1
 run_update "$fixture" --external-ollama
@@ -455,7 +484,7 @@ do
   [ "$update_status" -eq 0 ] || fail "$selected_mode mode update failed"
   case "$selected_mode" in
     external)
-      expected_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml"
+      expected_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.external-ollama.yaml"
       ;;
     remote)
       expected_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.remote-ollama.yaml"

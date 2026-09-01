@@ -1,10 +1,17 @@
-import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { connect as netConnect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
+import {
+  createSessionAuthenticator,
+  credentialsValid,
+  passwordHash,
+  withoutSessionCookie,
+} from './session-auth.mjs'
 
 const dataDir = '/data/gateway'
 const tlsDir = join(dataDir, 'tls')
@@ -25,6 +32,7 @@ const ttsBaseUrl = (process.env.TTS_BASE_URL || '').replace(/\/+$/, '')
 const ttsModel = process.env.TTS_MODEL || 'tts-1'
 const ttsVoice = process.env.TTS_VOICE || 'af_heart'
 const ttsKeyFile = process.env.TTS_API_KEY_FILE || '/run/secrets/tts_api_key'
+const LOGIN_PATH = '/__harness/login'
 
 function integer(name, fallback) {
   const value = Number.parseInt(process.env[name] || '', 10)
@@ -38,49 +46,18 @@ function atomicJson(path, value) {
   renameSync(temp, path)
 }
 
-function hashPassword(password, salt, iterations) {
-  return pbkdf2Sync(password, salt, iterations, 32, 'sha256').toString('hex')
-}
-
 function loadAuth() {
   if (existsSync(authPath)) return JSON.parse(readFileSync(authPath, 'utf8'))
   const username = process.env.HARNESS_AUTH_USERNAME || 'harness'
   const password = randomBytes(18).toString('base64url')
   const salt = randomBytes(16).toString('hex')
   const iterations = 240000
-  const auth = { username, salt, iterations, hash: hashPassword(password, salt, iterations) }
+  const hash = passwordHash(password, salt, iterations)
+  const auth = { username, salt, iterations, hash }
   atomicJson(authPath, auth)
   process.stdout.write(`DeepSeek Harness initial credentials: ${username} / ${password}\n`)
   process.stdout.write('The plaintext password is shown only on this first start. Delete data/gateway/auth.json to regenerate it.\n')
   return auth
-}
-
-function authenticated(req, auth) {
-  const header = req.headers.authorization
-  if (typeof header !== 'string' || !header.startsWith('Basic ')) return false
-  let decoded
-  try {
-    decoded = Buffer.from(header.slice(6), 'base64').toString('utf8')
-  } catch {
-    return false
-  }
-  const separator = decoded.indexOf(':')
-  if (separator < 0) return false
-  const username = decoded.slice(0, separator)
-  const password = decoded.slice(separator + 1)
-  const expectedUser = Buffer.from(auth.username)
-  const receivedUser = Buffer.from(username)
-  const expectedHash = Buffer.from(auth.hash, 'hex')
-  const receivedHash = Buffer.from(hashPassword(password, auth.salt, auth.iterations), 'hex')
-  return expectedUser.length === receivedUser.length
-    && expectedHash.length === receivedHash.length
-    && timingSafeEqual(expectedUser, receivedUser)
-    && timingSafeEqual(expectedHash, receivedHash)
-}
-
-function httpsAuthority(hostname, port) {
-  const host = hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname
-  return new URL(`https://${host}:${port}`).host
 }
 
 const externalAuthorities = new Set([
@@ -89,28 +66,6 @@ const externalAuthorities = new Set([
   httpsAuthority('127.0.0.1', publicHttpsPort),
   httpsAuthority('localhost', publicHttpsPort),
 ])
-
-function externallyTrusted(req) {
-  const host = req.headers.host
-  if (typeof host !== 'string') return false
-  let authority
-  try {
-    authority = new URL(`https://${host}`).host
-  } catch {
-    return false
-  }
-  if (!externalAuthorities.has(authority)) return false
-  if (req.headers['sec-fetch-site'] === 'cross-site') return false
-  const origin = req.headers.origin
-  if (origin === undefined) return true
-  if (typeof origin !== 'string') return false
-  try {
-    const parsed = new URL(origin)
-    return parsed.protocol === 'https:' && parsed.host === authority
-  } catch {
-    return false
-  }
-}
 
 function forbid(res) {
   res.writeHead(403, {
@@ -127,6 +82,30 @@ function challenge(res) {
     'www-authenticate': 'Basic realm="DeepSeek Harness", charset="UTF-8"',
   })
   res.end('Authentication required\n')
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character])
+}
+
+function loginPage(res, auth, status = 200, message = '') {
+  const body = Buffer.from(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — DeepSeek Harness</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d1220;color:#eef3ff;font:16px system-ui,sans-serif}.card{width:min(92vw,26rem);padding:2rem;border:1px solid #2b3958;border-radius:16px;background:#151c2e;box-shadow:0 20px 60px #0008}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#aebbd5}.error{color:#ffb4b4}label{display:block;margin:1rem 0 .35rem}input{width:100%;padding:.75rem;border:1px solid #3b4d73;border-radius:8px;background:#0d1220;color:inherit;font:inherit}button{width:100%;margin-top:1.25rem;padding:.8rem;border:0;border-radius:8px;background:#7aa2ff;color:#071126;font:700 1rem system-ui;cursor:pointer}
+</style></head><body><main class="card"><h1>DeepSeek Harness</h1><p>Sign in to continue over the authenticated HTTPS gateway.</p>${message ? `<p class="error" role="alert">${escapeHtml(message)}</p>` : ''}<form method="post" action="${LOGIN_PATH}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" value="${escapeHtml(auth.username)}" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`)
+  res.writeHead(status, {
+    'cache-control': 'no-store',
+    'content-length': String(body.length),
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'content-type': 'text/html; charset=utf-8',
+    'referrer-policy': 'no-referrer',
+    'x-content-type-options': 'nosniff',
+  })
+  res.end(body)
 }
 
 function openssl(args) {
@@ -211,6 +190,39 @@ async function readBody(req, maxBytes) {
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
+}
+
+async function handleLogin(req, res, auth, sessions) {
+  if (req.method === 'GET') {
+    loginPage(res, auth)
+    return
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405, { allow: 'GET, POST' })
+    res.end()
+    return
+  }
+  try {
+    const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase()
+    if (contentType !== 'application/x-www-form-urlencoded') {
+      loginPage(res, auth, 415, 'The sign-in request had an unsupported format.')
+      return
+    }
+    const form = new URLSearchParams((await readBody(req, 8192)).toString('utf8'))
+    if (!credentialsValid(auth, form.get('username') || '', form.get('password') || '')) {
+      loginPage(res, auth, 401, 'The username or password was not accepted.')
+      return
+    }
+    const token = sessions.issue()
+    res.writeHead(303, {
+      'cache-control': 'no-store',
+      location: '/',
+      'set-cookie': sessions.setCookieHeader(token),
+    })
+    res.end()
+  } catch (error) {
+    loginPage(res, auth, 400, error instanceof Error ? error.message : String(error))
+  }
 }
 
 async function transcribe(req, res) {
@@ -313,6 +325,9 @@ function proxy(req, res) {
   delete headers.connection
   delete headers.authorization
   delete headers['proxy-authorization']
+  const forwardedCookie = withoutSessionCookie(headers.cookie)
+  if (forwardedCookie === null) delete headers.cookie
+  else headers.cookie = forwardedCookie
   headers.host = backend.host
   if (headers.origin !== undefined) headers.origin = backend.origin
   headers['x-forwarded-proto'] = 'https'
@@ -341,6 +356,9 @@ function proxyUpgrade(req, socket, head) {
     const headers = { ...req.headers }
     delete headers.authorization
     delete headers['proxy-authorization']
+    const forwardedCookie = withoutSessionCookie(headers.cookie)
+    if (forwardedCookie === null) delete headers.cookie
+    else headers.cookie = forwardedCookie
     headers.host = backend.host
     if (headers.origin !== undefined) headers.origin = backend.origin
     headers['x-forwarded-proto'] = 'https'
@@ -363,6 +381,7 @@ function proxyUpgrade(req, socket, head) {
 }
 
 const auth = loadAuth()
+const sessions = createSessionAuthenticator(auth)
 const tls = ensureTls()
 
 const caServer = createHttpServer((req, res) => {
@@ -396,12 +415,17 @@ const httpsServer = createHttpsServer({
     json(res, 200, { status: 'ok' })
     return
   }
-  if (!authenticated(req, auth)) {
-    challenge(res)
+  if (!externallyTrusted(req, externalAuthorities)) {
+    forbid(res)
     return
   }
-  if (!externallyTrusted(req)) {
-    forbid(res)
+  if (path === LOGIN_PATH) {
+    await handleLogin(req, res, auth, sessions)
+    return
+  }
+  if (!sessions.acceptsRequest(req)) {
+    if (isTopLevelGetNavigation(req)) loginPage(res, auth)
+    else challenge(res)
     return
   }
   if (path === '/local-stt/config') {
@@ -436,12 +460,12 @@ const httpsServer = createHttpsServer({
 })
 
 httpsServer.on('upgrade', (req, socket, head) => {
-  if (!authenticated(req, auth)) {
-    socket.end('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="DeepSeek Harness"\r\nConnection: close\r\n\r\n')
+  if (!externallyTrusted(req, externalAuthorities)) {
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
     return
   }
-  if (!externallyTrusted(req)) {
-    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+  if (!sessions.acceptsRequest(req)) {
+    socket.end('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="DeepSeek Harness"\r\nConnection: close\r\n\r\n')
     return
   }
   proxyUpgrade(req, socket, head)

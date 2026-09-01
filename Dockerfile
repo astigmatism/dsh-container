@@ -95,7 +95,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY gateway/server.mjs /opt/dsh-gateway/server.mjs
+COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs /opt/dsh-gateway/
 
 USER node
 ENTRYPOINT ["node", "/opt/dsh-gateway/server.mjs"]

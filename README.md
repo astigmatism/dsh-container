@@ -147,9 +147,12 @@ certificate, and random Basic Auth password on first start. Retrieve that
 first-start password from `docker compose logs gateway`.
 
 Download `http://HOST:3081/ca.crt`, trust it on the browser device, and open
-`https://HOST:3443/`. Microphone access requires this trusted HTTPS origin.
-Port 3081 serves only the public CA, health response, and redirects; it does not
-serve Harness or credentials.
+`https://HOST:3443/`. Browser navigation opens a normal sign-in page and creates
+an HTTP-only, secure, same-site session cookie after the stored gateway credentials
+are accepted. HTTP Basic Auth remains available for non-browser clients. Sessions
+last up to 12 hours and are invalidated when the gateway restarts. Microphone access
+requires this trusted HTTPS origin. Port 3081 serves only the public CA, health
+response, and redirects; it does not serve Harness or credentials.
 
 To replace the gateway username or password later, rerun the password utility
 and restart the gateway:

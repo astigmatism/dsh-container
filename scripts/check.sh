@@ -72,6 +72,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check plugin/dsh-local-speech/client.js
     node --check seed/plugins/dsh-web-search-free.js
     node --check ollama-router/src/server.js
+    node --test gateway/*.test.mjs
     node --test ollama-router/test/*.test.js
   '
 

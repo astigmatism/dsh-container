@@ -13,6 +13,8 @@ function request(headers = {}, method = 'GET') {
 test('accepts direct and same-origin requests for an allowed authority', () => {
   assert.equal(externallyTrusted(request(), trusted), true)
   assert.equal(externallyTrusted(request({ origin: `https://${authority}` }), trusted), true)
+  assert.equal(externallyTrusted(request({ origin: `http://${authority}` }), trusted, 'http:'), true)
+  assert.equal(externallyTrusted(request({ origin: `https://${authority}` }), trusted, 'http:'), false)
 })
 
 test('accepts the user-activated top-level HTTPS navigation from Service Portal', () => {

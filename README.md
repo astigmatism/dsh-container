@@ -1,13 +1,14 @@
 # Portable DeepSeek Harness
 
 This repository reconstructs the live `deepseek-harness` deployment captured
-on 2026-08-31. It produces a reusable Harness image plus its authenticated HTTPS
-gateway and can reach a router elsewhere on the LAN, join an existing local
+on 2026-08-31. It produces a reusable Harness image plus its authenticated
+HTTP/HTTPS gateway and can reach a router elsewhere on the LAN, join an existing local
 router network, or start a managed, pinned Ollama/router stack.
 
 The image is reproducible configuration, not a `docker commit` snapshot. Plugin
-versions and patches are locked in Git; sessions, credentials, TLS private keys,
-request logs, and 58 GB of model blobs are deliberately kept outside Git.
+versions and patches are locked in Git; sessions, derived credential hashes,
+TLS private keys, request logs, and 58 GB of model blobs are deliberately kept
+outside Git.
 
 The captured base-image digests and release workflow target Linux `amd64`.
 Destination hosts need Docker Engine with Compose v2; managed Ollama mode also
@@ -170,13 +171,15 @@ The plaintext default is public repository configuration by design; do not
 expose the gateway outside the trusted home network without replacing this
 policy.
 
-Download `http://HOST:3081/ca.crt`, trust it on the browser device, and open
-`https://HOST:3443/`. Browser navigation opens a normal sign-in page and creates
-an HTTP-only, secure, same-site session cookie after the stored gateway credentials
-are accepted. HTTP Basic Auth remains available for non-browser clients. Sessions
-last up to 12 hours and are invalidated when the gateway restarts. Microphone access
-requires this trusted HTTPS origin. Port 3081 serves only the public CA, health
-response, and redirects; it does not serve Harness or credentials.
+Open `http://HOST:3081/` for the portable, no-certificate-install login. Browser
+navigation opens a normal sign-in page and creates an HTTP-only, same-site
+session cookie after the stored gateway credentials are accepted. HTTP Basic
+Auth remains available for non-browser clients. Sessions last up to 12 hours
+and are invalidated when the gateway restarts.
+
+HTTPS remains available at `https://HOST:3443/` when browser microphone access
+is needed. That optional path requires downloading `http://HOST:3081/ca.crt`
+and trusting the local CA on the browser device; ordinary Harness use does not.
 
 ## Speech-to-text and text-to-speech
 
@@ -220,7 +223,7 @@ Run a live TTS-to-STT round trip against the configured voice services:
 ## Moving existing runtime state
 
 Fresh deployment is the safer default. To retain existing sessions and the
-same gateway identity, stop the source stack and securely copy ignored runtime
+same gateway TLS identity, stop the source stack and securely copy ignored runtime
 state into the same paths in this checkout. To keep the canonical software and
 plugin set, do not copy `data/dsh/profiles/`, `data/dsh/.dsh-plugins/`, or an
 old `settings.yaml`; the container will seed those from the repository image.

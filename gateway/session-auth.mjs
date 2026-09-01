@@ -89,8 +89,9 @@ export function createSessionAuthenticator(auth, options = {}) {
     return true
   }
 
-  function setCookieHeader(token) {
-    return `${SESSION_COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.floor(ttlMs / 1000)}`
+  function setCookieHeader(token, options = {}) {
+    const secure = options.secure !== false ? '; Secure' : ''
+    return `${SESSION_COOKIE_NAME}=${token}; Path=/; HttpOnly${secure}; SameSite=Lax; Max-Age=${Math.floor(ttlMs / 1000)}`
   }
 
   return { acceptsRequest, issue, setCookieHeader }

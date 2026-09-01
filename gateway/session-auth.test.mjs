@@ -55,6 +55,8 @@ test('accepts Basic Auth and issued browser sessions', () => {
   const token = sessions.issue()
   assert.equal(sessions.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` } }), true)
   assert.match(sessions.setCookieHeader(token), /HttpOnly; Secure; SameSite=Lax/)
+  assert.match(sessions.setCookieHeader(token, { secure: false }), /HttpOnly; SameSite=Lax/)
+  assert.doesNotMatch(sessions.setCookieHeader(token, { secure: false }), /; Secure/)
   currentTime = 6000
   assert.equal(sessions.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` } }), false)
 })

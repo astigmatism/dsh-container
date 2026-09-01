@@ -13,7 +13,7 @@ function isUserActivatedTopLevelGetNavigation(req) {
   return isTopLevelGetNavigation(req) && req.headers['sec-fetch-user'] === '?1'
 }
 
-export function externallyTrusted(req, externalAuthorities) {
+export function externallyTrusted(req, externalAuthorities, protocol = 'https:') {
   const host = req.headers.host
   if (typeof host !== 'string') return false
   let authority
@@ -34,7 +34,7 @@ export function externallyTrusted(req, externalAuthorities) {
   if (typeof origin !== 'string') return false
   try {
     const parsed = new URL(origin)
-    return parsed.protocol === 'https:' && parsed.host === authority
+    return parsed.protocol === protocol && parsed.host === authority
   } catch {
     return false
   }

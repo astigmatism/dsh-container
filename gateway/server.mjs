@@ -18,7 +18,8 @@ const authPath = join(dataDir, 'auth.json')
 const backend = new URL(process.env.HARNESS_BACKEND_URL || 'http://127.0.0.1:3080')
 const httpsPort = integer('HARNESS_HTTPS_PORT', 3443)
 const publicHttpsPort = integer('HARNESS_PUBLIC_HTTPS_PORT', httpsPort)
-const caPort = integer('HARNESS_CA_PORT', 3081)
+const httpPort = integer('HARNESS_HTTP_PORT', 3081)
+const publicHttpPort = integer('HARNESS_PUBLIC_HTTP_PORT', httpPort)
 const sttMaxBytes = integer('STT_MAX_BYTES', 32 * 1024 * 1024)
 const sttTimeoutMs = integer('STT_TIMEOUT_MS', 120000)
 const sttMaxRecordSeconds = integer('STT_MAX_RECORD_SECONDS', 300)
@@ -58,11 +59,17 @@ function loadAuth() {
   return auth
 }
 
-const externalAuthorities = new Set([
+const httpsAuthorities = new Set([
   httpsAuthority(process.env.HARNESS_TLS_IP || '127.0.0.1', publicHttpsPort),
   httpsAuthority(process.env.HARNESS_TLS_DNS || 'deepseek-harness.local', publicHttpsPort),
   httpsAuthority('127.0.0.1', publicHttpsPort),
   httpsAuthority('localhost', publicHttpsPort),
+])
+const httpAuthorities = new Set([
+  httpsAuthority(process.env.HARNESS_TLS_IP || '127.0.0.1', publicHttpPort),
+  httpsAuthority(process.env.HARNESS_TLS_DNS || 'deepseek-harness.local', publicHttpPort),
+  httpsAuthority('127.0.0.1', publicHttpPort),
+  httpsAuthority('localhost', publicHttpPort),
 ])
 
 function forbid(res) {
@@ -94,7 +101,7 @@ function loginPage(res, auth, status = 200, message = '') {
 <title>Sign in — DeepSeek Harness</title>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d1220;color:#eef3ff;font:16px system-ui,sans-serif}.card{width:min(92vw,26rem);padding:2rem;border:1px solid #2b3958;border-radius:16px;background:#151c2e;box-shadow:0 20px 60px #0008}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#aebbd5}.error{color:#ffb4b4}label{display:block;margin:1rem 0 .35rem}input{width:100%;padding:.75rem;border:1px solid #3b4d73;border-radius:8px;background:#0d1220;color:inherit;font:inherit}button{width:100%;margin-top:1.25rem;padding:.8rem;border:0;border-radius:8px;background:#7aa2ff;color:#071126;font:700 1rem system-ui;cursor:pointer}
-</style></head><body><main class="card"><h1>DeepSeek Harness</h1><p>Sign in to continue over the authenticated HTTPS gateway.</p>${message ? `<p class="error" role="alert">${escapeHtml(message)}</p>` : ''}<form method="post" action="${LOGIN_PATH}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" value="${escapeHtml(auth.username)}" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`)
+</style></head><body><main class="card"><h1>DeepSeek Harness</h1><p>Sign in to continue through the authenticated gateway.</p>${message ? `<p class="error" role="alert">${escapeHtml(message)}</p>` : ''}<form method="post" action="${LOGIN_PATH}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" value="${escapeHtml(auth.username)}" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`)
   res.writeHead(status, {
     'cache-control': 'no-store',
     'content-length': String(body.length),
@@ -190,7 +197,7 @@ async function readBody(req, maxBytes) {
   return Buffer.concat(chunks)
 }
 
-async function handleLogin(req, res, auth, sessions) {
+async function handleLogin(req, res, auth, sessions, secureCookie) {
   if (req.method === 'GET') {
     loginPage(res, auth)
     return
@@ -215,7 +222,7 @@ async function handleLogin(req, res, auth, sessions) {
     res.writeHead(303, {
       'cache-control': 'no-store',
       location: '/',
-      'set-cookie': sessions.setCookieHeader(token),
+      'set-cookie': sessions.setCookieHeader(token, { secure: secureCookie }),
     })
     res.end()
   } catch (error) {
@@ -318,7 +325,7 @@ async function synthesize(req, res) {
   }
 }
 
-function proxy(req, res) {
+function proxy(req, res, forwardedProtocol) {
   const headers = { ...req.headers }
   delete headers.connection
   delete headers.authorization
@@ -328,7 +335,7 @@ function proxy(req, res) {
   else headers.cookie = forwardedCookie
   headers.host = backend.host
   if (headers.origin !== undefined) headers.origin = backend.origin
-  headers['x-forwarded-proto'] = 'https'
+  headers['x-forwarded-proto'] = forwardedProtocol
   headers['x-forwarded-host'] = req.headers.host || ''
   headers['x-forwarded-for'] = req.socket.remoteAddress || ''
   const upstream = httpRequest({
@@ -348,7 +355,7 @@ function proxy(req, res) {
   req.pipe(upstream)
 }
 
-function proxyUpgrade(req, socket, head) {
+function proxyUpgrade(req, socket, head, forwardedProtocol) {
   const upstream = netConnect(Number.parseInt(backend.port || '80', 10), backend.hostname, () => {
     const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
     const headers = { ...req.headers }
@@ -359,7 +366,7 @@ function proxyUpgrade(req, socket, head) {
     else headers.cookie = forwardedCookie
     headers.host = backend.host
     if (headers.origin !== undefined) headers.origin = backend.origin
-    headers['x-forwarded-proto'] = 'https'
+    headers['x-forwarded-proto'] = forwardedProtocol
     headers['x-forwarded-host'] = req.headers.host || ''
     headers['x-forwarded-for'] = req.socket.remoteAddress || ''
     for (const [name, value] of Object.entries(headers)) {
@@ -382,13 +389,13 @@ const auth = loadAuth()
 const sessions = createSessionAuthenticator(auth)
 const tls = ensureTls()
 
-const caServer = createHttpServer((req, res) => {
-  const path = new URL(req.url || '/', 'http://local').pathname
+async function handleGateway(req, res, options) {
+  const path = new URL(req.url || '/', `${options.protocol}//local`).pathname
   if (path === '/healthz') {
     json(res, 200, { status: 'ok' })
     return
   }
-  if (path === '/ca.crt') {
+  if (options.serveCa && path === '/ca.crt') {
     const body = readFileSync(tls.caCert)
     res.writeHead(200, {
       'content-disposition': 'attachment; filename="deepseek-harness-local-ca.crt"',
@@ -398,27 +405,12 @@ const caServer = createHttpServer((req, res) => {
     res.end(body)
     return
   }
-  res.writeHead(302, {
-    location: `https://${httpsAuthority(process.env.HARNESS_TLS_IP || '127.0.0.1', publicHttpsPort)}/`,
-  })
-  res.end()
-})
-
-const httpsServer = createHttpsServer({
-  key: readFileSync(tls.serverKey),
-  cert: readFileSync(tls.serverCert),
-}, async (req, res) => {
-  const path = new URL(req.url || '/', 'https://local').pathname
-  if (path === '/healthz') {
-    json(res, 200, { status: 'ok' })
-    return
-  }
-  if (!externallyTrusted(req, externalAuthorities)) {
+  if (!externallyTrusted(req, options.authorities, `${options.protocol}`)) {
     forbid(res)
     return
   }
   if (path === LOGIN_PATH) {
-    await handleLogin(req, res, auth, sessions)
+    await handleLogin(req, res, auth, sessions, options.secureCookie)
     return
   }
   if (!sessions.acceptsRequest(req)) {
@@ -454,11 +446,11 @@ const httpsServer = createHttpsServer({
     await synthesize(req, res)
     return
   }
-  proxy(req, res)
-})
+  proxy(req, res, options.protocol.slice(0, -1))
+}
 
-httpsServer.on('upgrade', (req, socket, head) => {
-  if (!externallyTrusted(req, externalAuthorities)) {
+function handleUpgrade(req, socket, head, options) {
+  if (!externallyTrusted(req, options.authorities, options.protocol)) {
     socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
     return
   }
@@ -466,18 +458,45 @@ httpsServer.on('upgrade', (req, socket, head) => {
     socket.end('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="DeepSeek Harness"\r\nConnection: close\r\n\r\n')
     return
   }
-  proxyUpgrade(req, socket, head)
+  proxyUpgrade(req, socket, head, options.protocol.slice(0, -1))
+}
+
+const httpOptions = {
+  protocol: 'http:',
+  authorities: httpAuthorities,
+  secureCookie: false,
+  serveCa: true,
+}
+const httpsOptions = {
+  protocol: 'https:',
+  authorities: httpsAuthorities,
+  secureCookie: true,
+  serveCa: false,
+}
+
+const httpServer = createHttpServer((req, res) => handleGateway(req, res, httpOptions))
+const httpsServer = createHttpsServer({
+  key: readFileSync(tls.serverKey),
+  cert: readFileSync(tls.serverCert),
+}, (req, res) => handleGateway(req, res, httpsOptions))
+
+httpsServer.on('upgrade', (req, socket, head) => {
+  handleUpgrade(req, socket, head, httpsOptions)
+})
+httpServer.on('upgrade', (req, socket, head) => {
+  handleUpgrade(req, socket, head, httpOptions)
 })
 
-caServer.listen(caPort, '0.0.0.0', () => {
-  process.stdout.write(`Harness local CA download: http://0.0.0.0:${caPort}/ca.crt\n`)
+httpServer.listen(httpPort, '0.0.0.0', () => {
+  process.stdout.write(`Harness authenticated HTTP gateway: http://0.0.0.0:${httpPort}/\n`)
+  process.stdout.write(`Harness optional local CA download: http://0.0.0.0:${httpPort}/ca.crt\n`)
 })
 httpsServer.listen(httpsPort, '0.0.0.0', () => {
   process.stdout.write(`Harness authenticated HTTPS gateway: https://0.0.0.0:${httpsPort}/\n`)
 })
 
 function shutdown() {
-  caServer.close()
+  httpServer.close()
   httpsServer.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 5000).unref()
 }

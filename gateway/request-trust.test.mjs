@@ -17,12 +17,17 @@ test('accepts direct and same-origin requests for an allowed authority', () => {
   assert.equal(externallyTrusted(request({ origin: `https://${authority}` }), trusted, 'http:'), false)
 })
 
-test('accepts the user-activated top-level HTTPS navigation from Service Portal', () => {
+test('accepts top-level navigation and its browser redirect from another site', () => {
   assert.equal(externallyTrusted(request({
     'sec-fetch-site': 'cross-site',
     'sec-fetch-mode': 'navigate',
     'sec-fetch-dest': 'document',
     'sec-fetch-user': '?1',
+  }), trusted), true)
+  assert.equal(externallyTrusted(request({
+    'sec-fetch-site': 'cross-site',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-dest': 'document',
   }), trusted), true)
 })
 
@@ -48,11 +53,6 @@ test('rejects other cross-site requests', () => {
     'sec-fetch-site': 'cross-site',
     'sec-fetch-mode': 'cors',
     'sec-fetch-dest': 'empty',
-  }), trusted), false)
-  assert.equal(externallyTrusted(request({
-    'sec-fetch-site': 'cross-site',
-    'sec-fetch-mode': 'navigate',
-    'sec-fetch-dest': 'document',
   }), trusted), false)
 })
 

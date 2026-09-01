@@ -9,10 +9,6 @@ export function isTopLevelGetNavigation(req) {
     && req.headers['sec-fetch-dest'] === 'document'
 }
 
-function isUserActivatedTopLevelGetNavigation(req) {
-  return isTopLevelGetNavigation(req) && req.headers['sec-fetch-user'] === '?1'
-}
-
 export function externallyTrusted(req, externalAuthorities, protocol = 'https:') {
   const host = req.headers.host
   if (typeof host !== 'string') return false
@@ -24,10 +20,11 @@ export function externallyTrusted(req, externalAuthorities, protocol = 'https:')
   }
   if (!externalAuthorities.has(authority)) return false
 
-  // Browsers treat navigation from Service Portal's HTTP origin to this HTTPS
-  // origin as cross-site. Permit only an explicit top-level GET navigation;
-  // cross-site API calls, form submissions, and WebSocket upgrades stay denied.
-  if (req.headers['sec-fetch-site'] === 'cross-site' && !isUserActivatedTopLevelGetNavigation(req)) return false
+  // Browsers can preserve a cross-site classification across navigation
+  // redirects while omitting Sec-Fetch-User on the redirected request. Permit
+  // top-level GET navigation (which the same-origin policy keeps unreadable to
+  // the initiating site); cross-site APIs, forms, and upgrades stay denied.
+  if (req.headers['sec-fetch-site'] === 'cross-site' && !isTopLevelGetNavigation(req)) return false
 
   const origin = req.headers.origin
   if (origin === undefined) return true

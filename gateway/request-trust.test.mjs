@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
+import { authorityTrusted, externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
 
 const authority = httpsAuthority('127.0.0.1', 3443)
 const trusted = new Set([authority])
@@ -15,6 +15,15 @@ test('accepts direct and same-origin requests for an allowed authority', () => {
   assert.equal(externallyTrusted(request({ origin: `https://${authority}` }), trusted), true)
   assert.equal(externallyTrusted(request({ origin: `http://${authority}` }), trusted, 'http:'), true)
   assert.equal(externallyTrusted(request({ origin: `https://${authority}` }), trusted, 'http:'), false)
+})
+
+test('checks the approved authority independently for a login submission', () => {
+  const login = request({
+    'sec-fetch-site': 'cross-site',
+    origin: 'null',
+  }, 'POST')
+  assert.equal(authorityTrusted(login, trusted), true)
+  assert.equal(authorityTrusted({ method: 'POST', headers: { host: 'example.test:3443' } }, trusted), false)
 })
 
 test('accepts top-level navigation and its browser redirect from another site', () => {

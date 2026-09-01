@@ -4,7 +4,7 @@ import { createServer as createHttpsServer } from 'node:https'
 import { connect as netConnect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
+import { authorityTrusted, externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
 import {
   createSessionAuthenticator,
   credentialsValid,
@@ -405,12 +405,16 @@ async function handleGateway(req, res, options) {
     res.end(body)
     return
   }
-  if (!externallyTrusted(req, options.authorities, `${options.protocol}`)) {
-    forbid(res)
+  // The login form is only issued from an approved authority, and the single
+  // source-managed identity cannot be switched by login CSRF. Some browsers
+  // nevertheless classify its POST as cross-site or send an opaque Origin, so
+  // authority-check the submission without rejecting it on navigation metadata.
+  if (path === LOGIN_PATH && authorityTrusted(req, options.authorities)) {
+    await handleLogin(req, res, auth, sessions, options.secureCookie)
     return
   }
-  if (path === LOGIN_PATH) {
-    await handleLogin(req, res, auth, sessions, options.secureCookie)
+  if (!externallyTrusted(req, options.authorities, `${options.protocol}`)) {
+    forbid(res)
     return
   }
   if (!sessions.acceptsRequest(req)) {

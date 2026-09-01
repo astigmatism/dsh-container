@@ -9,15 +9,24 @@ export function isTopLevelGetNavigation(req) {
     && req.headers['sec-fetch-dest'] === 'document'
 }
 
-export function externallyTrusted(req, externalAuthorities, protocol = 'https:') {
+function requestAuthority(req) {
   const host = req.headers.host
-  if (typeof host !== 'string') return false
-  let authority
+  if (typeof host !== 'string') return null
   try {
-    authority = new URL(`https://${host}`).host
+    return new URL(`https://${host}`).host
   } catch {
-    return false
+    return null
   }
+}
+
+export function authorityTrusted(req, externalAuthorities) {
+  const authority = requestAuthority(req)
+  return authority !== null && externalAuthorities.has(authority)
+}
+
+export function externallyTrusted(req, externalAuthorities, protocol = 'https:') {
+  const authority = requestAuthority(req)
+  if (authority === null) return false
   if (!externalAuthorities.has(authority)) return false
 
   // Browsers can preserve a cross-site classification across navigation

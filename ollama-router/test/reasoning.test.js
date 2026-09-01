@@ -57,6 +57,8 @@ test('maps generic reasoning efforts to Ollama think values', () => {
   assert.equal(reasoningEffortToThink('high', NIGHT_REASONING), true);
   assert.equal(reasoningEffortToThink('xhigh', NIGHT_REASONING), true);
   assert.equal(reasoningEffortToThink('max', NIGHT_REASONING), true);
+  assert.equal(reasoningEffortToThink('minimal', null, { fallbackToBoolean: true }), true);
+  assert.equal(reasoningEffortToThink('max', null, { fallbackToBoolean: true }), true);
   assert.equal(reasoningEffortToThink('invalid'), undefined);
 });
 

@@ -120,14 +120,14 @@ export function isThinkingEnabled(value) {
   return value === true || OLLAMA_THINK_LEVELS.has(value);
 }
 
-export function reasoningEffortToThink(effort, capabilities) {
+export function reasoningEffortToThink(effort, capabilities, { fallbackToBoolean = false } = {}) {
   if (!RESPONSES_REASONING_EFFORTS.has(effort)) return undefined;
   if (effort === 'none') return false;
-  const validated = validateReasoningCapabilities(capabilities, { required: true });
-  return validated.reasoning_effort_map[effort];
+  const validated = validateReasoningCapabilities(capabilities, { required: !fallbackToBoolean });
+  return validated ? validated.reasoning_effort_map[effort] : true;
 }
 
-export function normalizeThinkValue(value, capabilities) {
+export function normalizeThinkValue(value, capabilities, options) {
   if (value === undefined || typeof value === 'boolean') return value;
   if (typeof value !== 'string') {
     throw new ReasoningRequestError('think must be a boolean or a supported reasoning effort string.');
@@ -136,7 +136,7 @@ export function normalizeThinkValue(value, capabilities) {
   if (!RESPONSES_REASONING_EFFORTS.has(normalized)) {
     throw new ReasoningRequestError(`Unsupported think value: ${String(value)}.`);
   }
-  return reasoningEffortToThink(normalized, capabilities);
+  return reasoningEffortToThink(normalized, capabilities, options);
 }
 
 export function thinkLevelToReasoningEffort(value) {

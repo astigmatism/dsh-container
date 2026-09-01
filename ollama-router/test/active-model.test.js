@@ -58,3 +58,21 @@ test('reads and writes model/profile-specific reasoning capabilities', async () 
   assert.deepEqual(info.supported_think_levels, supportedThinkLevels);
   assert.deepEqual(info.reasoning_effort_map, reasoningEffortMap);
 });
+
+test('normalizes optional discovery metadata without requiring it on older markers', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'router-marker-discovery-'));
+  const file = path.join(dir, 'active-model.json');
+  await writeActiveModelMarker(file, {
+    model: 'model-a:test',
+    context_length: 16384,
+    max_output_tokens: 2048,
+    input_modalities: ['text', 'image', 'text'],
+    revision: 7
+  });
+  const info = await readActiveModel(loadConfig({ ACTIVE_MODEL_FILE: file, ADMIN_TOKEN: '' }));
+  assert.equal(info.context_length, 16384);
+  assert.equal(info.max_output_tokens, 2048);
+  assert.deepEqual(info.input_modalities, ['text', 'image']);
+  assert.equal(info.revision, '7');
+  assert.equal(typeof info.file_mtime_ms, 'number');
+});

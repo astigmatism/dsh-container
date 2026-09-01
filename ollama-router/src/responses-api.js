@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { readActiveModel } from './active-model.js';
 import { parseJsonBuffer, readRequestBody, sendJson, summarizeBody } from './http-utils.js';
-import { normalizeThinkForModel, upstreamFetch } from './upstream.js';
+import { createModelCapabilityLookup, normalizeThinkForModel, upstreamFetch } from './upstream.js';
+import { emptyToolPolicy, normalizeToolsForModel } from './native-tools.js';
 import {
   RESPONSES_REASONING_EFFORTS,
   thinkLevelToReasoningEffort,
@@ -434,7 +435,8 @@ export function translateResponsesRequest(
   forcedKeepAlive,
   defaultThink,
   contextShift = false,
-  rewriteRequestedModelToActive = false
+  rewriteRequestedModelToActive = false,
+  routerModelAlias = null
 ) {
   if (arguments.length < 4) defaultThink = false;
   if (!isPlainObject(body)) invalid('INVALID_REQUEST_BODY', 'The request body must be a JSON object.');
@@ -448,7 +450,8 @@ export function translateResponsesRequest(
   if (body.model !== undefined && (typeof body.model !== 'string' || !body.model.trim())) {
     invalid('INVALID_MODEL', 'model must be a non-empty string when provided.', 'model');
   }
-  if (!rewriteRequestedModelToActive && body.model && body.model !== activeModel) {
+  const publicAliasRequested = body.model === routerModelAlias;
+  if (!rewriteRequestedModelToActive && !publicAliasRequested && body.model && body.model !== activeModel) {
     invalid('MODEL_NOT_ACTIVE', 'Requested model is not the active deployed model for this router profile.', 'model');
   }
   if (body.input === undefined || body.input === null) invalid('INPUT_REQUIRED', 'input is required.', 'input');
@@ -475,9 +478,12 @@ export function translateResponsesRequest(
     model: activeModel,
     messages: translateInput(body.input, body.instructions, translatedTools.toolNames),
     stream: body.stream === true,
-    shift: contextShift,
+    ...(contextShift ? { shift: true } : {}),
     keep_alive: forcedKeepAlive,
     ...(translatedTools.tools.length ? { tools: translatedTools.tools } : {}),
+    ...(Object.hasOwn(body, 'tool_choice') ? { tool_choice: body.tool_choice } : {}),
+    ...(Object.hasOwn(body, 'parallel_tool_calls') ? { parallel_tool_calls: body.parallel_tool_calls } : {}),
+    ...(Object.hasOwn(body, 'max_tool_calls') ? { max_tool_calls: body.max_tool_calls } : {}),
     ...(Object.keys(options).length ? { options } : {}),
     ...(format === undefined ? {} : { format }),
     ...(think === undefined ? {} : { think })
@@ -490,7 +496,7 @@ export function translateResponsesRequest(
     reasoningEffort: reasoningTranslation.effectiveReasoningEffort,
     requestedModel,
     forwardedModel: activeModel,
-    modelRewritten: rewriteRequestedModelToActive && requestedModel !== activeModel,
+    modelRewritten: (rewriteRequestedModelToActive || publicAliasRequested) && requestedModel !== activeModel,
     stream: body.stream === true,
     toolChoice: translatedTools.toolChoice,
     parallelToolCalls: body.parallel_tool_calls ?? true,
@@ -917,6 +923,13 @@ class StreamingResponseBuilder {
   }
 }
 
+async function endFailedStream(builder, writer, apiError) {
+  const failed = builder.shell('failed');
+  failed.error = { code: apiError.code, message: apiError.message };
+  await writer.event('response.failed', { response: failed });
+  writer.end();
+}
+
 async function readUpstreamError(upstreamResponse) {
   const text = await upstreamResponse.text();
   if (!text.trim()) return `Ollama returned HTTP ${upstreamResponse.status}.`;
@@ -1014,7 +1027,8 @@ function attachAbort(request, response, timeoutMs) {
   };
 }
 
-function outcomeBase(started, pathname, body, activeModel, translated) {
+function outcomeBase(started, pathname, body, activeModel, translated, toolPolicy = null) {
+  const tools = toolPolicy || translated || emptyToolPolicy(body, null);
   return {
     endpoint: pathname,
     activeModel,
@@ -1032,6 +1046,13 @@ function outcomeBase(started, pathname, body, activeModel, translated) {
     thinkNormalized: translated?.thinkNormalized ?? false,
     thinkingSupported: translated?.thinkingSupported ?? null,
     reasoningEffort: translated?.reasoningEffort ?? null,
+    toolsPresent: tools.toolsPresent,
+    toolCount: tools.toolCount,
+    toolChoicePresent: tools.toolChoicePresent,
+    toolHistoryPresent: tools.toolHistoryPresent,
+    toolsSupported: tools.toolsSupported,
+    toolsDropped: tools.toolsDropped,
+    unsupportedToolsPolicy: tools.unsupportedToolsPolicy,
     streaming: translated?.stream ?? body?.stream === true,
     bodySummary: summarizeBody(body, 'metadata'),
     latencyMs: Date.now() - started
@@ -1043,8 +1064,10 @@ export async function handleResponsesRequest(request, response, pathname, contex
   let body = null;
   let activeModelInfo = null;
   let translated = null;
+  let toolPolicy = emptyToolPolicy(null, context.config.unsupportedToolsPolicy);
   let abortState = null;
   let writer = null;
+  let builder = null;
 
   try {
     if (request.method !== 'POST') {
@@ -1058,11 +1081,28 @@ export async function handleResponsesRequest(request, response, pathname, contex
       if (error instanceof SyntaxError) throw new ResponsesApiError(400, 'INVALID_JSON_BODY', 'Request body is not valid JSON.', null);
       throw new ResponsesApiError(error.statusCode || 400, 'INVALID_REQUEST_BODY', error.message, null);
     }
+    toolPolicy = emptyToolPolicy(body, context.config.unsupportedToolsPolicy);
 
     activeModelInfo = await readActiveModel(context.config);
     if (context.state.maintenanceMode) {
       throw new ResponsesApiError(503, 'MAINTENANCE_MODE', 'Router maintenance mode is enabled.', null, 'server_error');
     }
+    const capabilityLookup = createModelCapabilityLookup(context.config, activeModelInfo.model);
+    try {
+      toolPolicy = await normalizeToolsForModel(
+        body,
+        activeModelInfo.model,
+        context.config.unsupportedToolsPolicy,
+        capabilityLookup
+      );
+    } catch (error) {
+      if (error.code === 'UNSUPPORTED_TOOLS' || error.code === 'UNSUPPORTED_TOOL_HISTORY') {
+        toolPolicy = { ...toolPolicy, toolsSupported: false };
+        throw new ResponsesApiError(error.statusCode, error.code, error.message, error.param);
+      }
+      throw error;
+    }
+
     let defaultThink;
     try {
       defaultThink = resolveDefaultThink(activeModelInfo, context.config, false);
@@ -1070,12 +1110,13 @@ export async function handleResponsesRequest(request, response, pathname, contex
       throw new ResponsesApiError(503, 'INVALID_ACTIVE_MODEL_THINK_DEFAULT', error.message, 'reasoning', 'server_error');
     }
     translated = translateResponsesRequest(
-      body,
+      toolPolicy.body,
       activeModelInfo.model,
       context.config.forcedKeepAlive,
       defaultThink,
       context.config.responsesContextShift,
-      context.config.rewriteRequestedModelToActive
+      context.config.rewriteRequestedModelToActive,
+      context.config.routerModelAlias
     );
     let thinkPolicy;
     try {
@@ -1083,7 +1124,8 @@ export async function handleResponsesRequest(request, response, pathname, contex
         context.config,
         activeModelInfo.model,
         translated.upstreamBody,
-        activeModelInfo
+        activeModelInfo,
+        capabilityLookup
       );
     } catch (error) {
       throw new ResponsesApiError(
@@ -1101,7 +1143,38 @@ export async function handleResponsesRequest(request, response, pathname, contex
     translated.thinkDropped = thinkPolicy.thinkDropped;
     translated.thinkNormalized = thinkPolicy.thinkNormalized;
     translated.thinkingSupported = thinkPolicy.thinkingSupported;
+    translated.toolsPresent = toolPolicy.toolsPresent;
+    translated.toolCount = toolPolicy.toolCount;
+    translated.toolChoicePresent = toolPolicy.toolChoicePresent;
+    translated.toolHistoryPresent = toolPolicy.toolHistoryPresent;
+    translated.toolsSupported = toolPolicy.toolsSupported;
+    translated.toolsDropped = toolPolicy.toolsDropped;
+    translated.unsupportedToolsPolicy = toolPolicy.unsupportedToolsPolicy;
     abortState = attachAbort(request, response, context.config.upstreamTimeoutMs);
+
+    const responseId = newId('resp');
+    const createdAt = Math.floor(Date.now() / 1000);
+    if (translated.stream) {
+      response.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+        'x-ollama-router': 'local-ai-ollama-router',
+        'x-accel-buffering': 'no'
+      });
+      writer = new SseWriter(response);
+      builder = new StreamingResponseBuilder(
+        writer,
+        translated.requestBody,
+        activeModelInfo.model,
+        responseId,
+        createdAt,
+        translated.toolNames
+      );
+      // Start the downstream SSE lifecycle before Ollama has a worker. This
+      // keeps a queued generation from tripping the client's header timeout.
+      await builder.start();
+    }
 
     let upstreamResponse;
     try {
@@ -1128,19 +1201,48 @@ export async function handleResponsesRequest(request, response, pathname, contex
           responseBytes: writer?.bytes || 0
         };
       }
-      if (abortState.timedOut() || error?.name === 'TimeoutError') {
-        throw new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for Ollama.', null, 'server_error');
+      const apiError = abortState.timedOut() || error?.name === 'TimeoutError'
+        ? new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for Ollama.', null, 'server_error')
+        : new ResponsesApiError(502, 'UPSTREAM_REQUEST_FAILED', error.message || 'Could not reach Ollama.', null, 'server_error');
+      if (builder && writer && !response.destroyed) {
+        await endFailedStream(builder, writer, apiError);
+        return {
+          ...outcomeBase(started, pathname, body, activeModelInfo.model, translated),
+          allowed: true,
+          rejected: false,
+          status: 200,
+          responseStatus: 200,
+          upstreamError: true,
+          errorCode: apiError.code,
+          errorSummary: apiError.message,
+          usage: null,
+          responseBytes: writer.bytes
+        };
       }
-      throw new ResponsesApiError(502, 'UPSTREAM_REQUEST_FAILED', error.message || 'Could not reach Ollama.', null, 'server_error');
+      throw apiError;
     }
 
     if (!upstreamResponse.ok) {
       const upstreamMessage = await readUpstreamError(upstreamResponse);
-      throw new ResponsesApiError(502, 'UPSTREAM_REQUEST_FAILED', upstreamMessage, null, 'server_error');
+      const apiError = new ResponsesApiError(502, 'UPSTREAM_REQUEST_FAILED', upstreamMessage, null, 'server_error');
+      if (builder && writer && !response.destroyed) {
+        await endFailedStream(builder, writer, apiError);
+        return {
+          ...outcomeBase(started, pathname, body, activeModelInfo.model, translated),
+          allowed: true,
+          rejected: false,
+          status: 200,
+          responseStatus: 200,
+          upstreamError: true,
+          errorCode: apiError.code,
+          errorSummary: apiError.message,
+          usage: null,
+          responseBytes: writer.bytes
+        };
+      }
+      throw apiError;
     }
 
-    const responseId = newId('resp');
-    const createdAt = Math.floor(Date.now() / 1000);
     if (!translated.stream) {
       let upstreamPayload;
       try {
@@ -1150,7 +1252,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
       }
       const payload = translateOllamaResponse(
         upstreamPayload,
-        body,
+        translated.requestBody,
         activeModelInfo.model,
         responseId,
         createdAt,
@@ -1170,23 +1272,6 @@ export async function handleResponsesRequest(request, response, pathname, contex
       };
     }
 
-    response.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-store',
-      connection: 'keep-alive',
-      'x-ollama-router': 'local-ai-ollama-router',
-      'x-accel-buffering': 'no'
-    });
-    writer = new SseWriter(response);
-    const builder = new StreamingResponseBuilder(
-      writer,
-      body,
-      activeModelInfo.model,
-      responseId,
-      createdAt,
-      translated.toolNames
-    );
-    await builder.start();
     try {
       await processNdjsonStream(upstreamResponse, builder);
       const completed = await builder.complete();
@@ -1221,10 +1306,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
         : (abortState.timedOut()
           ? new ResponsesApiError(504, 'UPSTREAM_TIMEOUT', 'Timed out waiting for Ollama.', null, 'server_error')
           : new ResponsesApiError(502, 'UPSTREAM_STREAM_FAILED', error.message, null, 'server_error'));
-      const failed = builder.shell('failed');
-      failed.error = { code: apiError.code, message: apiError.message };
-      await writer.event('response.failed', { response: failed });
-      writer.end();
+      await endFailedStream(builder, writer, apiError);
       return {
         ...outcomeBase(started, pathname, body, activeModelInfo.model, translated),
         allowed: true,
@@ -1246,7 +1328,7 @@ export async function handleResponsesRequest(request, response, pathname, contex
         : new ResponsesApiError(500, 'INTERNAL_ERROR', error.message || 'Unexpected Responses adapter error.', null, 'server_error'));
     if (!response.headersSent && !response.destroyed) sendJson(response, apiError.statusCode, responsesErrorPayload(apiError));
     return {
-      ...outcomeBase(started, pathname, body, activeModelInfo?.model ?? null, translated),
+      ...outcomeBase(started, pathname, body, activeModelInfo?.model ?? null, translated, toolPolicy),
       allowed: false,
       rejected: true,
       status: apiError.statusCode,

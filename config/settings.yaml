@@ -1,7 +1,7 @@
 agent-default-model:
   provider: local-ollama-256k
   model: local-active
-  reasoningEffort: max
+  reasoningEffort: medium
 
 permission:
   defaultPreset: danger-full-access
@@ -21,6 +21,10 @@ llm-pi-ai:
       baseURL: http://ai-router:11434/v1
       timeoutMs: 600000
       streamIdleTimeoutMs: 600000
+      retryPolicy:
+        mode: normal
+        maxRetries: 2
+        retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
           name: Local active model (128k)
@@ -42,6 +46,10 @@ llm-pi-ai:
       baseURL: http://ai-router:11434/v1
       timeoutMs: 600000
       streamIdleTimeoutMs: 600000
+      retryPolicy:
+        mode: normal
+        maxRetries: 2
+        retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
           name: Local active model (256k)

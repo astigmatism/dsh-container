@@ -8,6 +8,11 @@
   config:
     searchProvider: duckduckgo
 
+# A first-prompt title request otherwise competes with the agent turn for the
+# single Ollama worker. DSH still creates its immediate fallback title.
+- id: session-title-llm
+  disabled: true
+
 - insert:
     - id: web-search-duckduckgo
       name: '../../.dsh-plugins/dsh-web-search-free.js?v=2'

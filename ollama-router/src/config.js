@@ -1,10 +1,18 @@
 import path from 'node:path';
 import { parseDefaultThink } from './reasoning.js';
+import { UNSUPPORTED_TOOLS_POLICIES } from './native-tools.js';
 
 function envString(env, key, fallback) {
   const value = env[key];
   if (value === undefined || value === null || String(value).trim() === '') return fallback;
   return String(value).trim();
+}
+
+function envRequiredString(env, key, fallback) {
+  if (env[key] === undefined || env[key] === null) return fallback;
+  const value = String(env[key]).trim();
+  if (!value) throw new TypeError(`${key} must be a non-empty string.`);
+  return value;
 }
 
 function envInt(env, key, fallback, minimum = undefined) {
@@ -25,6 +33,12 @@ function envCsv(env, key, fallback = []) {
   const raw = envString(env, key, '');
   if (!raw) return [...fallback];
   return raw.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function envEnum(env, key, fallback, allowed) {
+  const value = envString(env, key, fallback).toLowerCase();
+  if (allowed.has(value)) return value;
+  throw new TypeError(`${key} must be one of: ${[...allowed].join(', ')}. Received: ${JSON.stringify(value)}.`);
 }
 
 export function parseKeepAlive(value) {
@@ -58,12 +72,15 @@ export function loadConfig(env = process.env) {
     responsesContextShift: envBool(env, 'RESPONSES_CONTEXT_SHIFT', false),
     activeModelFile: envString(env, 'ACTIVE_MODEL_FILE', '/app/runtime/active-model.json'),
     activeModelFallback: envString(env, 'ACTIVE_MODEL', ''),
+    routerModelAlias: envRequiredString(env, 'ROUTER_MODEL_ALIAS', 'local-active'),
+    routerModelMetadataTtlMs: envInt(env, 'ROUTER_MODEL_METADATA_TTL_MS', 5000, 0),
     modelPolicyMode: envString(env, 'MODEL_POLICY_MODE', 'active-only'),
     allowedModels: envCsv(env, 'ALLOWED_MODELS', []),
     rewriteRequestedModelToActive: envBool(env, 'REWRITE_REQUESTED_MODEL_TO_ACTIVE', false),
     forcedKeepAlive: parseKeepAlive(envString(env, 'FORCE_KEEP_ALIVE', '-1')),
     defaultThinkConfigured,
     defaultThink: defaultThinkConfigured ? parseDefaultThink(defaultThinkRaw) : undefined,
+    unsupportedToolsPolicy: envEnum(env, 'UNSUPPORTED_TOOLS_POLICY', 'passthrough', UNSUPPORTED_TOOLS_POLICIES),
     protectedModelEndpoints: envCsv(env, 'PROTECTED_MODEL_ENDPOINTS', ['/api/chat', '/api/generate', '/api/embed', '/api/embeddings']),
     useActiveModelWhenMissing: envBool(env, 'USE_ACTIVE_MODEL_WHEN_MISSING', false),
     allowModelManagement: envBool(env, 'ALLOW_MODEL_MANAGEMENT', false),
@@ -100,12 +117,15 @@ export function publicConfig(config) {
     responsesContextShift: config.responsesContextShift,
     activeModelFile: config.activeModelFile,
     hasActiveModelFallback: Boolean(config.activeModelFallback),
+    routerModelAlias: config.routerModelAlias,
+    routerModelMetadataTtlMs: config.routerModelMetadataTtlMs,
     modelPolicyMode: config.modelPolicyMode,
     allowedModels: config.allowedModels,
     rewriteRequestedModelToActive: config.rewriteRequestedModelToActive,
     forcedKeepAlive: config.forcedKeepAlive,
     defaultThinkConfigured: config.defaultThinkConfigured,
     defaultThink: config.defaultThink ?? null,
+    unsupportedToolsPolicy: config.unsupportedToolsPolicy,
     protectedModelEndpoints: config.protectedModelEndpoints,
     useActiveModelWhenMissing: config.useActiveModelWhenMissing,
     allowModelManagement: config.allowModelManagement,

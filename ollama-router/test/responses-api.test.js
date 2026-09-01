@@ -58,7 +58,13 @@ function lastUserText(body) {
 
 function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = false, activeModel = 'active:model' } = {}) {
   const requests = [];
-  const state = { upstreamClosed: false, residentModels: new Set([activeModel]) };
+  let releaseDelayedHeaders;
+  const delayedHeaders = new Promise((resolve) => { releaseDelayedHeaders = resolve; });
+  const state = {
+    upstreamClosed: false,
+    residentModels: new Set([activeModel]),
+    releaseDelayedHeaders
+  };
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url || '/', 'http://fake-ollama.local');
     const body = ['GET', 'HEAD'].includes(String(request.method).toUpperCase()) ? null : await readJsonBody(request);
@@ -83,6 +89,10 @@ function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = 
       return;
     }
     state.residentModels.add(body.model);
+    if (Object.hasOwn(body || {}, 'tools') && !capabilities.includes('tools')) {
+      sendJson(response, 400, { error: `${body.model} does not support tools` });
+      return;
+    }
     if (
       enforceThinkValues
       && Object.hasOwn(body || {}, 'think')
@@ -96,6 +106,7 @@ function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = 
     }
 
     const prompt = lastUserText(body);
+    if (prompt === 'delayed-headers') await delayedHeaders;
     if (!body.stream) {
       if (prompt === 'thinking-tool') {
         sendJson(response, 200, {
@@ -351,7 +362,7 @@ test('request translation preserves instructions, message roles, images, JSON fo
 
   assert.equal(translated.upstreamBody.model, 'active:model');
   assert.equal(translated.upstreamBody.keep_alive, -1);
-  assert.equal(translated.upstreamBody.shift, false);
+  assert.equal(Object.hasOwn(translated.upstreamBody, 'shift'), false);
   assert.deepEqual(translated.upstreamBody.options, { temperature: 0.25, num_predict: 123 });
   assert.deepEqual(translated.upstreamBody.format, { type: 'object' });
   assert.equal(translated.upstreamBody.think, 'minimal');
@@ -360,6 +371,15 @@ test('request translation preserves instructions, message roles, images, JSON fo
     { role: 'user', content: 'describe', images: ['aGVsbG8='] },
     { role: 'assistant', content: 'prior answer' }
   ]);
+
+  const withContextShift = translateResponsesRequest(
+    { input: 'shift enabled', stream: true },
+    'active:model',
+    -1,
+    false,
+    true
+  );
+  assert.equal(withContextShift.upstreamBody.shift, true);
 });
 
 test('request translation merges multiple system and developer messages in their relative order', () => {
@@ -760,7 +780,7 @@ test('non-stream response emits raw thinking before assistant text and tool call
   });
 });
 
-test('POST /v1/responses defaults to the active model and leaves existing model endpoints unchanged', async () => {
+test('POST /v1/responses defaults to the active model and public discovery exposes its stable alias', async () => {
   const fixture = await makeFixture({ env: { MODEL_POLICY_MODE: 'permissive', REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true' } });
   try {
     const response = await postResponses(fixture, { input: 'hello', stream: false });
@@ -773,8 +793,13 @@ test('POST /v1/responses defaults to the active model and leaves existing model 
     const upstreamChat = fixture.upstream.requests.find((item) => item.pathname === '/api/chat');
     assert.equal(upstreamChat.body.model, 'active:model');
     assert.equal(upstreamChat.body.keep_alive, -1);
-    assert.equal(upstreamChat.body.shift, false);
+    assert.equal(Object.hasOwn(upstreamChat.body, 'shift'), false);
     assert.equal(upstreamChat.body.think, false);
+    assert.equal(fixture.upstream.requests.some((item) => item.pathname === '/api/show'), false);
+    const record = fixture.context.store.recentRequests(1)[0];
+    assert.equal(record.toolsPresent, false);
+    assert.equal(record.toolsSupported, null);
+    assert.equal(record.toolsDropped, false);
 
     const tags = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/tags`);
     assert.equal(tags.status, 200);
@@ -782,7 +807,9 @@ test('POST /v1/responses defaults to the active model and leaves existing model 
     assert.equal(fixture.upstream.requests.filter((item) => item.pathname === '/api/tags').length, 1);
 
     const models = await fetch(`http://127.0.0.1:${fixture.apiPort}/v1/models`);
-    assert.equal(models.status, 404);
+    assert.equal(models.status, 200);
+    const catalog = await models.json();
+    assert.deepEqual(catalog.data.map((model) => model.id), ['local-active']);
   } finally {
     await fixture.cleanup();
   }
@@ -827,6 +854,38 @@ test('Responses reasoning drops enabled think for unsupported models and preserv
     assert.equal(record.reasoningEffort, 'low');
   } finally {
     await supported.cleanup();
+  }
+});
+
+test('Responses reasoning gracefully falls back to binary capabilities without profile metadata', async () => {
+  for (const item of [
+    { capabilities: ['completion', 'thinking'], expectedThink: true, thinkingSupported: true },
+    { capabilities: ['completion'], expectedThink: undefined, thinkingSupported: false }
+  ]) {
+    const fixture = await makeFixture({
+      marker: { supported_think_levels: undefined, reasoning_effort_map: undefined },
+      capabilities: item.capabilities,
+      enforceThinkValues: true
+    });
+    try {
+      const response = await postResponses(fixture, {
+        input: 'binary fallback',
+        reasoning: { effort: 'max' }
+      });
+      assert.equal(response.status, 200);
+
+      const chat = fixture.upstream.requests.find((request) => request.pathname === '/api/chat');
+      assert.equal(chat.body.think, item.expectedThink);
+      assert.equal(Object.hasOwn(chat.body, 'think'), item.expectedThink !== undefined);
+      const record = fixture.context.store.recentRequests(1)[0];
+      assert.equal(record.incomingThink, 'max');
+      assert.equal(record.forwardedThink, item.expectedThink);
+      assert.equal(record.thinkMapped, true);
+      assert.equal(record.thinkDropped, item.expectedThink === undefined);
+      assert.equal(record.thinkingSupported, item.thinkingSupported);
+    } finally {
+      await fixture.cleanup();
+    }
   }
 });
 
@@ -948,13 +1007,8 @@ test('Responses nighttime max and xhigh pass strict Ollama think validation with
   }
 });
 
-test('Responses rejects missing, incomplete, and inconsistent capability profiles before Ollama', async () => {
+test('Responses rejects incomplete and inconsistent capability profiles before Ollama', async () => {
   const cases = [
-    {
-      marker: { supported_think_levels: undefined, reasoning_effort_map: undefined },
-      request: { input: 'missing', reasoning: { effort: 'max' } },
-      code: 'MISSING_REASONING_CAPABILITIES'
-    },
     {
       marker: { reasoning_effort_map: undefined },
       request: { input: 'incomplete' },
@@ -1010,7 +1064,7 @@ test('invalid active-model thinking defaults fail closed before generation', asy
 });
 
 test('Responses rewrite mode treats requested models as advisory and preserves active-model residency', async () => {
-  const activeModel = 'orcarouter/qwen3.8-27b-uncensored';
+  const activeModel = 'model-a:test';
   const fixture = await makeFixture({
     env: { REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true' },
     marker: { model: activeModel, ...NIGHT_REASONING_CAPABILITIES },
@@ -1019,9 +1073,9 @@ test('Responses rewrite mode treats requested models as advisory and preserves a
   try {
     const markerBefore = await fs.readFile(fixture.activeModelFile, 'utf8');
     const cases = [
-      { model: 'qwen3.8:27b-mtp-q4_K_M', stream: false, input: 'legacy nighttime identifier' },
+      { model: 'legacy-client:test', stream: false, input: 'legacy profile identifier' },
       { model: activeModel, stream: true, input: 'exact active identifier' },
-      { model: 'gpt-5.6-luna', stream: true, input: 'stable Codex identifier', reasoning: { effort: 'xhigh' } },
+      { model: 'client-slot:test', stream: true, input: 'stable client identifier', reasoning: { effort: 'xhigh' } },
       { model: 'local-active', stream: false, input: 'documented stable identifier' },
       { stream: false, input: 'omitted identifier' }
     ];
@@ -1042,7 +1096,7 @@ test('Responses rewrite mode treats requested models as advisory and preserves a
     assert.equal(chats.length, cases.length);
     assert.deepEqual(chats.map((item) => item.body.model), cases.map(() => activeModel));
     assert.deepEqual(chats.map((item) => item.body.keep_alive), cases.map(() => -1));
-    assert.deepEqual(chats.map((item) => item.body.shift), cases.map(() => false));
+    assert.equal(chats.every((item) => !Object.hasOwn(item.body, 'shift')), true);
     assert.equal(chats[2].body.think, true);
 
     const psResponse = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/ps`);
@@ -1081,11 +1135,11 @@ test('Responses rewrite mode treats requested models as advisory and preserves a
       assert.equal(Object.hasOwn(record.bodySummary, 'input'), false);
     }
     const recordsByRequestedModel = new Map(records.map((record) => [record.requestedModel, record]));
-    assert.equal(recordsByRequestedModel.get('qwen3.8:27b-mtp-q4_K_M').modelRewritten, true);
+    assert.equal(recordsByRequestedModel.get('legacy-client:test').modelRewritten, true);
     assert.equal(recordsByRequestedModel.get(activeModel).modelRewritten, false);
-    assert.equal(recordsByRequestedModel.get('gpt-5.6-luna').modelRewritten, true);
-    assert.equal(recordsByRequestedModel.get('gpt-5.6-luna').incomingReasoningEffort, 'xhigh');
-    assert.equal(recordsByRequestedModel.get('gpt-5.6-luna').forwardedThink, true);
+    assert.equal(recordsByRequestedModel.get('client-slot:test').modelRewritten, true);
+    assert.equal(recordsByRequestedModel.get('client-slot:test').incomingReasoningEffort, 'xhigh');
+    assert.equal(recordsByRequestedModel.get('client-slot:test').forwardedThink, true);
     assert.equal(recordsByRequestedModel.get('local-active').modelRewritten, true);
     assert.equal(recordsByRequestedModel.get(null).modelRewritten, true);
 
@@ -1098,12 +1152,12 @@ test('Responses rewrite mode treats requested models as advisory and preserves a
   }
 });
 
-test('Responses strict mode accepts exact and omitted models but rejects mismatches before Ollama', async () => {
+test('Responses strict mode accepts the public alias, exact, and omitted models but rejects other names', async () => {
   const fixture = await makeFixture({
     env: {
       REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'false',
       MODEL_POLICY_MODE: 'permissive',
-      ALLOWED_MODELS: 'gpt-5.6-luna'
+      ALLOWED_MODELS: 'other-client:test'
     }
   });
   try {
@@ -1113,15 +1167,18 @@ test('Responses strict mode accepts exact and omitted models but rejects mismatc
     const omitted = await postResponses(fixture, { input: 'omitted' });
     assert.equal(omitted.status, 200);
 
-    const rejected = await postResponses(fixture, { model: 'gpt-5.6-luna', input: 'mismatch' });
+    const alias = await postResponses(fixture, { model: 'local-active', input: 'stable alias' });
+    assert.equal(alias.status, 200);
+
+    const rejected = await postResponses(fixture, { model: 'other-client:test', input: 'mismatch' });
     assert.equal(rejected.status, 400);
     assert.equal((await rejected.json()).error.code, 'MODEL_NOT_ACTIVE');
 
     const chats = fixture.upstream.requests.filter((item) => item.pathname === '/api/chat');
-    assert.equal(chats.length, 2);
-    assert.deepEqual(chats.map((item) => item.body.model), ['active:model', 'active:model']);
+    assert.equal(chats.length, 3);
+    assert.deepEqual(chats.map((item) => item.body.model), ['active:model', 'active:model', 'active:model']);
     const rejectedRecord = fixture.context.store.recentRequests(1)[0];
-    assert.equal(rejectedRecord.requestedModel, 'gpt-5.6-luna');
+    assert.equal(rejectedRecord.requestedModel, 'other-client:test');
     assert.equal(rejectedRecord.activeModel, 'active:model');
     assert.equal(rejectedRecord.forwardedModel, null);
     assert.equal(rejectedRecord.modelRewritten, false);
@@ -1202,8 +1259,128 @@ test('missing active marker fails closed and maintenance mode rejects Responses 
   }
 });
 
+test('Responses drop policy removes unsupported tools before validation for streaming and non-streaming chat', async () => {
+  const fixture = await makeFixture({
+    env: {
+      REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true',
+      UNSUPPORTED_TOOLS_POLICY: 'drop'
+    }
+  });
+  try {
+    const nonStreaming = await postResponses(fixture, {
+      model: 'stable-responses-name',
+      input: 'hello',
+      stream: false,
+      tools: [{ type: 'web_search' }],
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+      max_tool_calls: 2
+    }, '/responses');
+    assert.equal(nonStreaming.status, 200);
+    const nonStreamingPayload = await nonStreaming.json();
+    assert.deepEqual(nonStreamingPayload.tools, []);
+    assert.equal(nonStreamingPayload.tool_choice, 'auto');
+
+    const streaming = await postResponses(fixture, {
+      model: 'stable-responses-name',
+      input: 'hello',
+      stream: true,
+      tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }],
+      tool_choice: 'auto',
+      parallel_tool_calls: true
+    });
+    assert.equal(streaming.status, 200);
+    assert.equal(parseSse(await streaming.text()).at(-1).type, 'response.completed');
+    await fixture.waitForIdle();
+
+    const chats = fixture.upstream.requests.filter((item) => item.pathname === '/api/chat');
+    assert.equal(chats.length, 2);
+    for (const chat of chats) {
+      for (const field of ['tools', 'tool_choice', 'parallel_tool_calls', 'max_tool_calls']) {
+        assert.equal(Object.hasOwn(chat.body, field), false);
+      }
+    }
+    assert.deepEqual(
+      fixture.upstream.requests.filter((item) => item.pathname === '/api/show').map((item) => item.body),
+      [{ model: 'active:model' }, { model: 'active:model' }]
+    );
+
+    const records = fixture.context.store.recentRequests(2);
+    assert.deepEqual(records.map((record) => record.toolsDropped), [true, true]);
+    assert.deepEqual(records.map((record) => record.toolsSupported), [false, false]);
+    assert.deepEqual(records.map((record) => record.unsupportedToolsPolicy), ['drop', 'drop']);
+    const events = fixture.context.store.recentEvents(20).filter((event) => event.type === 'unsupported_tools_dropped');
+    assert.equal(events.length, 2);
+    assert.equal(events.every((event) => !Object.hasOwn(event, 'tools')), true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('Responses preserves supported tool controls and rejects unsupported prior tool history safely', async () => {
+  const supported = await makeFixture({
+    env: { UNSUPPORTED_TOOLS_POLICY: 'drop' },
+    capabilities: ['completion', 'tools']
+  });
+  const tools = [{ type: 'function', name: 'lookup', description: 'Lookup', parameters: { type: 'object' } }];
+  try {
+    const response = await postResponses(supported, {
+      input: 'hello',
+      tools,
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+      max_tool_calls: 4
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.tools, tools);
+    assert.equal(payload.tool_choice, 'auto');
+    assert.equal(payload.parallel_tool_calls, false);
+
+    const chat = supported.upstream.requests.find((item) => item.pathname === '/api/chat');
+    assert.deepEqual(chat.body.tools, [{
+      type: 'function',
+      function: {
+        name: 'lookup',
+        description: 'Lookup',
+        parameters: { type: 'object' }
+      }
+    }]);
+    assert.equal(chat.body.tool_choice, 'auto');
+    assert.equal(chat.body.parallel_tool_calls, false);
+    assert.equal(chat.body.max_tool_calls, 4);
+    const record = supported.context.store.recentRequests(1)[0];
+    assert.equal(record.toolsSupported, true);
+    assert.equal(record.toolsDropped, false);
+  } finally {
+    await supported.cleanup();
+  }
+
+  const unsupported = await makeFixture({ env: { UNSUPPORTED_TOOLS_POLICY: 'drop' } });
+  try {
+    const response = await postResponses(unsupported, {
+      input: [
+        { role: 'user', content: 'lookup' },
+        { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_1', output: 'result' }
+      ]
+    });
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'UNSUPPORTED_TOOL_HISTORY');
+    assert.equal(payload.error.param, 'input');
+    assert.equal(unsupported.upstream.requests.some((item) => item.pathname === '/api/chat'), false);
+    assert.deepEqual(
+      unsupported.upstream.requests.filter((item) => item.pathname === '/api/show').map((item) => item.body),
+      [{ model: 'active:model' }]
+    );
+  } finally {
+    await unsupported.cleanup();
+  }
+});
+
 test('function tool request and tool output follow-up preserve definitions and call_id', async () => {
-  const fixture = await makeFixture();
+  const fixture = await makeFixture({ capabilities: ['completion', 'tools'] });
   const tool = { type: 'function', name: 'get_weather', description: 'Get weather', parameters: { type: 'object' } };
   try {
     const first = await postResponses(fixture, { input: 'tool', tools: [tool], tool_choice: 'auto' });
@@ -1238,7 +1415,7 @@ test('function tool request and tool output follow-up preserve definitions and c
 });
 
 test('reasoning plus a tool call is returned and preserved with the tool result on the next request', async () => {
-  const fixture = await makeFixture({ capabilities: ['completion', 'thinking'] });
+  const fixture = await makeFixture({ capabilities: ['completion', 'thinking', 'tools'] });
   const tool = { type: 'function', name: 'get_weather', parameters: { type: 'object' } };
   try {
     const first = await postResponses(fixture, {
@@ -1323,8 +1500,30 @@ test('streaming text emits a coherent monotonic SSE lifecycle and completed usag
   }
 });
 
-test('streaming function calls emit argument delta/done and matching output item IDs', async () => {
+test('streaming response headers and lifecycle begin before Ollama response headers arrive', async () => {
   const fixture = await makeFixture();
+  try {
+    const pendingResponse = postResponses(fixture, { input: 'delayed-headers', stream: true });
+    const earlyResult = await Promise.race([
+      pendingResponse.then((response) => ({ response })),
+      new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 100))
+    ]);
+    fixture.upstream.state.releaseDelayedHeaders();
+
+    assert.equal(earlyResult.timedOut, undefined, 'router waited for Ollama before starting SSE');
+    assert.equal(earlyResult.response.status, 200);
+    assert.match(earlyResult.response.headers.get('content-type') || '', /text\/event-stream/);
+    const events = parseSse(await earlyResult.response.text());
+    assert.equal(events[0].type, 'response.created');
+    assert.equal(events.at(-1).type, 'response.completed');
+  } finally {
+    fixture.upstream.state.releaseDelayedHeaders();
+    await fixture.cleanup();
+  }
+});
+
+test('streaming function calls emit argument delta/done and matching output item IDs', async () => {
+  const fixture = await makeFixture({ capabilities: ['completion', 'tools'] });
   try {
     const response = await postResponses(fixture, {
       input: 'stream-tool',
@@ -1348,7 +1547,7 @@ test('streaming function calls emit argument delta/done and matching output item
 });
 
 test('streaming thinking emits a complete reasoning item before the following tool call', async () => {
-  const fixture = await makeFixture({ capabilities: ['completion', 'thinking'] });
+  const fixture = await makeFixture({ capabilities: ['completion', 'thinking', 'tools'] });
   try {
     const response = await postResponses(fixture, {
       input: 'stream-thinking-tool',

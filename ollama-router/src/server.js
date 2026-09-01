@@ -14,12 +14,20 @@ import { getGpuTelemetry } from './telemetry.js';
 import {
   activeModelLoadedState,
   checkUpstream,
+  createModelCapabilityLookup,
   getOllamaPs,
   normalizeThinkForModel,
   upstreamFetch,
   upstreamJson
 } from './upstream.js';
 import { resolveDefaultThink, thinkLevelToReasoningEffort } from './reasoning.js';
+import { emptyToolPolicy, normalizeToolsForModel } from './native-tools.js';
+import {
+  ActiveModelDiscovery,
+  ifNoneMatchMatches,
+  ModelDiscoveryError,
+  modelDiscoveryErrorPayload
+} from './model-discovery.js';
 import {
   copyUpstreamHeaders,
   filterRequestHeaders,
@@ -100,6 +108,94 @@ async function handleHealth(response, context) {
     upstream,
     activeModel
   });
+}
+
+function requestedDiscoveryModelId(pathname) {
+  if (pathname === '/v1/models') return null;
+  if (!pathname.startsWith('/v1/models/')) return undefined;
+  try {
+    return decodeURIComponent(pathname.slice('/v1/models/'.length));
+  } catch {
+    return pathname.slice('/v1/models/'.length);
+  }
+}
+
+async function recordDiscoveryFailure(context, code, warnings = [], upstreamModel = null) {
+  const signature = JSON.stringify({ code, warnings, upstreamModel });
+  if (context.state.lastDiscoveryFailureSignature === signature) return;
+  context.state.lastDiscoveryFailureSignature = signature;
+  await persistEvent(context.store, {
+    type: 'model_discovery_failed',
+    code,
+    warnings,
+    alias: context.config.routerModelAlias,
+    upstreamModel
+  });
+}
+
+async function handleModelDiscovery(request, response, pathname, context) {
+  const requestedId = requestedDiscoveryModelId(pathname);
+  try {
+    if (request.method !== 'GET') {
+      throw new ModelDiscoveryError(
+        405,
+        'METHOD_NOT_ALLOWED',
+        'The model discovery endpoint only accepts GET requests.',
+        null,
+        'invalid_request_error'
+      );
+    }
+    if (requestedId !== null && requestedId !== context.config.routerModelAlias) {
+      throw new ModelDiscoveryError(
+        404,
+        'MODEL_NOT_FOUND',
+        `Model ${JSON.stringify(requestedId)} was not found.`,
+        'model',
+        'invalid_request_error'
+      );
+    }
+
+    const discovery = await context.modelDiscovery.get();
+    const metadata = discovery.entry.x_ollama_router;
+    if (metadata.warnings.length) {
+      await recordDiscoveryFailure(
+        context,
+        'MODEL_METADATA_PARTIAL',
+        metadata.warnings,
+        metadata.upstream_model
+      );
+    } else {
+      context.state.lastDiscoveryFailureSignature = null;
+    }
+
+    const headers = {
+      'cache-control': 'no-cache',
+      etag: discovery.etag,
+      'x-ollama-router': 'local-ai-ollama-router'
+    };
+    if (ifNoneMatchMatches(request.headers['if-none-match'], discovery.etag)) {
+      response.writeHead(304, headers);
+      response.end();
+      return;
+    }
+    sendJson(
+      response,
+      200,
+      requestedId === null ? { object: 'list', data: [discovery.entry] } : discovery.entry,
+      headers
+    );
+  } catch (error) {
+    const discoveryError = error instanceof ModelDiscoveryError
+      ? error
+      : new ModelDiscoveryError(500, 'MODEL_DISCOVERY_FAILED', 'Model metadata discovery failed unexpectedly.');
+    if (discoveryError.code !== 'MODEL_NOT_FOUND' && discoveryError.code !== 'METHOD_NOT_ALLOWED') {
+      await recordDiscoveryFailure(context, discoveryError.code);
+    }
+    sendJson(response, discoveryError.statusCode, modelDiscoveryErrorPayload(discoveryError), {
+      'cache-control': 'no-cache',
+      'x-ollama-router': 'local-ai-ollama-router'
+    });
+  }
 }
 
 async function buildSummary(context) {
@@ -183,6 +279,7 @@ async function handleAdminApi(request, response, pathname, context, { requireAut
 
   if (request.method === 'POST' && pathname === '/admin/api/reload-config') {
     const activeModel = await readActiveModel(context.config);
+    context.modelDiscovery.invalidate();
     await persistEvent(context.store, { type: 'active_model_marker_reloaded', activeModel });
     sendJson(response, 200, { ok: true, activeModel });
     return;
@@ -310,6 +407,13 @@ async function rejectProxyRequest(response, context, record, status, code, messa
     forwardedModel: extra.forwardedModel,
     activeModel: extra.activeModel,
     modelRewritten: Boolean(extra.modelRewritten),
+    toolsPresent: extra.toolsPresent,
+    toolCount: extra.toolCount,
+    toolChoicePresent: extra.toolChoicePresent,
+    toolHistoryPresent: extra.toolHistoryPresent,
+    toolsSupported: extra.toolsSupported,
+    toolsDropped: extra.toolsDropped,
+    unsupportedToolsPolicy: extra.unsupportedToolsPolicy,
     clientIdentity: record.clientIdentity,
     sourceIp: record.sourceIp
   });
@@ -336,13 +440,25 @@ async function handleProxy(request, response, url, context) {
     }
   }
 
+  const incomingToolPolicy = emptyToolPolicy(incomingBody, context.config.unsupportedToolsPolicy);
+  const bodySummaryMode = incomingToolPolicy.toolRelatedFieldsPresent
+    ? 'metadata'
+    : context.config.promptLogging;
+
   const activeModel = await readActiveModel(context.config);
   const isModelBodyRoute = MODEL_BODY_ROUTES.has(routeKey(request.method, pathname));
   if (context.state.maintenanceMode && isModelBodyRoute) {
     await rejectProxyRequest(response, context, recordBase, 503, 'MAINTENANCE_MODE', 'Router maintenance mode is enabled.', {
       activeModel: activeModel.model,
       requestedModel: incomingBody?.model || null,
-      bodySummary: summarizeBody(incomingBody, context.config.promptLogging)
+      bodySummary: summarizeBody(incomingBody, bodySummaryMode),
+      toolsPresent: incomingToolPolicy.toolsPresent,
+      toolCount: incomingToolPolicy.toolCount,
+      toolChoicePresent: incomingToolPolicy.toolChoicePresent,
+      toolHistoryPresent: incomingToolPolicy.toolHistoryPresent,
+      toolsSupported: incomingToolPolicy.toolsSupported,
+      toolsDropped: incomingToolPolicy.toolsDropped,
+      unsupportedToolsPolicy: incomingToolPolicy.unsupportedToolsPolicy
     });
     return;
   }
@@ -365,7 +481,8 @@ async function handleProxy(request, response, url, context) {
     thinkNormalized: false,
     thinkingSupported: null
   };
-  let sanitizedBody = thinkPolicy.body;
+  let toolPolicy = emptyToolPolicy(policy.sanitizedBody, context.config.unsupportedToolsPolicy);
+  let sanitizedBody = toolPolicy.body;
 
   const commonRecord = {
     ...recordBase,
@@ -384,8 +501,15 @@ async function handleProxy(request, response, url, context) {
     thinkNormalized: thinkPolicy.thinkNormalized,
     thinkingSupported: thinkPolicy.thinkingSupported,
     reasoningEffort: thinkLevelToReasoningEffort(thinkPolicy.forwardedThink ?? thinkPolicy.incomingThink),
+    toolsPresent: toolPolicy.toolsPresent,
+    toolCount: toolPolicy.toolCount,
+    toolChoicePresent: toolPolicy.toolChoicePresent,
+    toolHistoryPresent: toolPolicy.toolHistoryPresent,
+    toolsSupported: toolPolicy.toolsSupported,
+    toolsDropped: toolPolicy.toolsDropped,
+    unsupportedToolsPolicy: toolPolicy.unsupportedToolsPolicy,
     streaming: isLikelyStreamingRequest(pathname, sanitizedBody),
-    bodySummary: summarizeBody(incomingBody, context.config.promptLogging)
+    bodySummary: summarizeBody(incomingBody, bodySummaryMode)
   };
 
   if (!policy.allowed) {
@@ -395,30 +519,70 @@ async function handleProxy(request, response, url, context) {
       forwardedModel: policy.forwardedModel,
       modelRewritten: Boolean(policy.modelRewritten),
       incomingKeepAlive: policy.incomingKeepAlive,
-      forwardedKeepAlive: policy.forwardedKeepAlive
+      forwardedKeepAlive: policy.forwardedKeepAlive,
+      toolsPresent: toolPolicy.toolsPresent,
+      toolCount: toolPolicy.toolCount,
+      toolChoicePresent: toolPolicy.toolChoicePresent,
+      toolHistoryPresent: toolPolicy.toolHistoryPresent,
+      toolsSupported: toolPolicy.toolsSupported,
+      toolsDropped: toolPolicy.toolsDropped,
+      unsupportedToolsPolicy: toolPolicy.unsupportedToolsPolicy
     });
     return;
   }
 
-  if (['/api/chat', '/api/generate'].includes(pathname)) {
+  if (['/api/chat', '/api/generate', '/v1/chat/completions'].includes(pathname)) {
     let bodyWithThinkDefault = policy.sanitizedBody;
-    const canApplyThinkDefault = bodyWithThinkDefault
+    const normalizesThinking = ['/api/chat', '/api/generate'].includes(pathname);
+    const normalizesTools = ['/api/chat', '/v1/chat/completions'].includes(pathname);
+    const canApplyThinkDefault = normalizesThinking && bodyWithThinkDefault
       && typeof bodyWithThinkDefault === 'object'
       && !Array.isArray(bodyWithThinkDefault)
       && !Object.hasOwn(bodyWithThinkDefault, 'think');
+    const capabilityLookup = createModelCapabilityLookup(context.config, policy.forwardedModel);
     try {
       if (canApplyThinkDefault) {
         let defaultThink;
         defaultThink = resolveDefaultThink(activeModel, context.config);
         if (defaultThink !== undefined) bodyWithThinkDefault = { ...bodyWithThinkDefault, think: defaultThink };
       }
-      thinkPolicy = await normalizeThinkForModel(
-        context.config,
-        policy.forwardedModel,
-        bodyWithThinkDefault,
-        policy.forwardedModel === activeModel.model ? activeModel : null
-      );
+      if (normalizesTools) {
+        toolPolicy = await normalizeToolsForModel(
+          bodyWithThinkDefault,
+          policy.forwardedModel,
+          context.config.unsupportedToolsPolicy,
+          capabilityLookup
+        );
+      } else {
+        toolPolicy = emptyToolPolicy(bodyWithThinkDefault, context.config.unsupportedToolsPolicy);
+      }
+      if (normalizesThinking) {
+        thinkPolicy = await normalizeThinkForModel(
+          context.config,
+          policy.forwardedModel,
+          toolPolicy.body,
+          policy.forwardedModel === activeModel.model ? activeModel : null,
+          capabilityLookup
+        );
+      } else {
+        thinkPolicy = { ...thinkPolicy, body: toolPolicy.body };
+      }
     } catch (error) {
+      if (error.code === 'UNSUPPORTED_TOOLS' || error.code === 'UNSUPPORTED_TOOL_HISTORY') {
+        toolPolicy = {
+          ...emptyToolPolicy(bodyWithThinkDefault, context.config.unsupportedToolsPolicy),
+          toolsSupported: false
+        };
+      }
+      Object.assign(commonRecord, {
+        toolsPresent: toolPolicy.toolsPresent,
+        toolCount: toolPolicy.toolCount,
+        toolChoicePresent: toolPolicy.toolChoicePresent,
+        toolHistoryPresent: toolPolicy.toolHistoryPresent,
+        toolsSupported: toolPolicy.toolsSupported,
+        toolsDropped: toolPolicy.toolsDropped,
+        unsupportedToolsPolicy: toolPolicy.unsupportedToolsPolicy
+      });
       await rejectProxyRequest(
         response,
         context,
@@ -429,7 +593,14 @@ async function handleProxy(request, response, url, context) {
         {
           activeModel: policy.activeModel,
           requestedModel: policy.requestedModel,
-          forwardedModel: policy.forwardedModel
+          forwardedModel: policy.forwardedModel,
+          toolsPresent: toolPolicy.toolsPresent,
+          toolCount: toolPolicy.toolCount,
+          toolChoicePresent: toolPolicy.toolChoicePresent,
+          toolHistoryPresent: toolPolicy.toolHistoryPresent,
+          toolsSupported: toolPolicy.toolsSupported,
+          toolsDropped: toolPolicy.toolsDropped,
+          unsupportedToolsPolicy: toolPolicy.unsupportedToolsPolicy
         }
       );
       return;
@@ -443,6 +614,13 @@ async function handleProxy(request, response, url, context) {
       thinkNormalized: thinkPolicy.thinkNormalized,
       thinkingSupported: thinkPolicy.thinkingSupported,
       reasoningEffort: thinkLevelToReasoningEffort(thinkPolicy.forwardedThink ?? thinkPolicy.incomingThink),
+      toolsPresent: toolPolicy.toolsPresent,
+      toolCount: toolPolicy.toolCount,
+      toolChoicePresent: toolPolicy.toolChoicePresent,
+      toolHistoryPresent: toolPolicy.toolHistoryPresent,
+      toolsSupported: toolPolicy.toolsSupported,
+      toolsDropped: toolPolicy.toolsDropped,
+      unsupportedToolsPolicy: toolPolicy.unsupportedToolsPolicy,
       streaming: isLikelyStreamingRequest(pathname, sanitizedBody)
     });
   }
@@ -496,6 +674,24 @@ async function handleProxy(request, response, url, context) {
       incomingReasoningEffort: commonRecord.incomingReasoningEffort,
       incomingThink: thinkPolicy.incomingThink,
       forwardedThink: thinkPolicy.forwardedThink,
+      clientIdentity: commonRecord.clientIdentity,
+      sourceIp: commonRecord.sourceIp
+    });
+  }
+
+  if (toolPolicy.toolsDropped) {
+    await persistEvent(context.store, {
+      type: 'unsupported_tools_dropped',
+      endpoint: pathname,
+      method: request.method,
+      model: policy.forwardedModel,
+      toolsPresent: toolPolicy.toolsPresent,
+      toolCount: toolPolicy.toolCount,
+      toolChoicePresent: toolPolicy.toolChoicePresent,
+      toolHistoryPresent: toolPolicy.toolHistoryPresent,
+      toolsSupported: toolPolicy.toolsSupported,
+      toolsDropped: toolPolicy.toolsDropped,
+      unsupportedToolsPolicy: toolPolicy.unsupportedToolsPolicy,
       clientIdentity: commonRecord.clientIdentity,
       sourceIp: commonRecord.sourceIp
     });
@@ -618,6 +814,13 @@ async function handleResponses(request, response, url, context) {
       endpoint: url.pathname,
       requestedModel: outcome.requestedModel,
       activeModel: outcome.activeModel,
+      toolsPresent: outcome.toolsPresent,
+      toolCount: outcome.toolCount,
+      toolChoicePresent: outcome.toolChoicePresent,
+      toolHistoryPresent: outcome.toolHistoryPresent,
+      toolsSupported: outcome.toolsSupported,
+      toolsDropped: outcome.toolsDropped,
+      unsupportedToolsPolicy: outcome.unsupportedToolsPolicy,
       clientIdentity: record.clientIdentity,
       sourceIp: record.sourceIp
     });
@@ -667,6 +870,24 @@ async function handleResponses(request, response, url, context) {
       incomingReasoningEffort: outcome.incomingReasoningEffort,
       incomingThink: outcome.incomingThink,
       forwardedThink: outcome.forwardedThink,
+      clientIdentity: record.clientIdentity,
+      sourceIp: record.sourceIp
+    });
+  }
+
+  if (outcome.toolsDropped) {
+    await persistEvent(context.store, {
+      type: 'unsupported_tools_dropped',
+      endpoint: url.pathname,
+      method: request.method,
+      model: outcome.forwardedModel,
+      toolsPresent: outcome.toolsPresent,
+      toolCount: outcome.toolCount,
+      toolChoicePresent: outcome.toolChoicePresent,
+      toolHistoryPresent: outcome.toolHistoryPresent,
+      toolsSupported: outcome.toolsSupported,
+      toolsDropped: outcome.toolsDropped,
+      unsupportedToolsPolicy: outcome.unsupportedToolsPolicy,
       clientIdentity: record.clientIdentity,
       sourceIp: record.sourceIp
     });
@@ -773,6 +994,16 @@ async function handleRequest(request, response, context) {
       return;
     }
 
+    if (pathname === '/v1/models' || pathname.startsWith('/v1/models/')) {
+      await handleModelDiscovery(request, response, pathname, context);
+      return;
+    }
+
+    if (pathname === '/v1/chat/completions') {
+      await handleProxy(request, response, url, context);
+      return;
+    }
+
     if (pathname.startsWith('/api/')) {
       await handleProxy(request, response, url, context);
       return;
@@ -798,9 +1029,11 @@ export async function createRouterServer(config = loadConfig()) {
     config,
     store,
     metrics,
+    modelDiscovery: new ActiveModelDiscovery(config),
     state: {
       startedAt: nowIso(),
-      maintenanceMode: false
+      maintenanceMode: false,
+      lastDiscoveryFailureSignature: null
     }
   };
 
@@ -808,8 +1041,11 @@ export async function createRouterServer(config = loadConfig()) {
     type: 'router_startup',
     version: config.version,
     upstreamUrl: config.upstreamUrl,
+    routerModelAlias: config.routerModelAlias,
+    routerModelMetadataTtlMs: config.routerModelMetadataTtlMs,
     modelPolicyMode: config.modelPolicyMode,
     rewriteRequestedModelToActive: config.rewriteRequestedModelToActive,
+    unsupportedToolsPolicy: config.unsupportedToolsPolicy,
     protectedModelEndpoints: config.protectedModelEndpoints
   });
 

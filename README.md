@@ -22,12 +22,12 @@ needs the NVIDIA Container Toolkit.
 - Selectable `local-active` OpenAI Responses routes at
   `http://ai-router:11434/v1`: a default 262,144-token route and an optional
   131,072-token route for smaller active models.
-- Max default reasoning, matching the captured writable Harness settings.
+- Medium default reasoning, with all supported reasoning levels still selectable.
 - Active Ollama model `qwen3.8:27b-mtp-q8_0`, 262,144-token Ollama context,
   persistent keep-alive, one parallel request, one loaded model, flash attention,
   `f16` KV cache, and the captured reasoning-effort mapping.
 - The vendored router is from
-  `astigmatism/local-ai-ollama-router@8bd89e17dd5d5c34dc4c66a60ab0db817e2bb257`.
+  `astigmatism/local-ai-ollama-router@14be1958e17328afa6eec53b3a153224a9aea078`.
 - OpenAI-compatible faster-whisper STT and routed Kokoro/Chatterbox TTS on the
   captured voice host, with separate file-based keys and locked deployment
   metadata in `config/speech.lock.json`.
@@ -112,7 +112,9 @@ deployment: it selects the 262,144-token `local-active` route by default and
 also exposes a 131,072-token route for new tasks using a smaller active model.
 Both routes use the same local `ai-router` endpoint and wire model ID; only the
 Harness context metadata differs, so the router continues to resolve
-`local-active` normally. The file also contains the captured reasoning levels,
+`local-active` normally. Local timeout failures are not automatically retried,
+which prevents a single stalled generation from multiplying into a long queue.
+The file also contains the captured reasoning levels,
 the intended permission preset, and an environment-variable name for the
 provider key rather than the key itself. Remote mode changes name resolution
 in Compose rather than changing this file.

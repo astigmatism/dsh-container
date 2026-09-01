@@ -1,7 +1,10 @@
 {
-  "profile": "nighttime",
-  "model": "qwen3.8-27b-uncensored:night",
+  "profile": "example-profile",
+  "model": "model-a:test",
   "keep_alive": -1,
+  "context_length": 16384,
+  "max_output_tokens": 2048,
+  "input_modalities": ["text"],
   "supported_think_levels": ["low", "medium"],
   "reasoning_effort_map": {
     "minimal": "low",

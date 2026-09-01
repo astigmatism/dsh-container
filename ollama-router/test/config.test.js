@@ -65,3 +65,32 @@ test('disables Responses context shifting by default with an explicit opt-in', (
   assert.equal(enabled.responsesContextShift, true);
   assert.equal(publicConfig(enabled).responsesContextShift, true);
 });
+
+test('validates unsupported-tools policy and defaults to backward-compatible passthrough', () => {
+  const defaultConfig = loadConfig({});
+  assert.equal(defaultConfig.unsupportedToolsPolicy, 'passthrough');
+  assert.equal(publicConfig(defaultConfig).unsupportedToolsPolicy, 'passthrough');
+
+  assert.equal(loadConfig({ UNSUPPORTED_TOOLS_POLICY: 'drop' }).unsupportedToolsPolicy, 'drop');
+  assert.equal(loadConfig({ UNSUPPORTED_TOOLS_POLICY: 'REJECT' }).unsupportedToolsPolicy, 'reject');
+  assert.throws(
+    () => loadConfig({ UNSUPPORTED_TOOLS_POLICY: 'remove' }),
+    /UNSUPPORTED_TOOLS_POLICY must be one of: passthrough, drop, reject.*remove/
+  );
+});
+
+test('configures a non-empty stable public model alias and discovery cache TTL', () => {
+  const defaults = loadConfig({});
+  assert.equal(defaults.routerModelAlias, 'local-active');
+  assert.equal(defaults.routerModelMetadataTtlMs, 5000);
+  assert.equal(publicConfig(defaults).routerModelAlias, 'local-active');
+  assert.equal(publicConfig(defaults).routerModelMetadataTtlMs, 5000);
+
+  const configured = loadConfig({
+    ROUTER_MODEL_ALIAS: 'active-slot',
+    ROUTER_MODEL_METADATA_TTL_MS: '2500'
+  });
+  assert.equal(configured.routerModelAlias, 'active-slot');
+  assert.equal(configured.routerModelMetadataTtlMs, 2500);
+  assert.throws(() => loadConfig({ ROUTER_MODEL_ALIAS: '   ' }), /must be a non-empty string/);
+});

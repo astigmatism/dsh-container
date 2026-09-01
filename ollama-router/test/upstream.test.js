@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { upstreamFetch } from '../src/upstream.js';
+import { normalizeThinkForModel, upstreamFetch } from '../src/upstream.js';
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -32,6 +32,23 @@ function createFixture(handler) {
   const server = http.createServer((request, response) => handler(request, response, schedule));
   return { server, timers };
 }
+
+test('binary reasoning fallback is removed when model capabilities cannot be established', async () => {
+  const result = await normalizeThinkForModel(
+    {},
+    'active:model',
+    { model: 'active:model', think: 'max' },
+    null,
+    async () => ({ known: false, capabilities: [] })
+  );
+
+  assert.equal(Object.hasOwn(result.body, 'think'), false);
+  assert.equal(result.incomingThink, 'max');
+  assert.equal(result.forwardedThink, undefined);
+  assert.equal(result.thinkMapped, true);
+  assert.equal(result.thinkDropped, true);
+  assert.equal(result.thinkingSupported, null);
+});
 
 test('native upstream transport waits for delayed headers and frames JSON with Content-Length', async (t) => {
   let observed = null;

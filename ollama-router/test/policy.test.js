@@ -104,6 +104,29 @@ test('rewrite requested model to active also fills missing model', () => {
   assert.equal(result.sanitizedBody.keep_alive, -1);
 });
 
+test('OpenAI chat completions rewrites only the model and preserves protocol fields', () => {
+  const body = {
+    model: 'stable-client-name',
+    messages: [{ role: 'user', content: 'hello' }],
+    stream: true,
+    temperature: 0.3,
+    tools: [{ type: 'function', function: { name: 'lookup' } }]
+  };
+  const result = evaluateProxyPolicy({
+    method: 'POST',
+    pathname: '/v1/chat/completions',
+    body,
+    activeModelInfo: { model: 'active:model' },
+    config: config({ REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true' })
+  });
+
+  assert.equal(result.allowed, true);
+  assert.equal(result.requestedModel, 'stable-client-name');
+  assert.equal(result.forwardedModel, 'active:model');
+  assert.deepEqual(result.sanitizedBody, { ...body, model: 'active:model' });
+  assert.equal(Object.hasOwn(result.sanitizedBody, 'keep_alive'), false);
+});
+
 test('rewrite requested model to active covers model show requests', () => {
   const result = evaluateProxyPolicy({
     method: 'POST',
@@ -119,6 +142,36 @@ test('rewrite requested model to active covers model show requests', () => {
   assert.equal(result.modelRewritten, true);
   assert.equal(result.sanitizedBody.model, 'active:model');
   assert.equal(result.sanitizedBody.verbose, true);
+});
+
+test('the exact public alias resolves to active across native model routes when broad rewrite is disabled', () => {
+  for (const pathname of ['/api/chat', '/api/generate', '/api/embed', '/api/embeddings', '/api/show']) {
+    const result = evaluateProxyPolicy({
+      method: 'POST',
+      pathname,
+      body: { model: 'local-active' },
+      activeModelInfo: { model: 'model-a:test' },
+      config: config({ REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'false' })
+    });
+    assert.equal(result.allowed, true, pathname);
+    assert.equal(result.requestedModel, 'local-active', pathname);
+    assert.equal(result.forwardedModel, 'model-a:test', pathname);
+    assert.equal(result.sanitizedBody.model, 'model-a:test', pathname);
+    assert.equal(result.modelRewritten, true, pathname);
+  }
+});
+
+test('strict mode does not treat arbitrary non-alias model names as aliases', () => {
+  const result = evaluateProxyPolicy({
+    method: 'POST',
+    pathname: '/api/chat',
+    body: { model: 'some-other-name', messages: [] },
+    activeModelInfo: { model: 'model-a:test' },
+    config: config({ REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'false' })
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, 'MODEL_NOT_ACTIVE');
+  assert.equal(result.forwardedModel, 'some-other-name');
 });
 
 test('missing active marker fails closed', () => {

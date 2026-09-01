@@ -47,8 +47,11 @@ function sendJson(response, status, body) {
   response.end(payload);
 }
 
-function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = false } = {}) {
+function createFakeOllama({ capabilities = ['completion'], capabilitiesByModel = {}, enforceThinkValues = false } = {}) {
   const requests = [];
+  const capabilitiesFor = (model) => Object.hasOwn(capabilitiesByModel, model)
+    ? capabilitiesByModel[model]
+    : capabilities;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url || '/', 'http://fake-ollama.local');
     const body = ['GET', 'HEAD'].includes(String(request.method).toUpperCase()) ? null : await readJsonBody(request);
@@ -81,6 +84,15 @@ function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = 
       });
       return;
     }
+    if (
+      request.method === 'POST'
+      && ['/api/chat', '/v1/chat/completions'].includes(url.pathname)
+      && (Object.hasOwn(body || {}, 'tools') || Object.hasOwn(body || {}, 'functions'))
+      && !capabilitiesFor(body?.model).includes('tools')
+    ) {
+      sendJson(response, 400, { error: `${body?.model} does not support tools` });
+      return;
+    }
     if (request.method === 'POST' && url.pathname === '/api/chat') {
       sendJson(response, 200, {
         model: body?.model,
@@ -89,6 +101,25 @@ function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = 
         eval_count: 1,
         eval_duration: 1000000000
       });
+      return;
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/chat/completions') {
+      if (body?.stream === true) {
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+        response.end(`data: ${JSON.stringify({
+          id: 'chatcmpl_fake',
+          object: 'chat.completion.chunk',
+          model: body?.model,
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }]
+        })}\n\ndata: [DONE]\n\n`);
+      } else {
+        sendJson(response, 200, {
+          id: 'chatcmpl_fake',
+          object: 'chat.completion',
+          model: body?.model,
+          choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }]
+        });
+      }
       return;
     }
     if (request.method === 'POST' && url.pathname === '/api/generate') {
@@ -105,7 +136,7 @@ function createFakeOllama({ capabilities = ['completion'], enforceThinkValues = 
       sendJson(response, 200, {
         model: body?.model,
         details: {},
-        ...(body?.verbose ? {} : { capabilities })
+        ...(body?.verbose ? {} : { capabilities: capabilitiesFor(body?.model) })
       });
       return;
     }
@@ -501,14 +532,14 @@ test('native generation rejects incomplete profiles and invalid think strings be
   }
 });
 
-test('native boolean and none think values remain usable without string-level metadata', async () => {
+test('native think values gracefully use binary model capabilities without string-level metadata', async () => {
   const fixture = await makeFixture(
     {},
     { capabilities: ['completion', 'thinking'], enforceThinkValues: true },
     { supported_think_levels: undefined, reasoning_effort_map: undefined }
   );
   try {
-    for (const think of [true, false, 'none']) {
+    for (const think of [true, false, 'none', 'low', 'max']) {
       const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -522,13 +553,311 @@ test('native boolean and none think values remain usable without string-level me
       assert.equal(response.status, 200);
     }
     const chats = fixture.upstream.requests.filter((request) => request.pathname === '/api/chat');
-    assert.deepEqual(chats.map((request) => request.body.think), [true, false, false]);
+    assert.deepEqual(chats.map((request) => request.body.think), [true, false, false, true, true]);
+    const records = fixture.context.store.recentRequests(5).reverse();
+    assert.deepEqual(records.map((record) => record.incomingThink), [true, false, 'none', 'low', 'max']);
+    assert.deepEqual(records.map((record) => record.thinkMapped), [false, false, true, true, true]);
   } finally {
     await fixture.cleanup();
   }
 });
 
-test('Responses compatibility does not change existing model discovery, inspection, generation, or management routes', async () => {
+test('native string reasoning is dropped for a non-thinking model without profile metadata', async () => {
+  const fixture = await makeFixture(
+    {},
+    { capabilities: ['completion'] },
+    { supported_think_levels: undefined, reasoning_effort_map: undefined }
+  );
+  try {
+    const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'active:model', prompt: 'hello', stream: false, think: 'max' })
+    });
+    assert.equal(response.status, 200);
+
+    const generated = fixture.upstream.requests.find((request) => request.pathname === '/api/generate');
+    assert.equal(Object.hasOwn(generated.body, 'think'), false);
+    const record = fixture.context.store.recentRequests(1)[0];
+    assert.equal(record.incomingThink, 'max');
+    assert.equal(record.thinkMapped, true);
+    assert.equal(record.thinkDropped, true);
+    assert.equal(record.thinkingSupported, false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('native chat drop policy uses the rewritten active model and emits privacy-safe metadata', async () => {
+  const fixture = await makeFixture(
+    {
+      REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true',
+      UNSUPPORTED_TOOLS_POLICY: 'drop',
+      PROMPT_LOGGING: 'full'
+    },
+    {
+      capabilitiesByModel: {
+        'stable-client:model': ['completion', 'tools'],
+        'active:model': ['completion']
+      }
+    }
+  );
+  const messages = [{ role: 'user', content: 'ordinary chat' }];
+  try {
+    const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'stable-client:model',
+        messages,
+        stream: false,
+        think: false,
+        tools: [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }],
+        tool_choice: 'auto',
+        parallel_tool_calls: true,
+        options: { temperature: 0.2 }
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const showRequests = fixture.upstream.requests.filter((item) => item.pathname === '/api/show');
+    assert.deepEqual(showRequests.map((item) => item.body), [{ model: 'active:model' }]);
+    const chat = fixture.upstream.requests.find((item) => item.pathname === '/api/chat');
+    assert.equal(chat.body.model, 'active:model');
+    assert.deepEqual(chat.body.messages, messages);
+    assert.deepEqual(chat.body.options, { temperature: 0.2 });
+    for (const field of ['tools', 'tool_choice', 'parallel_tool_calls']) {
+      assert.equal(Object.hasOwn(chat.body, field), false);
+    }
+
+    const record = fixture.context.store.recentRequests(1)[0];
+    assert.equal(record.toolsPresent, true);
+    assert.equal(record.toolCount, 1);
+    assert.equal(record.toolChoicePresent, true);
+    assert.equal(record.toolsSupported, false);
+    assert.equal(record.toolsDropped, true);
+    assert.equal(record.unsupportedToolsPolicy, 'drop');
+    assert.deepEqual(record.bodySummary, {
+      messageCount: 1,
+      messageRoles: ['user'],
+      messageContentChars: 13,
+      stream: false,
+      optionKeys: ['temperature']
+    });
+    const event = fixture.context.store.recentEvents(20).find((item) => item.type === 'unsupported_tools_dropped');
+    assert.ok(event);
+    assert.equal(event.toolCount, 1);
+    assert.equal(Object.hasOwn(event, 'tools'), false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('tool-capable native chat preserves tool fields exactly and shares capability lookup with thinking', async () => {
+  const fixture = await makeFixture(
+    { UNSUPPORTED_TOOLS_POLICY: 'drop' },
+    { capabilities: ['completion', 'thinking', 'tools'] }
+  );
+  const toolFields = {
+    tools: [{ type: 'function', function: { name: 'lookup', description: 'Lookup', parameters: { type: 'object' } } }],
+    tool_choice: { type: 'function', function: { name: 'lookup' } },
+    parallel_tool_calls: false
+  };
+  try {
+    const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'active:model',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: true,
+        think: true,
+        ...toolFields
+      })
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+
+    const chat = fixture.upstream.requests.find((item) => item.pathname === '/api/chat');
+    for (const [field, value] of Object.entries(toolFields)) assert.deepEqual(chat.body[field], value);
+    assert.equal(fixture.upstream.requests.filter((item) => item.pathname === '/api/show').length, 1);
+    const record = fixture.context.store.recentRequests(1)[0];
+    assert.equal(record.toolsSupported, true);
+    assert.equal(record.toolsDropped, false);
+    assert.equal(record.streaming, true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('tool-free chat avoids capability lookup and default passthrough still forwards unsupported tools', async () => {
+  const toolFree = await makeFixture({ UNSUPPORTED_TOOLS_POLICY: 'drop' });
+  try {
+    const response = await fetch(`http://127.0.0.1:${toolFree.apiPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'active:model',
+        messages: [{ role: 'user', content: 'no tools' }],
+        stream: false,
+        think: false,
+        options: { temperature: 0.7 }
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(toolFree.upstream.requests.some((item) => item.pathname === '/api/show'), false);
+    const record = toolFree.context.store.recentRequests(1)[0];
+    assert.equal(record.toolsPresent, false);
+    assert.equal(record.toolsSupported, null);
+    assert.equal(record.toolsDropped, false);
+  } finally {
+    await toolFree.cleanup();
+  }
+
+  const passthrough = await makeFixture();
+  try {
+    const tools = [{ type: 'function', function: { name: 'lookup' } }];
+    const response = await fetch(`http://127.0.0.1:${passthrough.apiPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'active:model', messages: [], stream: false, tools })
+    });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /does not support tools/);
+    const chat = passthrough.upstream.requests.find((item) => item.pathname === '/api/chat');
+    assert.deepEqual(chat.body.tools, tools);
+    const record = passthrough.context.store.recentRequests(1)[0];
+    assert.equal(record.unsupportedToolsPolicy, 'passthrough');
+    assert.equal(record.toolsSupported, false);
+    assert.equal(record.toolsDropped, false);
+  } finally {
+    await passthrough.cleanup();
+  }
+});
+
+test('unsupported prior tool history receives an explicit router error without generation', async () => {
+  const fixture = await makeFixture({ UNSUPPORTED_TOOLS_POLICY: 'drop' });
+  try {
+    const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'active:model',
+        stream: false,
+        messages: [
+          { role: 'assistant', content: '', tool_calls: [{ id: 'call_1', function: { name: 'lookup', arguments: {} } }] },
+          { role: 'tool', tool_call_id: 'call_1', content: 'result' }
+        ]
+      })
+    });
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'UNSUPPORTED_TOOL_HISTORY');
+    assert.match(payload.error.message, /will not drop or rewrite tool history/);
+    assert.equal(fixture.upstream.requests.some((item) => item.pathname === '/api/chat'), false);
+    assert.deepEqual(
+      fixture.upstream.requests.filter((item) => item.pathname === '/api/show').map((item) => item.body),
+      [{ model: 'active:model' }]
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('reject policy returns an actionable router-generated unsupported-tools error', async () => {
+  const fixture = await makeFixture({ UNSUPPORTED_TOOLS_POLICY: 'reject' });
+  try {
+    const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'active:model',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+        tools: [{ type: 'function', function: { name: 'lookup' } }]
+      })
+    });
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'UNSUPPORTED_TOOLS');
+    assert.match(payload.error.message, /UNSUPPORTED_TOOLS_POLICY=drop/);
+    assert.equal(fixture.upstream.requests.some((item) => item.pathname === '/api/chat'), false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('OpenAI chat completions applies tool policy for streaming and non-streaming requests', async () => {
+  const fixture = await makeFixture({
+    REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true',
+    UNSUPPORTED_TOOLS_POLICY: 'drop'
+  });
+  try {
+    for (const stream of [false, true]) {
+      const response = await fetch(`http://127.0.0.1:${fixture.apiPort}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'stable-openai-name',
+          messages: [{ role: 'user', content: `stream=${stream}` }],
+          stream,
+          temperature: 0.35,
+          tools: [{ type: 'function', function: { name: 'lookup' } }],
+          tool_choice: 'auto',
+          parallel_tool_calls: true
+        })
+      });
+      assert.equal(response.status, 200);
+      if (stream) {
+        assert.match(response.headers.get('content-type') || '', /text\/event-stream/);
+        assert.match(await response.text(), /data: \[DONE\]/);
+      } else {
+        assert.equal((await response.json()).model, 'active:model');
+      }
+    }
+
+    const completions = fixture.upstream.requests.filter((item) => item.pathname === '/v1/chat/completions');
+    assert.equal(completions.length, 2);
+    for (const request of completions) {
+      assert.equal(request.body.model, 'active:model');
+      assert.equal(request.body.temperature, 0.35);
+      assert.equal(Object.hasOwn(request.body, 'keep_alive'), false);
+      for (const field of ['tools', 'tool_choice', 'parallel_tool_calls']) {
+        assert.equal(Object.hasOwn(request.body, field), false);
+      }
+    }
+    assert.deepEqual(
+      fixture.upstream.requests.filter((item) => item.pathname === '/api/show').map((item) => item.body),
+      [{ model: 'active:model' }, { model: 'active:model' }]
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+
+  const supported = await makeFixture(
+    { REWRITE_REQUESTED_MODEL_TO_ACTIVE: 'true', UNSUPPORTED_TOOLS_POLICY: 'drop' },
+    { capabilities: ['completion', 'tools'] }
+  );
+  const toolFields = {
+    tools: [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }],
+    tool_choice: { type: 'function', function: { name: 'lookup' } },
+    parallel_tool_calls: false
+  };
+  try {
+    const response = await fetch(`http://127.0.0.1:${supported.apiPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'stable-openai-name', messages: [], stream: false, ...toolFields })
+    });
+    assert.equal(response.status, 200);
+    const completion = supported.upstream.requests.find((item) => item.pathname === '/v1/chat/completions');
+    for (const [field, value] of Object.entries(toolFields)) assert.deepEqual(completion.body[field], value);
+  } finally {
+    await supported.cleanup();
+  }
+});
+
+test('Responses compatibility preserves native routes while public discovery exposes only the stable alias', async () => {
   const fixture = await makeFixture();
   try {
     const version = await fetch(`http://127.0.0.1:${fixture.apiPort}/api/version`);
@@ -589,8 +918,10 @@ test('Responses compatibility does not change existing model discovery, inspecti
     assert.equal(fixture.upstream.requests.some((item) => item.pathname === '/api/pull'), false);
 
     const codexCatalog = await fetch(`http://127.0.0.1:${fixture.apiPort}/v1/models`);
-    assert.equal(codexCatalog.status, 404);
-    assert.equal((await codexCatalog.json()).error.code, 'NOT_FOUND');
+    assert.equal(codexCatalog.status, 200);
+    const catalog = await codexCatalog.json();
+    assert.deepEqual(catalog.data.map((model) => model.id), ['local-active']);
+    assert.equal(JSON.stringify(catalog).includes('catalog:model'), false);
 
     const adminResponses = await fetch(`http://127.0.0.1:${fixture.adminPort}/v1/responses`, {
       method: 'POST',
@@ -607,7 +938,9 @@ test('Responses compatibility does not change existing model discovery, inspecti
         'GET /api/tags',
         'GET /api/ps',
         'POST /api/show',
-        'POST /api/generate'
+        'POST /api/generate',
+        'GET /api/ps',
+        'POST /api/show'
       ]
     );
   } finally {

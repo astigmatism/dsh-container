@@ -121,10 +121,46 @@ export async function getOllamaPs(config) {
   }
 }
 
-export async function normalizeThinkForModel(config, model, body, reasoningProfile = null) {
+export async function getModelCapabilities(config, model) {
+  if (!model) return { known: false, capabilities: [] };
+
+  let result;
+  try {
+    result = await upstreamJson(config, '/api/show', {
+      method: 'POST',
+      body: { model },
+      timeoutMs: Math.min(config.upstreamTimeoutMs, 10000)
+    });
+  } catch {
+    return { known: false, capabilities: [] };
+  }
+
+  if (!result.ok || !Array.isArray(result.body?.capabilities)) {
+    return { known: false, capabilities: [] };
+  }
+  return { known: true, capabilities: [...result.body.capabilities] };
+}
+
+export function createModelCapabilityLookup(config, model) {
+  let lookupPromise = null;
+  return () => {
+    if (!lookupPromise) lookupPromise = getModelCapabilities(config, model);
+    return lookupPromise;
+  };
+}
+
+export async function normalizeThinkForModel(config, model, body, reasoningProfile = null, capabilityLookup = null) {
   const incomingThink = body?.think;
   const validatedCapabilities = validateReasoningCapabilities(reasoningProfile);
-  const mappedThink = normalizeThinkValue(incomingThink, validatedCapabilities);
+  // Ollama exposes binary thinking support through /api/show even when the
+  // deployment has no safe string-level map. In that case, translate any
+  // enabled effort to boolean true and let the binary capability check below
+  // either forward it or remove it. Explicit malformed profiles still fail so
+  // operator configuration errors are not silently ignored.
+  const mappedThink = normalizeThinkValue(incomingThink, validatedCapabilities, { fallbackToBoolean: true });
+  const usedBooleanFallback = validatedCapabilities === null
+    && typeof incomingThink === 'string'
+    && isThinkingEnabled(mappedThink);
   const thinkMapped = mappedThink !== incomingThink;
   const mappedBody = thinkMapped ? { ...body, think: mappedThink } : body;
   const unchanged = {
@@ -141,19 +177,10 @@ export async function normalizeThinkForModel(config, model, body, reasoningProfi
     return unchanged;
   }
 
-  let result;
-  try {
-    result = await upstreamJson(config, '/api/show', {
-      method: 'POST',
-      body: { model },
-      timeoutMs: Math.min(config.upstreamTimeoutMs, 10000)
-    });
-  } catch {
-    return unchanged;
-  }
-
-  if (!result.ok || !Array.isArray(result.body?.capabilities)) return unchanged;
-  if (result.body.capabilities.includes('thinking')) {
+  const lookup = capabilityLookup || createModelCapabilityLookup(config, model);
+  const capabilityResult = await lookup();
+  if (!capabilityResult.known && !usedBooleanFallback) return unchanged;
+  if (capabilityResult.capabilities.includes('thinking')) {
     return { ...unchanged, thinkingSupported: true };
   }
 
@@ -166,7 +193,7 @@ export async function normalizeThinkForModel(config, model, body, reasoningProfi
     thinkMapped,
     thinkDropped: true,
     thinkNormalized: true,
-    thinkingSupported: false
+    thinkingSupported: capabilityResult.known ? false : null
   };
 }
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Replace the Harness gateway password without exposing it in shell history."""
+"""Set Harness gateway credentials without exposing the password in shell history."""
 
 from __future__ import annotations
 
+import argparse
 import getpass
 import hashlib
 import json
@@ -12,16 +13,48 @@ import secrets
 import tempfile
 
 
-AUTH_PATH = Path(__file__).resolve().parent.parent / "data" / "gateway" / "auth.json"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+AUTH_PATH = PROJECT_DIR / "data" / "gateway" / "auth.json"
+ENV_PATH = PROJECT_DIR / ".env"
 ITERATIONS = 240_000
 
 
-def main() -> int:
+def configured_username() -> str | None:
     try:
-        current = json.loads(AUTH_PATH.read_text(encoding="utf-8"))
-        username = current["username"]
-    except (FileNotFoundError, KeyError, json.JSONDecodeError) as error:
-        raise SystemExit(f"Cannot read the existing gateway identity at {AUTH_PATH}: {error}")
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return None
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if separator and key == "HARNESS_AUTH_USERNAME" and value:
+            return value
+    return None
+
+
+def existing_username() -> str | None:
+    try:
+        record = json.loads(AUTH_PATH.read_text(encoding="utf-8"))
+        value = record["username"]
+    except (FileNotFoundError, KeyError, json.JSONDecodeError, TypeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Set the gateway username and password before or after deployment."
+    )
+    parser.add_argument(
+        "--username",
+        help="Basic Auth username (defaults to the existing identity or .env value)",
+    )
+    arguments = parser.parse_args()
+
+    username = arguments.username or existing_username() or configured_username()
+    if username is None:
+        raise SystemExit("No username is configured; pass --username or run configure.sh first.")
+    if ":" in username or any(character in username for character in "\r\n"):
+        raise SystemExit("Username must not contain a colon or newline.")
 
     password = getpass.getpass(f"New password for {username}: ")
     if len(password) < 8:
@@ -45,6 +78,7 @@ def main() -> int:
         "hash": digest,
     }
 
+    AUTH_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".auth.json.", dir=AUTH_PATH.parent)
     try:
         os.fchmod(descriptor, 0o600)
@@ -61,7 +95,7 @@ def main() -> int:
             pass
         raise
 
-    print("Password hash updated. Restart the gateway to activate it.")
+    print("Gateway identity hash updated. Restart the gateway to activate it.")
     return 0
 
 

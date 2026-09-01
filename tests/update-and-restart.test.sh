@@ -26,6 +26,22 @@ assert_no_interruption() {
   fi
 }
 
+assert_no_fetch_or_mutation() {
+  fixture_path=$1
+  if grep -Fq 'fetch --prune' "$fixture_path/git.log"; then
+    fail "rejected preflight reached the fetch step"
+  fi
+  if grep -Eq '(^| )pull( |$)|(^| )build( |$)|(^| )stop( |$)|(^| )start( |$)|(^| )up( |$)|^deploy ' "$fixture_path/docker.log"; then
+    fail "rejected preflight reached an image or deployment mutation"
+  fi
+}
+
+line_number() {
+  pattern=$1
+  file=$2
+  grep -n -m 1 -F -- "$pattern" "$file" | awk -F: '{ print $1 }'
+}
+
 make_fixture() {
   fixture_name=$1
   runtime_kind=$2
@@ -63,9 +79,22 @@ run_update() {
     FAKE_GIT_LOG="$fixture_path/git.log" \
     FAKE_GIT_STATE_FILE="$fixture_path/git-head" \
     FAKE_FAST_FORWARD_SOURCE="${TEST_FAST_FORWARD_SOURCE:-}" \
+    FAKE_GIT_VERSION_EXIT="${TEST_GIT_VERSION_EXIT:-0}" \
+    FAKE_GIT_DETACHED="${TEST_GIT_DETACHED:-0}" \
+    FAKE_GIT_BRANCH="${TEST_GIT_BRANCH:-main}" \
+    FAKE_GIT_REMOTE="${TEST_GIT_REMOTE:-origin}" \
+    FAKE_GIT_MERGE_REF="${TEST_GIT_MERGE_REF:-refs/heads/main}" \
+    FAKE_GIT_ORIGIN_URL="${TEST_GIT_ORIGIN_URL:-https://github.com/astigmatism/dsh-container.git}" \
+    FAKE_GIT_MERGE_BASE_EXIT="${TEST_GIT_MERGE_BASE_EXIT:-0}" \
     FAKE_DOCKER_LOG="$fixture_path/docker.log" \
+    FAKE_DEPLOY_LOG="$fixture_path/docker.log" \
     FAKE_GIT_DIRTY="${TEST_GIT_DIRTY:-}" \
     FAKE_DOCKER_INFO_EXIT="${TEST_DOCKER_INFO_EXIT:-0}" \
+    FAKE_COMPOSE_VERSION_EXIT="${TEST_COMPOSE_VERSION_EXIT:-0}" \
+    FAKE_COMPOSE_CONFIG_EXIT="${TEST_COMPOSE_CONFIG_EXIT:-0}" \
+    FAKE_COMPOSE_PULL_EXIT="${TEST_COMPOSE_PULL_EXIT:-0}" \
+    FAKE_COMPOSE_BUILD_EXIT="${TEST_COMPOSE_BUILD_EXIT:-0}" \
+    FAKE_COMPOSE_START_EXIT="${TEST_COMPOSE_START_EXIT:-0}" \
     FAKE_COMPOSE_LABELS="${TEST_COMPOSE_LABELS:-}" \
     FAKE_TARGET_SETTINGS_OBJECT="${TEST_TARGET_SETTINGS_OBJECT:-same-settings-object}" \
     FAKE_DEPLOY_EXIT="${TEST_DEPLOY_EXIT:-0}" \
@@ -201,12 +230,83 @@ grep -Fq 'Restarting maintenance under the fetched updater before service interr
 [ ! -e "$fixture/data/update-and-restart.lock" ] \
   || fail "successful updater left its transferred lock behind"
 
+config_line=$(line_number "compose --env-file $fixture/.env -f $fixture/compose.yaml config --quiet" "$fixture/docker.log")
+pull_line=$(line_number "compose --env-file $fixture/.env -f $fixture/compose.yaml pull --ignore-buildable" "$fixture/docker.log")
+build_line=$(line_number "compose --env-file $fixture/.env -f $fixture/compose.yaml build" "$fixture/docker.log")
+deploy_line=$(line_number 'deploy --external-ollama --no-build' "$fixture/docker.log")
+[ "$config_line" -lt "$pull_line" ] \
+  && [ "$pull_line" -lt "$build_line" ] \
+  && [ "$build_line" -lt "$deploy_line" ] \
+  || fail "Compose validation, pull, build, and deployment ordering is unsafe"
+if grep -Eq '(^| )stop( |$)|(^| )down( |$)' "$fixture/docker.log"; then
+  fail "successful update explicitly stopped or removed the project"
+fi
+if grep -Eq '(^| )prune( |$)|^(rm|kill|restart|stop) |^container (rm|kill|restart|stop) ' "$fixture/docker.log"; then
+  fail "successful update used a global cleanup or unrelated-container operation"
+fi
+
 make_fixture git-state-failure matching
 TEST_GIT_DIRTY=' M config/settings.yaml'
 run_update "$fixture" --external-ollama
 unset TEST_GIT_DIRTY
 [ "$update_status" -ne 0 ] || fail "dirty Git state unexpectedly passed"
 assert_status "$fixture" 'failure_type=git-state'
+assert_no_fetch_or_mutation "$fixture"
+[ ! -e "$fixture/data/update-and-restart.lock" ] \
+  || fail "dirty-worktree refusal left its lock behind"
+
+make_fixture wrong-branch matching
+TEST_GIT_BRANCH=feature
+run_update "$fixture" --external-ollama
+unset TEST_GIT_BRANCH
+[ "$update_status" -ne 0 ] || fail "unexpected branch was accepted"
+assert_status "$fixture" 'failure_type=git-state'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture wrong-upstream matching
+TEST_GIT_MERGE_REF=refs/heads/release
+run_update "$fixture" --external-ollama
+unset TEST_GIT_MERGE_REF
+[ "$update_status" -ne 0 ] || fail "unexpected upstream was accepted"
+assert_status "$fixture" 'failure_type=git-state'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture wrong-tracking-remote matching
+TEST_GIT_REMOTE=upstream
+run_update "$fixture" --external-ollama
+unset TEST_GIT_REMOTE
+[ "$update_status" -ne 0 ] || fail "unexpected tracking remote was accepted"
+assert_status "$fixture" 'failure_type=git-state'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture wrong-origin matching
+TEST_GIT_ORIGIN_URL=https://github.com/example/dsh-container.git
+run_update "$fixture" --external-ollama
+unset TEST_GIT_ORIGIN_URL
+[ "$update_status" -ne 0 ] || fail "unexpected origin was accepted"
+assert_status "$fixture" 'failure_type=git-state'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture detached-head matching
+TEST_GIT_DETACHED=1
+run_update "$fixture" --external-ollama
+unset TEST_GIT_DETACHED
+[ "$update_status" -ne 0 ] || fail "detached HEAD was accepted"
+assert_status "$fixture" 'failure_type=git-state'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture non-fast-forward matching
+TEST_GIT_MERGE_BASE_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_GIT_MERGE_BASE_EXIT
+[ "$update_status" -ne 0 ] || fail "non-fast-forward update was accepted"
+assert_status "$fixture" 'failure_type=git-state'
+grep -Fq 'fetch --prune origin main' "$fixture/git.log" \
+  || fail "non-fast-forward test did not fetch first"
+if grep -Fq 'merge --ff-only' "$fixture/git.log"; then
+  fail "non-fast-forward update reached merge"
+fi
+assert_no_interruption "$fixture"
 
 make_fixture mode-inference-failure matching
 {
@@ -259,6 +359,130 @@ run_update "$fixture" --external-ollama
 unset TEST_DOCKER_INFO_EXIT
 [ "$update_status" -ne 0 ] || fail "unavailable Docker Engine unexpectedly passed"
 assert_status "$fixture" 'failure_type=docker-compose'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture git-prerequisite-failure matching
+TEST_GIT_VERSION_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_GIT_VERSION_EXIT
+[ "$update_status" -ne 0 ] || fail "unusable Git unexpectedly passed"
+assert_status "$fixture" 'failure_type=git-state'
+assert_status "$fixture" 'failure_stage=prerequisites'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture compose-prerequisite-failure matching
+TEST_COMPOSE_VERSION_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_COMPOSE_VERSION_EXIT
+[ "$update_status" -ne 0 ] || fail "missing Compose plugin unexpectedly passed"
+assert_status "$fixture" 'failure_type=docker-compose'
+assert_status "$fixture" 'failure_stage=prerequisites'
+assert_no_fetch_or_mutation "$fixture"
+
+make_fixture docker-command-missing matching
+missing_docker_bin=$fixture/no-docker-bin
+mkdir "$missing_docker_bin"
+for utility in sh dirname mkdir mktemp date chmod mv rm rmdir
+do
+  ln -s "$(command -v "$utility")" "$missing_docker_bin/$utility"
+done
+cp "$fixture/fake-bin/git" "$missing_docker_bin/git"
+set +e
+PATH="$missing_docker_bin" \
+  FAKE_GIT_LOG="$fixture/git.log" \
+  sh "$fixture/scripts/update-and-restart.sh" --external-ollama \
+    >"$fixture/output.log" 2>&1
+update_status=$?
+set -e
+[ "$update_status" -ne 0 ] || fail "missing Docker command unexpectedly passed"
+assert_status "$fixture" 'failure_type=docker-compose'
+assert_status "$fixture" 'failure_stage=prerequisites'
+grep -Fq 'docker is required.' "$fixture/output.log" \
+  || fail "missing Docker command diagnostic was not reported"
+[ ! -e "$fixture/data/update-and-restart.lock" ] \
+  || fail "missing Docker command left its lock behind"
+
+make_fixture compose-validation-failure matching
+TEST_COMPOSE_CONFIG_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_COMPOSE_CONFIG_EXIT
+[ "$update_status" -ne 0 ] || fail "invalid Compose configuration unexpectedly passed"
+assert_status "$fixture" 'failure_type=docker-compose'
+assert_status "$fixture" 'failure_stage=compose-configuration'
+assert_no_interruption "$fixture"
+if grep -Eq '(^| )pull( |$)|(^| )build( |$)|^deploy ' "$fixture/docker.log"; then
+  fail "invalid Compose configuration reached image preparation or deployment"
+fi
+
+make_fixture pull-failure matching
+TEST_COMPOSE_PULL_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_COMPOSE_PULL_EXIT
+[ "$update_status" -ne 0 ] || fail "failed image pull unexpectedly passed"
+assert_status "$fixture" 'failure_stage=compose-image-pull'
+assert_status "$fixture" 'recovery=not-needed'
+if grep -Eq '(^| )build( |$)|^deploy |(^| )start( |$)' "$fixture/docker.log"; then
+  fail "failed pull reached build, deployment, or recovery"
+fi
+
+make_fixture build-failure matching
+TEST_COMPOSE_BUILD_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_COMPOSE_BUILD_EXIT
+[ "$update_status" -ne 0 ] || fail "failed image build unexpectedly passed"
+assert_status "$fixture" 'failure_stage=compose-image-build'
+assert_status "$fixture" 'recovery=not-needed'
+grep -Fq ' pull --ignore-buildable' "$fixture/docker.log" \
+  || fail "build failure did not occur after pull"
+if grep -Eq '^deploy |(^| )start( |$)' "$fixture/docker.log"; then
+  fail "failed build reached deployment or recovery"
+fi
+
+for mode_mapping in \
+  'external --external-ollama' \
+  'remote --remote-ollama' \
+  'managed --managed-ollama'
+do
+  selected_mode=${mode_mapping%% *}
+  selected_flag=${mode_mapping#* }
+  make_fixture "mode-$selected_mode" matching
+  {
+    printf 'DSH_DEPLOYMENT_MODE=%s\n' "$selected_mode"
+    printf 'HOST_UID=%s\n' "$(id -u)"
+    printf 'HOST_GID=%s\n' "$(id -g)"
+  } >"$fixture/.env"
+  run_update "$fixture" "$selected_flag"
+  [ "$update_status" -eq 0 ] || fail "$selected_mode mode update failed"
+  case "$selected_mode" in
+    external)
+      expected_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml"
+      ;;
+    remote)
+      expected_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.remote-ollama.yaml"
+      ;;
+    managed)
+      expected_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.managed-ollama.yaml"
+      ;;
+  esac
+  grep -Fq "$expected_prefix config --quiet" "$fixture/docker.log" \
+    || fail "$selected_mode mode used incorrect Compose files or env file"
+  grep -Fq "$expected_prefix pull --ignore-buildable" "$fixture/docker.log" \
+    || fail "$selected_mode mode pull used incorrect Compose files or env file"
+  grep -Fq "$expected_prefix build" "$fixture/docker.log" \
+    || fail "$selected_mode mode build used incorrect Compose files or env file"
+  grep -Fq "deploy $selected_flag --no-build" "$fixture/docker.log" \
+    || fail "$selected_mode mode deployed without the selected overlay mode"
+done
+
+make_fixture locked-project matching
+mkdir "$fixture/data/update-and-restart.lock"
+printf '%s\n' 99999 >"$fixture/data/update-and-restart.lock/pid"
+run_update "$fixture" --external-ollama
+[ "$update_status" -ne 0 ] || fail "concurrent maintenance lock was ignored"
+[ -e "$fixture/data/update-and-restart.lock/pid" ] \
+  || fail "lock refusal removed another maintenance run's lock"
+[ ! -s "$fixture/git.log" ] && [ ! -s "$fixture/docker.log" ] \
+  || fail "lock refusal invoked Git or Docker"
 
 for mapping in \
   '20 docker-compose' \
@@ -276,6 +500,20 @@ do
     || fail "deploy exit $exit_code was returned as $update_status"
   assert_status "$fixture" "failure_type=$expected_type"
   assert_status "$fixture" 'recovery=succeeded'
+  deploy_line=$(line_number "deploy --external-ollama --no-build" "$fixture/docker.log")
+  recovery_line=$(line_number ' start' "$fixture/docker.log")
+  [ "$deploy_line" -lt "$recovery_line" ] \
+    || fail "deploy exit $exit_code attempted recovery before deployment"
+  [ ! -e "$fixture/data/update-and-restart.lock" ] \
+    || fail "deploy exit $exit_code left its lock behind"
 done
 
-echo "ok - updater re-exec and legacy preflight preserve settings, avoid interruption, and classify failures"
+make_fixture failed-recovery matching
+TEST_DEPLOY_EXIT=20
+TEST_COMPOSE_START_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_DEPLOY_EXIT TEST_COMPOSE_START_EXIT
+[ "$update_status" -eq 20 ] || fail "failed recovery changed the deployment failure exit"
+assert_status "$fixture" 'recovery=failed'
+
+echo "ok - updater preflights, ordering, modes, locking, recovery, and scoped cleanup are safe"

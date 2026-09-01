@@ -17,6 +17,7 @@ case "${1:-}" in
   compose)
     for argument do
       case "$argument" in
+        version) exit "${FAKE_COMPOSE_VERSION_EXIT:-0}" ;;
         config) exit "${FAKE_COMPOSE_CONFIG_EXIT:-0}" ;;
         images)
           if [ -n "${FAKE_COMPOSE_IMAGES:-}" ]; then
@@ -26,6 +27,8 @@ case "${1:-}" in
           ;;
         stop) exit "${FAKE_COMPOSE_STOP_EXIT:-0}" ;;
         start) exit "${FAKE_COMPOSE_START_EXIT:-0}" ;;
+        pull) exit "${FAKE_COMPOSE_PULL_EXIT:-0}" ;;
+        build) exit "${FAKE_COMPOSE_BUILD_EXIT:-0}" ;;
         up) exit "${FAKE_COMPOSE_UP_EXIT:-0}" ;;
       esac
     done

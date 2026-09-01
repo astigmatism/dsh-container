@@ -13,7 +13,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "${1:-}" in
+  --version)
+    exit "${FAKE_GIT_VERSION_EXIT:-0}"
+    ;;
   symbolic-ref)
+    [ "${FAKE_GIT_DETACHED:-0}" -eq 0 ] || exit 1
     printf '%s\n' "${FAKE_GIT_BRANCH:-main}"
     ;;
   config)

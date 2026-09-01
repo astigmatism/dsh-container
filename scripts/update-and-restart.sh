@@ -6,7 +6,7 @@ project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 env_file=$project_dir/.env
 mode=
 dry_run=0
-stack_stopped=0
+deployment_started=0
 before_commit=unknown
 target_commit=unknown
 branch=unknown
@@ -19,6 +19,7 @@ resume_file=$lock_dir/resume
 resume=${DSH_UPDATE_RESUME:-0}
 resume_temporary=
 unset DSH_UPDATE_RESUME
+export GIT_TERMINAL_PROMPT=0
 
 case "$resume" in
   0|1) ;;
@@ -38,10 +39,11 @@ With no mode flag, the script uses the running container's Compose labels and
 the required DSH_DEPLOYMENT_MODE from .env. It refuses missing, empty,
 duplicated, invalid, or conflicting mode state. It requires clean main tracking
 canonical origin/main, checks persisted settings before fetching and again
-against the fetched target, then fast-forwards, stops the selected stack,
-rebuilds/redeploys it, verifies it, and removes only superseded images captured
-from this project. It creates no backup, archive, stash, rollback tag, or
-rollback directory.
+against the fetched target, then fast-forwards. It validates Compose and
+pulls/builds replacement images while the deployment remains available before
+recreating the project and verifying it. It removes only superseded images
+captured from this project and creates no backup, archive, stash, rollback tag,
+or rollback directory.
 EOF
 }
 
@@ -139,8 +141,8 @@ finish() {
   status=$?
   trap - EXIT
   if [ "$status" -ne 0 ]; then
-    if [ "$stack_stopped" -eq 1 ]; then
-      echo "Maintenance failed after the stack stopped; attempting to start the existing containers." >&2
+    if [ "$deployment_started" -eq 1 ]; then
+      echo "Maintenance failed after Compose began deployment; attempting to start the existing project containers." >&2
       recovery=attempted
       if compose start >&2; then
         recovery=succeeded
@@ -193,9 +195,14 @@ fi
 failure_type=git-state
 failure_stage=prerequisites
 command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 1; }
+git --version >/dev/null 2>&1 || { echo "git is installed but unusable." >&2; exit 1; }
 
 failure_type=docker-compose
 command -v docker >/dev/null 2>&1 || { echo "docker is required." >&2; exit 1; }
+if ! docker compose version >/dev/null 2>&1; then
+  echo "The Docker Compose plugin is required." >&2
+  exit 1
+fi
 
 failure_type=configuration-verification
 [ -f "$env_file" ] || { echo "Missing .env; run ./scripts/configure.sh first." >&2; exit 1; }
@@ -344,7 +351,7 @@ if [ "$dry_run" -eq 1 ]; then
   echo "Mode:       $mode"
   echo "Worktree:   clean"
   echo "Settings:   match current canonical configuration"
-  echo "Plan:       fetch/check target settings/fast-forward, stop, rebuild, deploy, verify, remove superseded project images"
+  echo "Plan:       fetch/check target settings/fast-forward, validate, pull/build, deploy, verify, remove superseded project images"
   echo "Rollback:   no backups or rollback artifacts will be created"
   exit 0
 fi
@@ -411,15 +418,25 @@ if ! old_image_ids=$(compose images -q 2>/dev/null); then
 fi
 old_image_ids=$(printf '%s\n' "$old_image_ids" | sort -u)
 
-echo "Stopping the $mode deployment..."
-failure_stage=compose-stop
-stack_stopped=1
-compose stop
+echo "Pulling non-buildable images while the $mode deployment remains available..."
+failure_stage=compose-image-pull
+if ! compose pull --ignore-buildable; then
+  echo "Docker Compose could not pull replacement runtime images; the current deployment remains unchanged." >&2
+  exit 1
+fi
 
-echo "Rebuilding, deploying, and verifying commit $(git_repo rev-parse --short HEAD)..."
+echo "Building replacement images while the $mode deployment remains available..."
+failure_stage=compose-image-build
+if ! compose build; then
+  echo "Docker Compose could not build replacement images; the current deployment remains available." >&2
+  exit 1
+fi
+
+echo "Deploying and verifying commit $(git_repo rev-parse --short HEAD)..."
 failure_stage=compose-deploy
+deployment_started=1
 set +e
-"$script_dir/deploy.sh" "$mode_flag"
+"$script_dir/deploy.sh" "$mode_flag" --no-build
 deploy_status=$?
 set -e
 if [ "$deploy_status" -ne 0 ]; then
@@ -447,7 +464,7 @@ if [ "$deploy_status" -ne 0 ]; then
   esac
   exit "$deploy_status"
 fi
-stack_stopped=0
+deployment_started=0
 
 failure_type=docker-compose
 failure_stage=image-inventory

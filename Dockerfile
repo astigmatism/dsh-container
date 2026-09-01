@@ -57,6 +57,8 @@ RUN mkdir -p /opt/dsh-seed \
 COPY seed/profile/ /opt/dsh-seed/profiles/web/
 COPY seed/plugins/ /opt/dsh-seed/.dsh-plugins/
 
+# Compose runs this image with the host's numeric UID, which may not match the
+# base image's `node` user. pnpm opens its store index even for read operations.
 RUN cd /opt/dsh-seed/profiles/web \
     && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store \
     && dsh --profile web --dump-config >/dev/null \
@@ -70,7 +72,8 @@ RUN cd /opt/dsh-seed/profiles/web \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings \
-    && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store
+    && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
+    && chmod -R a+rwX /opt/dsh-pnpm-store
 
 ENV DSH_HOME=/data/dsh \
     DSH_TELEMETRY_DISABLED=1 \

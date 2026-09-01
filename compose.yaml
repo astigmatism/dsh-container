@@ -10,6 +10,11 @@ services:
         PNPM_VERSION: "${PNPM_VERSION:-11.7.0}"
         DOCKER_CLI_IMAGE: "${DOCKER_CLI_IMAGE:-docker@sha256:d14410ab6f87a2b6c14b7150de787cd7b8bb012a8e900966d6d893e9f7fc49b6}"
     image: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.1-rc.2-portable}"
+    labels:
+      io.service-portal.update.enabled: "true"
+      io.service-portal.update.script: "scripts/update-and-restart.sh"
+      io.service-portal.update.image: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.1-rc.2-portable}"
+      io.service-portal.update.user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     container_name: deepseek-harness
     restart: unless-stopped
     init: true

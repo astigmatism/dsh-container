@@ -134,23 +134,28 @@ The maintenance verifier requires canonical content and that metadata.
 
 ## First login and TLS
 
-The gateway generates a private local CA, server certificate, and random Basic
-Auth password on first start. Retrieve that first-start password without
-printing any secrets from files:
+After running `configure.sh`, set the gateway identity before the first deploy.
+The password utility prompts without echoing the password and stores only its
+PBKDF2 hash in ignored runtime state:
 
 ```sh
-docker compose logs gateway
+./scripts/change-password.py --username YOUR_USERNAME
 ```
 
+If no identity is prepared, the gateway generates a private local CA, server
+certificate, and random Basic Auth password on first start. Retrieve that
+first-start password from `docker compose logs gateway`.
+
 Download `http://HOST:3081/ca.crt`, trust it on the browser device, and open
-`https://HOST:3443/`. Microphone access requires a trusted HTTPS origin. Port
-3081 serves only the public CA, health response, and redirects; it does not
+`https://HOST:3443/`. Microphone access requires this trusted HTTPS origin.
+Port 3081 serves only the public CA, health response, and redirects; it does not
 serve Harness or credentials.
 
-To replace the gateway password without putting it in shell history:
+To replace the gateway username or password later, rerun the password utility
+and restart the gateway:
 
 ```sh
-./scripts/change-password.py
+./scripts/change-password.py --username YOUR_USERNAME
 docker compose restart gateway
 ```
 
@@ -252,10 +257,21 @@ Compose interruption and is never replaced automatically. After
 fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
-before it can stop services. The updater then stops the selected Compose stack,
-rebuilds it, deploys it, and runs the normal verification. It creates no backup
-or rollback artifacts. After success it removes only superseded image IDs
-captured from this Compose project; it never runs a global Docker prune.
+before it can change services. The updater pulls non-buildable images and builds
+the selected overlay while the current deployment remains available, then uses
+the normal verified deployment command without an explicit `compose down` or
+`compose stop`. It creates no backup or rollback artifacts. After success it
+removes only superseded image IDs captured from this Compose project; it never
+runs a global Docker prune.
+
+The `harness` service is the only service carrying the Service Portal update
+labels. The portal therefore offers one project-level update job for every
+container in the active `deepseek-harness` project, including managed-mode
+containers, while using the already-local `HARNESS_IMAGE` as its maintenance
+runner. The optional `deepseek-harness-speech` project is intentionally not
+opted in because it has a separate host configuration and deployment lifecycle.
+After changing these labels, recreate the root project with its active Compose
+overlay so Docker stores them on the `harness` container.
 
 A single atomically replaced status file is kept at
 `data/maintenance-status`. In addition to the mode, commits, and exit status,

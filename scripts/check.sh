@@ -23,6 +23,7 @@ sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/te
 "$project_dir/tests/update-and-restart.test.sh"
 "$project_dir/tests/persisted-settings.test.sh"
 "$project_dir/tests/deployment-mode.test.sh"
+"$project_dir/tests/service-portal.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json
@@ -83,7 +84,8 @@ if [ "$build" -eq 1 ]; then
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
 
-  inventory=$(docker run --rm --entrypoint dsh \
+  # Verify the image with a UID unrelated to the base image's `node` user.
+  inventory=$(docker run --rm --user 12345:12345 --entrypoint dsh \
     --env DSH_HOME=/opt/dsh-seed "$harness_image" plugin --profile web list)
   for expected in \
     '@zoytown/dsh-token@0.1.3' \

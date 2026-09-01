@@ -19,8 +19,10 @@ needs the NVIDIA Container Toolkit.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
-- `local-active` OpenAI Responses model at `http://ai-router:11434/v1`.
-- 131,072-token Harness context and Medium default reasoning.
+- Selectable `local-active` OpenAI Responses routes at
+  `http://ai-router:11434/v1`: a default 262,144-token route and an optional
+  131,072-token route for smaller active models.
+- Max default reasoning, matching the captured writable Harness settings.
 - Active Ollama model `qwen3.8:27b-mtp-q8_0`, 262,144-token Ollama context,
   persistent keep-alive, one parallel request, one loaded model, flash attention,
   `f16` KV cache, and the captured reasoning-effort mapping.
@@ -105,11 +107,14 @@ is supplied explicitly.
 ## Persisted settings lifecycle
 
 `config/settings.yaml` is the reviewed canonical configuration for this
-deployment: it selects the local `ai-router` provider, the `local-active`
-model, the captured reasoning levels, and the intended permission preset. It
-contains an environment-variable name for the provider key, not the key
-itself. Remote mode changes name resolution in Compose rather than changing
-this file.
+deployment: it selects the 262,144-token `local-active` route by default and
+also exposes a 131,072-token route for new tasks using a smaller active model.
+Both routes use the same local `ai-router` endpoint and wire model ID; only the
+Harness context metadata differs, so the router continues to resolve
+`local-active` normally. The file also contains the captured reasoning levels,
+the intended permission preset, and an environment-variable name for the
+provider key rather than the key itself. Remote mode changes name resolution
+in Compose rather than changing this file.
 
 `scripts/configure.sh` atomically initializes a missing
 `data/dsh/settings.yaml` from that canonical file with the configured

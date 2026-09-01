@@ -32,7 +32,7 @@ needs the NVIDIA Container Toolkit.
   captured voice host, with separate file-based keys and locked deployment
   metadata in `config/speech.lock.json`.
 
-The locked web profile contains these seven plugins:
+The locked web profile contains these eight plugins:
 
 1. `@zoytown/dsh-token` 0.1.3
 2. `dsh-context` 0.37.0
@@ -42,6 +42,7 @@ The locked web profile contains these seven plugins:
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
 6. `dsh-session-pin` 0.6.1
 7. `dsh-ui-appearance` 0.1.6
+8. `dsh-favicon-status` 0.1.0-rc.5
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and

@@ -4,6 +4,7 @@
   "dependencies": {
     "@zoytown/dsh-token": "^0.1.3",
     "dsh-context": "^0.37.0",
+    "dsh-favicon-status": "0.1.0-rc.5",
     "dsh-local-speech-input": "link:/opt/dsh-local-speech",
     "dsh-loop-detector": "^1.0.0",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification",
@@ -20,7 +21,8 @@
         "dsh-context",
         "@zoytown/dsh-token",
         "dsh-session-pin",
-        "dsh-ui-appearance"
+        "dsh-ui-appearance",
+        "dsh-favicon-status"
       ]
     }
   }

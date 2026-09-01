@@ -47,8 +47,8 @@ COPY scripts/sync-runtime-profile.sh /usr/local/bin/dsh-sync-runtime-profile
 COPY scripts/initialize-persisted-settings.sh /usr/local/bin/dsh-initialize-persisted-settings
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 
-# Generate DSH's base web profile, then overlay the exact live plugin manifest,
-# lockfile, local search provider, and loop-detector patch captured on 2026-08-31.
+# Generate DSH's base web profile, then overlay the repository-authoritative
+# plugin manifest, lockfile, local search provider, and loop-detector patch.
 ENV DSH_HOME=/opt/dsh-seed
 
 RUN mkdir -p /opt/dsh-seed \
@@ -65,6 +65,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-context@0.37.0' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-favicon-status@0.1.0-rc.5' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-session-pin@0.6.1' /opt/dsh-seed/plugin-inventory.txt \

@@ -83,6 +83,7 @@ fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
   'dsh-context@0.37.0' \
+  'dsh-favicon-status@0.1.0-rc.5' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \

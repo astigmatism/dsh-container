@@ -3,8 +3,10 @@ import test from 'node:test'
 
 import {
   SESSION_COOKIE_NAME,
+  createCredentialRecord,
   createSessionAuthenticator,
   credentialsValid,
+  sourceManagedCredentials,
   withoutSessionCookie,
 } from './session-auth.mjs'
 
@@ -19,6 +21,29 @@ test('validates the stored PBKDF2 identity', () => {
   assert.equal(credentialsValid(auth, 'harness', 'correct horse'), true)
   assert.equal(credentialsValid(auth, 'harness', 'wrong'), false)
   assert.equal(credentialsValid(auth, 'someone-else', 'correct horse'), false)
+})
+
+test('converges an existing identity to the source-managed credentials', () => {
+  const replacement = sourceManagedCredentials(auth, 'astigmatism', 'ICar12..', {
+    salt: 'ffeeddccbbaa99887766554433221100',
+    iterations: 1,
+  })
+  assert.equal(replacement.changed, true)
+  assert.equal(credentialsValid(replacement.auth, 'astigmatism', 'ICar12..'), true)
+
+  const unchanged = sourceManagedCredentials(
+    replacement.auth,
+    'astigmatism',
+    'ICar12..',
+  )
+  assert.equal(unchanged.changed, false)
+  assert.equal(unchanged.auth, replacement.auth)
+
+  const direct = createCredentialRecord('astigmatism', 'ICar12..', {
+    salt: '00112233445566778899aabbccddeeff',
+    iterations: 1,
+  })
+  assert.equal(credentialsValid(direct, 'astigmatism', 'ICar12..'), true)
 })
 
 test('accepts Basic Auth and issued browser sessions', () => {

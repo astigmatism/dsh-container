@@ -124,7 +124,6 @@ else
   set_env HOST_USERNAME "$host_username"
   set_env HOST_WORKSPACE_ROOT "$host_workspace"
   set_env DOCKER_GID "$docker_gid"
-  set_env HARNESS_AUTH_USERNAME "$host_username"
   set_env HARNESS_BIND_ADDRESS "$bind_address"
   set_env HARNESS_TLS_IP "$bind_address"
   set_env HARNESS_TRUSTED_HOSTS "$bind_address:3443,deepseek-harness.local:3443,localhost:3443"

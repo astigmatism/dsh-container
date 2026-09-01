@@ -6,6 +6,12 @@ export function passwordHash(password, salt, iterations) {
   return pbkdf2Sync(password, salt, iterations, 32, 'sha256').toString('hex')
 }
 
+export function createCredentialRecord(username, password, options = {}) {
+  const salt = options.salt || randomBytes(16).toString('hex')
+  const iterations = options.iterations || 240000
+  return { username, salt, iterations, hash: passwordHash(password, salt, iterations) }
+}
+
 export function credentialsValid(auth, username, password) {
   const expectedUser = Buffer.from(auth.username)
   const receivedUser = Buffer.from(username)
@@ -15,6 +21,15 @@ export function credentialsValid(auth, username, password) {
     && expectedHash.length === receivedHash.length
     && timingSafeEqual(expectedUser, receivedUser)
     && timingSafeEqual(expectedHash, receivedHash)
+}
+
+export function sourceManagedCredentials(existing, username, password, options = {}) {
+  try {
+    if (existing && credentialsValid(existing, username, password)) {
+      return { auth: existing, changed: false }
+    }
+  } catch {}
+  return { auth: createCredentialRecord(username, password, options), changed: true }
 }
 
 function basicCredentials(header) {

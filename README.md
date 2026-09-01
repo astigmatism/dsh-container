@@ -156,17 +156,19 @@ The maintenance verifier requires canonical content and that metadata.
 
 ## First login and TLS
 
-After running `configure.sh`, set the gateway identity before the first deploy.
-The password utility prompts without echoing the password and stores only its
-PBKDF2 hash in ignored runtime state:
+The gateway uses the intentionally tracked, source-managed home-network login
+on every deployment:
 
-```sh
-./scripts/change-password.py --username YOUR_USERNAME
+```text
+username: astigmatism
+password: ICar12..
 ```
 
-If no identity is prepared, the gateway generates a private local CA, server
-certificate, and random Basic Auth password on first start. Retrieve that
-first-start password from `docker compose logs gateway`.
+On startup, the gateway replaces any divergent persisted login hash with these
+credentials, while continuing to store only the PBKDF2 hash in runtime data.
+The plaintext default is public repository configuration by design; do not
+expose the gateway outside the trusted home network without replacing this
+policy.
 
 Download `http://HOST:3081/ca.crt`, trust it on the browser device, and open
 `https://HOST:3443/`. Browser navigation opens a normal sign-in page and creates
@@ -175,14 +177,6 @@ are accepted. HTTP Basic Auth remains available for non-browser clients. Session
 last up to 12 hours and are invalidated when the gateway restarts. Microphone access
 requires this trusted HTTPS origin. Port 3081 serves only the public CA, health
 response, and redirects; it does not serve Harness or credentials.
-
-To replace the gateway username or password later, rerun the password utility
-and restart the gateway:
-
-```sh
-./scripts/change-password.py --username YOUR_USERNAME
-docker compose restart gateway
-```
 
 ## Speech-to-text and text-to-speech
 

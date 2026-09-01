@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
@@ -9,7 +8,7 @@ import { externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './re
 import {
   createSessionAuthenticator,
   credentialsValid,
-  passwordHash,
+  sourceManagedCredentials,
   withoutSessionCookie,
 } from './session-auth.mjs'
 
@@ -47,16 +46,15 @@ function atomicJson(path, value) {
 }
 
 function loadAuth() {
-  if (existsSync(authPath)) return JSON.parse(readFileSync(authPath, 'utf8'))
-  const username = process.env.HARNESS_AUTH_USERNAME || 'harness'
-  const password = randomBytes(18).toString('base64url')
-  const salt = randomBytes(16).toString('hex')
-  const iterations = 240000
-  const hash = passwordHash(password, salt, iterations)
-  const auth = { username, salt, iterations, hash }
-  atomicJson(authPath, auth)
-  process.stdout.write(`DeepSeek Harness initial credentials: ${username} / ${password}\n`)
-  process.stdout.write('The plaintext password is shown only on this first start. Delete data/gateway/auth.json to regenerate it.\n')
+  const username = process.env.HARNESS_AUTH_USERNAME || 'astigmatism'
+  const password = process.env.HARNESS_AUTH_PASSWORD || 'ICar12..'
+  let existing = null
+  try { existing = JSON.parse(readFileSync(authPath, 'utf8')) } catch {}
+  const { auth, changed } = sourceManagedCredentials(existing, username, password)
+  if (changed) {
+    atomicJson(authPath, auth)
+    process.stdout.write(`Activated the source-managed gateway identity for ${username}.\n`)
+  }
   return auth
 }
 

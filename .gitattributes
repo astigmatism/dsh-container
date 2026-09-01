@@ -1,0 +1,3 @@
+# Every container in this repository is Linux-based. Keep text files LF-only
+# even when the checkout is created by Git for Windows with core.autocrlf=true.
+* text=auto eol=lf

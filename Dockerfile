@@ -47,6 +47,16 @@ COPY scripts/sync-runtime-profile.sh /usr/local/bin/dsh-sync-runtime-profile
 COPY scripts/initialize-persisted-settings.sh /usr/local/bin/dsh-initialize-persisted-settings
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 
+# Defend existing Windows checkouts that predate .gitattributes. A CRLF
+# shebang makes Linux report an existing script as "no such file or directory."
+RUN sed -i 's/\r$//' \
+      /usr/local/bin/dsh-entrypoint \
+      /usr/local/bin/nvidia-smi \
+      /usr/local/bin/host-exec \
+      /usr/local/bin/host-enter \
+      /usr/local/bin/dsh-sync-runtime-profile \
+      /usr/local/bin/dsh-initialize-persisted-settings
+
 # Generate DSH's base web profile, then overlay the repository-authoritative
 # plugin manifest, lockfile, local search provider, and loop-detector patch.
 ENV DSH_HOME=/opt/dsh-seed

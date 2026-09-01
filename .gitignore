@@ -7,8 +7,11 @@
 data/
 backups/
 
+# The home-network STT token is intentionally tracked so dictation works after
+# deployment. Other service credentials remain local runtime configuration.
 secrets/*
 !secrets/.gitkeep
+!secrets/stt_api_key
 
 *.tar
 *.tar.gz

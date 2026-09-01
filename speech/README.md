@@ -28,10 +28,9 @@ docker compose --env-file speech/.env -f speech/compose.yaml up -d --build
 ./scripts/verify-speech.sh
 ```
 
-`scripts/configure.sh` creates empty mode-0600 secret files if necessary. Put
-the STT server key in `secrets/stt_api_key` and the distinct TTS router key in
-`secrets/tts_api_key`. The Compose stack reads those files as Docker secrets;
-neither value belongs in `speech/.env` or Git.
+The home-network STT token is tracked in `secrets/stt_api_key`; put the distinct
+deployment-local TTS router key in `secrets/tts_api_key`. The Compose stack
+reads those files as Docker secrets, and neither value belongs in `speech/.env`.
 
 The first start downloads approximately 1.6 GB of Whisper weights and about
 3.2 GB for Chatterbox. Kokoro's weights are bundled in its pinned image. The

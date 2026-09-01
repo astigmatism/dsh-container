@@ -170,17 +170,19 @@ The speech button sends recordings only to the authenticated gateway at
 faster-whisper. The corresponding TTS proxy is `/local-tts/speech`, defaulting
 to model `tts-1` and Kokoro voice `af_heart` when a client omits them.
 
-The distinct keys are stored in ignored mode-0600 files:
+The home-network STT token is intentionally tracked so a fresh Harness
+deployment has working dictation. The distinct TTS token remains ignored:
 
-- `secrets/stt_api_key`
-- `secrets/tts_api_key`
+- `secrets/stt_api_key` — tracked home-network configuration
+- `secrets/tts_api_key` — ignored deployment-local configuration
 
-An empty URL or key disables only that speech service. Neither key is built
-into an image, returned in the `/local-stt/config` or `/local-tts/config`
-responses, sent to the browser, or mounted into Harness.
+An empty URL or key disables only that speech service. The Docker build context
+excludes `secrets/`, so neither key is built into an image, returned in the
+`/local-stt/config` or `/local-tts/config` responses, sent to the browser, or
+mounted into Harness. Compose mounts the required key only into the gateway.
 
-To import the configured key from an OpenWebUI SQLite database without printing
-it:
+To replace the tracked STT token from an OpenWebUI SQLite database without
+printing it:
 
 ```sh
 ./scripts/import-openwebui-stt.py \

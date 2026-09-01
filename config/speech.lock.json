@@ -47,7 +47,10 @@
     "stt": "secrets/stt_api_key; identical to the voice server WHISPER_API_KEY",
     "tts": "secrets/tts_api_key; identical to the TTS router TTS_ROUTER_API_KEY",
     "keysAreDistinct": true,
-    "trackedValues": false
+    "trackedValues": {
+      "stt": true,
+      "tts": false
+    }
   },
   "capturedValidation": {
     "phrase": "DSH speech round trip test.",

@@ -20,8 +20,10 @@ Options:
   -h, --help            show this help
 
 Missing settings are initialized from config/settings.yaml. Matching settings
-with incorrect service ownership or mode are atomically normalized. Empty files
+with unsafe service ownership or mode are atomically normalized. Empty files
 require --replace-empty, and non-empty divergent files are never overwritten.
+Modes 0600, 0640, and 0644 are accepted because DSH atomically saves runtime
+settings with mode 0600.
 EOF
 }
 
@@ -135,10 +137,10 @@ file_mode() {
   esac
 }
 
-metadata_match() {
+metadata_valid() {
   [ "$(file_uid "$1")" = "$expected_uid" ] \
     && [ "$(file_gid "$1")" = "$expected_gid" ] \
-    && [ "$(file_mode "$1")" = "$expected_mode" ]
+    && case "$(file_mode "$1")" in 600|640|644) true ;; *) false ;; esac
 }
 
 classify_settings
@@ -153,14 +155,18 @@ case "$initial_state" in
     fi
     ;;
   matching)
-    if metadata_match "$runtime_settings"; then
-      echo "Persisted settings already match canonical content, service ownership, and mode 0644."
+    if metadata_valid "$runtime_settings"; then
+      echo "Persisted settings already match canonical content with service ownership and a secure mode."
       exit 0
     fi
     ;;
   divergent)
     if [ "$preserve_divergent" -eq 1 ]; then
-      echo "Keeping non-empty divergent persisted settings unchanged."
+      if ! metadata_valid "$runtime_settings"; then
+        echo "Divergent persisted settings do not have the required service ownership and a secure mode (0600, 0640, or 0644)." >&2
+        exit 1
+      fi
+      echo "Keeping non-empty divergent persisted settings unchanged with service ownership and a secure mode."
       exit 0
     fi
     echo "Persisted settings are non-empty and differ from the canonical configuration." >&2
@@ -185,7 +191,7 @@ cmp -s "$canonical_settings" "$stage" || {
   echo "Staged persisted settings do not match the canonical source." >&2
   exit 1
 }
-metadata_match "$stage" || {
+metadata_valid "$stage" || {
   echo "Could not stage persisted settings with service ownership and mode 0644." >&2
   exit 1
 }
@@ -222,7 +228,7 @@ cmp -s "$canonical_settings" "$runtime_settings" || {
   echo "Persisted settings verification failed after initialization." >&2
   exit 1
 }
-metadata_match "$runtime_settings" || {
+metadata_valid "$runtime_settings" || {
   echo "Persisted settings metadata verification failed after initialization." >&2
   exit 1
 }

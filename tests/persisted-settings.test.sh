@@ -96,6 +96,7 @@ grep -Fq 'Replaced an existing empty persisted-settings placeholder' "$fixture/o
 
 make_fixture divergent
 printf '%s\n' 'intentionally-custom: true' >"$fixture/data/dsh/settings.yaml"
+chmod 0600 "$fixture/data/dsh/settings.yaml"
 divergent_before=$(cksum "$fixture/data/dsh/settings.yaml")
 run_initializer "$fixture" --replace-empty
 [ "$initializer_status" -ne 0 ] || fail "divergent settings were accepted for replacement"
@@ -109,14 +110,21 @@ run_initializer "$fixture" --replace-empty --preserve-divergent
 [ "$divergent_before" = "$(cksum "$fixture/data/dsh/settings.yaml")" ] \
   || fail "preserved divergent settings were modified"
 
+chmod 0666 "$fixture/data/dsh/settings.yaml"
+run_initializer "$fixture" --preserve-divergent
+[ "$initializer_status" -ne 0 ] || fail "insecure divergent settings metadata was accepted"
+grep -Fq 'do not have the required service ownership and a secure mode' "$fixture/output.log" \
+  || fail "insecure divergent-settings metadata diagnostic was not reported"
+
 make_fixture matching
 cp "$fixture/config/settings.yaml" "$fixture/data/dsh/settings.yaml"
 chmod 0600 "$fixture/data/dsh/settings.yaml"
 run_initializer "$fixture"
-[ "$initializer_status" -eq 0 ] || fail "matching settings metadata was not normalized"
-assert_canonical_file "$fixture"
-grep -Fq 'Normalized matching persisted settings' "$fixture/output.log" \
-  || fail "matching metadata correction was not reported"
+[ "$initializer_status" -eq 0 ] || fail "DSH mode 0600 was not accepted"
+[ "$(file_mode "$fixture/data/dsh/settings.yaml")" = 600 ] \
+  || fail "accepted mode 0600 was unexpectedly rewritten"
+grep -Fq 'with service ownership and a secure mode' "$fixture/output.log" \
+  || fail "secure matching metadata was not reported"
 
 run_entrypoint() {
   fixture_path=$1

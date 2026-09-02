@@ -39,7 +39,8 @@ With no mode flag, the script uses the running container's Compose labels and
 the required DSH_DEPLOYMENT_MODE from .env. It refuses missing, empty,
 duplicated, invalid, or conflicting mode state. It requires clean main tracking
 canonical origin/main, checks persisted settings before fetching and again
-against the fetched target, then fast-forwards. It validates Compose and
+under the fetched updater after fast-forwarding. Runtime settings are preserved
+when they differ from repository defaults. It validates Compose and
 pulls/builds replacement images while the deployment remains available before
 recreating the project and verifying it. It removes only superseded images
 captured from this project and creates no backup, archive, stash, rollback tag,
@@ -353,8 +354,8 @@ if [ "$dry_run" -eq 1 ]; then
   echo "Commit:     $before_commit"
   echo "Mode:       $mode"
   echo "Worktree:   clean"
-  echo "Settings:   match current canonical configuration"
-  echo "Plan:       fetch/check target settings/fast-forward, validate, pull/build, deploy, verify, remove superseded project images"
+  echo "Settings:   non-empty runtime configuration with service ownership and secure mode"
+  echo "Plan:       fetch/fast-forward, revalidate with fetched updater, pull/build, deploy, verify, remove superseded project images"
   echo "Rollback:   no backups or rollback artifacts will be created"
   exit 0
 fi
@@ -372,17 +373,6 @@ if [ "$resume" -ne 1 ]; then
     echo "Refusing a non-fast-forward update; local and remote history differ." >&2
     echo "Local:  $before_commit" >&2
     echo "Remote: $target_commit" >&2
-    exit 1
-  fi
-
-  failure_type=configuration-verification
-  failure_stage=preflight-target-settings
-  target_settings_object=$(git_repo rev-parse "$target_commit:config/settings.yaml" 2>/dev/null || true)
-  runtime_settings_object=$(git_repo hash-object "$project_dir/data/dsh/settings.yaml" 2>/dev/null || true)
-  if [ -z "$target_settings_object" ] || [ -z "$runtime_settings_object" ] \
-    || [ "$target_settings_object" != "$runtime_settings_object" ]; then
-    echo "Persisted settings do not match config/settings.yaml in the fetched target." >&2
-    echo "Maintenance will not merge or interrupt services; an explicit configuration decision is required." >&2
     exit 1
   fi
 

@@ -167,8 +167,8 @@ is supplied explicitly.
 
 ## Persisted settings lifecycle
 
-`config/settings.yaml` is the reviewed canonical configuration for this
-deployment: it selects the 262,144-token `local-active` route by default and
+`config/settings.yaml` is the reviewed default configuration used to seed a
+new deployment: it selects the 262,144-token `local-active` route by default and
 also exposes a 131,072-token route for new tasks using a smaller active model.
 Both routes use the same local `ai-router` endpoint and wire model ID; only the
 Harness context metadata differs, so the router continues to resolve
@@ -184,9 +184,10 @@ in Compose rather than changing this file.
 `HOST_UID:HOST_GID` ownership and mode `0644`. Container startup performs the
 same initialization defensively. It also recognizes and repairs the zero-byte
 mountpoint left by the repository's original nested settings bind mount, with a
-distinct diagnostic. Non-empty divergent settings are preserved and remain a
-maintenance blocker until separately reviewed; they are never overwritten by
-setup, startup, or maintenance.
+distinct diagnostic. After initialization, a non-empty persisted file is the
+machine's runtime source of truth. DSH may atomically reserialize it and save it
+with mode `0600`; that is expected. Non-empty divergent settings are preserved
+and are never overwritten by setup, startup, or maintenance.
 
 After confirming that the canonical file is intended for a particular existing
 consumer, an operator may explicitly reconcile only a zero-byte placeholder:
@@ -198,7 +199,10 @@ sudo ./scripts/initialize-persisted-settings.sh --replace-empty
 The initializer refuses a non-empty divergent file even with that flag. It
 stages content in the persisted directory, applies service ownership and mode
 `0644`, rechecks the original state, and replaces the empty file atomically.
-The maintenance verifier requires canonical content and that metadata.
+The maintenance verifier requires a regular, non-empty file owned by the
+configured service identity. It accepts secure modes `0600`, `0640`, and
+`0644`; it reports whether the content differs from the defaults without
+blocking or replacing machine-specific runtime settings.
 
 ## First login and TLS
 
@@ -326,11 +330,12 @@ Apply later repository/plugin updates without changing per-host configuration:
 The maintenance command infers the current Ollama mode, requires a clean and
 fast-forwardable `main` checkout tracking the canonical `origin/main`, and
 requires exactly one recorded deployment mode consistent with the running
-Compose labels. It checks the persisted `data/dsh/settings.yaml` before
-fetching and also compares
-that file with the fetched target's canonical settings before merging. A
-mismatch or incorrect service ownership/mode stops maintenance before any
-Compose interruption and is never replaced automatically. After
+Compose labels. It checks that the persisted `data/dsh/settings.yaml` is a
+regular, non-empty file with the configured service ownership and a secure
+mode before fetching. It does not require byte equality with repository
+defaults, so DSH serialization changes and intentional per-machine settings
+survive updates. Missing, empty, wrongly owned, or insecurely permissioned
+settings stop maintenance before any Compose interruption. After
 fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation

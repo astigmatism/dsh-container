@@ -55,12 +55,6 @@ if [ ! -s "$runtime_settings" ]; then
   exit 1
 fi
 
-if ! cmp -s "$canonical_settings" "$runtime_settings"; then
-  echo "Persisted settings differ from config/settings.yaml." >&2
-  echo "Maintenance will not overwrite them; an explicit configuration decision is required." >&2
-  exit 1
-fi
-
 expected_uid=$(get_env HOST_UID)
 expected_gid=$(get_env HOST_GID)
 case "$expected_uid" in
@@ -77,9 +71,16 @@ if [ "$actual_uid" != "$expected_uid" ] || [ "$actual_gid" != "$expected_gid" ];
   echo "Persisted settings ownership is $actual_uid:$actual_gid; expected service ownership $expected_uid:$expected_gid." >&2
   exit 1
 fi
-if [ "$actual_mode" != 644 ]; then
-  echo "Persisted settings mode is $actual_mode; expected 0644." >&2
-  exit 1
-fi
+case "$actual_mode" in
+  600|640|644) ;;
+  *)
+    echo "Persisted settings mode is $actual_mode; expected a service-writable, non-executable mode (0600, 0640, or 0644)." >&2
+    exit 1
+    ;;
+esac
 
-echo "Persisted settings match config/settings.yaml with service ownership and mode 0644."
+if cmp -s "$canonical_settings" "$runtime_settings"; then
+  echo "Persisted settings match the canonical defaults with service ownership and secure mode $actual_mode."
+else
+  echo "Persisted settings differ from the canonical defaults; preserving the non-empty runtime configuration with secure mode $actual_mode."
+fi

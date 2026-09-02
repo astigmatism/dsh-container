@@ -112,6 +112,7 @@ make_legacy_fixture() {
   cp "$source_root/scripts/update-and-restart.sh" "$fixture/target/scripts/"
   cp "$source_root/scripts/configure.sh" "$fixture/target/scripts/"
   cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/target/scripts/"
+  cp "$source_root/scripts/initialize-persisted-settings.sh" "$fixture/target/scripts/"
   cp "$source_root/tests/fixtures/deploy-stub.sh" "$fixture/target/scripts/deploy.sh"
   git -C "$source_root" show "$legacy_updater_commit:scripts/update-and-restart.sh" \
     >"$fixture/scripts/update-and-restart.sh"
@@ -119,7 +120,7 @@ make_legacy_fixture() {
     >"$fixture/scripts/configure.sh"
 }
 
-for runtime_kind in missing empty mismatched
+for runtime_kind in missing empty
 do
   make_legacy_fixture "legacy-$runtime_kind-settings" "$runtime_kind"
   if [ -e "$fixture/data/dsh/settings.yaml" ]; then
@@ -149,6 +150,22 @@ do
   fi
 done
 
+make_legacy_fixture legacy-mismatched-settings mismatched
+legacy_before=$(cksum "$fixture/data/dsh/settings.yaml")
+TEST_FAST_FORWARD_SOURCE=$fixture/target
+run_update "$fixture" --external-ollama
+unset TEST_FAST_FORWARD_SOURCE
+if [ "$update_status" -ne 0 ]; then
+  sed -n '1,240p' "$fixture/output.log" >&2
+  sed -n '1,240p' "$fixture/git.log" >&2
+  sed -n '1,240p' "$fixture/docker.log" >&2
+  fail "fetched verifier rejected valid machine-specific settings"
+fi
+[ "$legacy_before" = "$(cksum "$fixture/data/dsh/settings.yaml")" ] \
+  || fail "legacy upgrade modified machine-specific settings"
+grep -Fq 'preserving the non-empty runtime configuration' "$fixture/output.log" \
+  || fail "legacy upgrade did not report preserved runtime settings"
+
 make_fixture empty-settings empty
 empty_before=$(cksum "$fixture/data/dsh/settings.yaml")
 run_update "$fixture" --external-ollama
@@ -167,26 +184,25 @@ grep -Fq 'Persisted settings are empty' "$fixture/output.log" \
 make_fixture mismatched-settings mismatched
 mismatch_before=$(cksum "$fixture/data/dsh/settings.yaml")
 run_update "$fixture" --external-ollama
-[ "$update_status" -ne 0 ] || fail "mismatched settings unexpectedly passed"
-assert_status "$fixture" 'failure_type=configuration-verification'
-assert_status "$fixture" 'failure_stage=preflight-current-settings'
-assert_no_interruption "$fixture"
-if grep -Fq 'fetch --prune' "$fixture/git.log"; then
-  fail "mismatched settings reached the fetch step"
-fi
+[ "$update_status" -eq 0 ] || fail "valid machine-specific settings blocked maintenance"
 [ "$mismatch_before" = "$(cksum "$fixture/data/dsh/settings.yaml")" ] \
-  || fail "mismatched settings were modified"
-grep -Fq 'Persisted settings differ' "$fixture/output.log" \
-  || fail "mismatched-settings diagnostic was not reported"
+  || fail "machine-specific settings were modified"
+grep -Fq 'preserving the non-empty runtime configuration' "$fixture/output.log" \
+  || fail "machine-specific settings preservation was not reported"
 
-make_fixture wrong-settings-mode matching
+make_fixture dsh-settings-mode matching
 chmod 0600 "$fixture/data/dsh/settings.yaml"
 run_update "$fixture" --external-ollama
-[ "$update_status" -ne 0 ] || fail "wrong settings mode unexpectedly passed"
+[ "$update_status" -eq 0 ] || fail "DSH mode 0600 blocked maintenance"
+
+make_fixture wrong-settings-mode matching
+chmod 0666 "$fixture/data/dsh/settings.yaml"
+run_update "$fixture" --external-ollama
+[ "$update_status" -ne 0 ] || fail "insecure settings mode unexpectedly passed"
 assert_status "$fixture" 'failure_type=configuration-verification'
 assert_status "$fixture" 'failure_stage=preflight-current-settings'
 assert_no_interruption "$fixture"
-grep -Fq 'expected 0644' "$fixture/output.log" \
+grep -Fq 'expected a service-writable, non-executable mode' "$fixture/output.log" \
   || fail "settings-mode diagnostic was not reported"
 
 make_fixture wrong-settings-owner matching
@@ -207,15 +223,11 @@ make_fixture target-settings-change matching
 TEST_TARGET_SETTINGS_OBJECT=different-settings-object
 run_update "$fixture" --external-ollama
 unset TEST_TARGET_SETTINGS_OBJECT
-[ "$update_status" -ne 0 ] || fail "target settings change unexpectedly passed"
-assert_status "$fixture" 'failure_type=configuration-verification'
-assert_status "$fixture" 'failure_stage=preflight-target-settings'
-assert_no_interruption "$fixture"
+[ "$update_status" -eq 0 ] || fail "repository default change blocked preserved runtime settings"
 grep -Fq 'fetch --prune origin main' "$fixture/git.log" \
   || fail "target-settings test did not fetch"
-if grep -Fq 'merge --ff-only' "$fixture/git.log"; then
-  fail "target settings mismatch was merged"
-fi
+grep -Fq 'merge --ff-only' "$fixture/git.log" \
+  || fail "target settings change did not fast-forward"
 
 make_fixture updater-resume matching
 run_update "$fixture" --external-ollama

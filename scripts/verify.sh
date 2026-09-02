@@ -47,10 +47,6 @@ esac
 # shellcheck disable=SC2086
 compose() { docker compose --env-file "$project_dir/.env" $compose_files "$@"; }
 
-get_env() {
-  awk -F= -v wanted="$1" '$1 == wanted { print substr($0, index($0, "=") + 1); exit }' "$project_dir/.env"
-}
-
 if ! "$script_dir/verify-persisted-settings.sh"; then
   exit "$configuration_exit"
 fi
@@ -118,19 +114,15 @@ if ! compose exec -T harness node -e \
   exit "$provider_exit"
 fi
 
-gateway_tls_ip=$(get_env HARNESS_TLS_IP)
-gateway_https_port=$(get_env HARNESS_HTTPS_PORT)
-gateway_ca=$project_dir/data/gateway/tls/ca.crt
-if [ -z "$gateway_tls_ip" ] || [ -z "$gateway_https_port" ] || [ ! -s "$gateway_ca" ] \
-  || ! curl --fail --silent --show-error --cacert "$gateway_ca" \
-    "https://$gateway_tls_ip:$gateway_https_port/healthz" >/dev/null; then
-  if ! docker info >/dev/null 2>&1; then
-    echo "Docker Engine became unavailable during HTTPS gateway verification." >&2
-    exit "$docker_compose_exit"
-  fi
-  echo "The authenticated HTTPS gateway did not pass trusted TLS health verification." >&2
-  exit "$application_health_exit"
-fi
+# Trusted TLS gateway verification. verify-gateway-tls.sh probes
+# https://HARNESS_TLS_IP:HARNESS_HTTPS_PORT/healthz from the caller's network
+# namespace on the host. When invoked from an isolated maintenance runner
+# (SERVICE_PORTAL_UPDATE_DELEGATED=1 or DSH_UPDATE_DELEGATED=1), 127.0.0.1 in
+# the caller is the runner itself, so it instead runs the same trusted probe
+# with full certificate-chain and IP verification inside the gateway
+# container's network namespace. It exits 20 (Docker unavailable) or 23
+# (verification failed); set -e propagates that classification here.
+"$script_dir/verify-gateway-tls.sh"
 
 if [ "$mode" = --managed-ollama ]; then
   if ! compose exec -T ollama ollama show qwen3.8:27b-mtp-q8_0 >/dev/null; then

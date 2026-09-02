@@ -350,6 +350,12 @@ opted in because it has a separate host configuration and deployment lifecycle.
 After changing these labels, recreate the root project with its active Compose
 overlay so Docker stores them on the `harness` container.
 
+Service Portal updates run from an isolated maintenance container. Post-deploy
+gateway verification detects that delegated context and performs the same
+CA-validated HTTPS health probe inside the gateway container's network
+namespace. Verification is not skipped or weakened, and failures retain the
+normal updater exit classifications.
+
 A single atomically replaced status file is kept at
 `data/maintenance-status`. In addition to the mode, commits, and exit status,
 it records `failure_type`, `failure_stage`, and recovery outcome. Failure types

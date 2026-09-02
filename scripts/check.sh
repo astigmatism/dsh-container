@@ -25,6 +25,7 @@ sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/te
 "$project_dir/tests/deployment-mode.test.sh"
 "$project_dir/tests/service-portal.test.sh"
 "$project_dir/tests/compose-topology.test.sh"
+"$project_dir/tests/delegated-gateway.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json

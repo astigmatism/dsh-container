@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DSH Visual Validation Fixture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        background: #0b1020;
+        color: #f5f7ff;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 1540px; background: #0b1020; }
+      main { width: 1440px; margin: 0 auto; padding: 32px 44px 80px; }
+
+      .masthead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 54px;
+        overflow: hidden;
+        margin-bottom: 28px;
+      }
+
+      .masthead h1 {
+        margin: 0;
+        font-size: 42px;
+        line-height: 1.35;
+        letter-spacing: -0.04em;
+      }
+
+      .environment {
+        border: 1px solid #34415f;
+        border-radius: 999px;
+        padding: 8px 14px;
+        color: #b9c8e8;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 24px;
+      }
+
+      .card {
+        position: relative;
+        min-height: 250px;
+        padding: 24px;
+        overflow: hidden;
+        border: 1px solid #263453;
+        border-radius: 18px;
+        background: #121a2f;
+        box-shadow: 0 16px 40px rgb(0 0 0 / 24%);
+      }
+
+      .card h2 { margin: 0 0 8px; font-size: 20px; }
+      .muted { margin: 0; color: #1b2944; }
+      .metric { margin-top: 28px; font-size: 56px; font-weight: 760; }
+      .metric span { color: #42d392; font-size: 18px; }
+
+      .actions { position: relative; height: 96px; margin-top: 30px; }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 12px 18px;
+        color: white;
+        background: #596cff;
+        font: inherit;
+        font-weight: 650;
+      }
+
+      .primary-action { position: absolute; left: 18px; top: 16px; z-index: 1; }
+      .secondary-action { position: absolute; left: 88px; top: 28px; z-index: 2; background: #eb4d74; }
+
+      .chart-card { min-height: 330px; }
+      canvas { width: 100%; height: 230px; border-radius: 12px; background: #0d1427; }
+
+      .table-card { grid-column: 1 / -1; min-height: 290px; }
+      table { width: 100%; margin-top: 18px; border-collapse: collapse; }
+      th, td { padding: 14px 12px; text-align: left; border-bottom: 1px solid #263453; }
+      th { color: #a9b8d7; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .status { color: #42d392; }
+
+      .offscreen-action {
+        position: absolute;
+        right: -96px;
+        bottom: 22px;
+        background: #ffd166;
+        color: #1a2033;
+      }
+
+      .toast {
+        position: fixed;
+        right: 28px;
+        bottom: 28px;
+        z-index: 2;
+        width: 310px;
+        padding: 18px;
+        border: 1px solid #42d392;
+        border-radius: 14px;
+        background: #152942;
+      }
+
+      .blocking-panel {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 3;
+        width: 210px;
+        height: 96px;
+        border: 1px solid #6e7d9d;
+        border-radius: 14px;
+        background: #29334a;
+        padding: 16px;
+      }
+
+      @media (max-width: 900px) {
+        main { margin-left: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <h1>Release readiness overview</h1>
+        <div class="environment">Production mirror</div>
+      </header>
+
+      <section class="grid" aria-label="Release dashboard">
+        <article class="card">
+          <h2>Application health</h2>
+          <p class="muted">Last refreshed seconds ago. All automated checks are current.</p>
+          <div class="metric">98.7% <span>+1.4%</span></div>
+          <div class="actions" aria-label="Health actions">
+            <button class="primary-action" type="button">Open report</button>
+            <button class="secondary-action" type="button">Re-run checks</button>
+          </div>
+        </article>
+
+        <article class="card chart-card">
+          <h2>Reliability trend</h2>
+          <canvas id="reliability-chart" width="600" height="230" aria-label="Reliability chart"></canvas>
+        </article>
+
+        <article class="card table-card">
+          <h2>Deployment queue</h2>
+          <table>
+            <thead><tr><th>Service</th><th>Owner</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Web shell</td><td>Platform</td><td class="status">Ready</td></tr>
+              <tr><td>Image pipeline</td><td>Media</td><td class="status">Ready</td></tr>
+              <tr><td>Session gateway</td><td>Core</td><td class="status">Ready</td></tr>
+            </tbody>
+          </table>
+          <button class="offscreen-action" type="button">Approve deployment</button>
+        </article>
+      </section>
+    </main>
+
+    <aside class="toast" role="status">
+      <strong>Validation complete</strong><br>
+      Screenshot comparison is ready.
+    </aside>
+    <aside class="blocking-panel" aria-label="Support widget">Support widget<br>Online now</aside>
+
+    <script>
+      const canvas = document.querySelector('#reliability-chart');
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#0d1427';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = '#2e3e62';
+      context.lineWidth = 1;
+      for (let y = 35; y < 210; y += 40) {
+        context.beginPath();
+        context.moveTo(28, y);
+        context.lineTo(572, y);
+        context.stroke();
+      }
+      context.strokeStyle = '#42d392';
+      context.lineWidth = 6;
+      context.beginPath();
+      context.moveTo(34, 160);
+      context.lineTo(132, 128);
+      context.lineTo(230, 142);
+      context.lineTo(328, 92);
+      context.lineTo(426, 112);
+      context.lineTo(566, 54);
+      context.stroke();
+      context.fillStyle = '#ffd166';
+      context.font = '700 22px system-ui';
+      context.fillText('VISION TOKEN: COBALT-731', 126, 205);
+    </script>
+  </body>
+</html>

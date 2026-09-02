@@ -100,6 +100,7 @@ if [ "$build" -eq 1 ]; then
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
+    'dsh-playwright@0.1.0' \
     'dsh-session-pin@0.6.1' \
     'dsh-ui-appearance@0.1.6'
   do

@@ -13,6 +13,16 @@
 - id: session-title-llm
   disabled: true
 
+# The browser remains headless inside the container while its CDP screencast is
+# rendered in DSH's Browser Use panel. Private targets are an explicit
+# deployment choice because enabling them also permits private subresources.
+- id: dsh-playwright
+  config:
+    browserExecutablePath: /usr/bin/chromium
+    viewportWidth: 1440
+    viewportHeight: 900
+    allowPrivateHosts: !!js "(process.env.DSH_BROWSER_ALLOW_PRIVATE_HOSTS ?? 'false').toLowerCase() === 'true'"
+
 - insert:
     - id: web-search-duckduckgo
       name: '../../.dsh-plugins/dsh-web-search-free.js?v=2'

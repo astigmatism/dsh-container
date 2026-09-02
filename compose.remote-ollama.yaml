@@ -1,7 +1,58 @@
+x-router-image: &router-image
+  build:
+    context: ./ollama-router
+  image: "${ROUTER_IMAGE:-local/deepseek-harness-ollama-router:0.1.0}"
+
 services:
   harness:
-    extra_hosts:
-      - "ai-router:${REMOTE_OLLAMA_HOST:-192.168.1.21}"
+    # The local adapter owns the canonical ai-router name and forwards native
+    # Ollama calls to the remote host. This keeps Responses/tool-image behavior
+    # pinned to this repository instead of depending on a remote adapter build.
+    extra_hosts: !reset []
+    depends_on:
+      ai-router:
+        condition: service_healthy
+        restart: true
+
+  ai-router:
+    <<: *router-image
+    container_name: deepseek-harness-ollama-router
+    restart: unless-stopped
+    init: true
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "11434"
+      ADMIN_ENABLED: "false"
+      OLLAMA_UPSTREAM_URL: "http://${REMOTE_OLLAMA_HOST:-192.168.1.21}:11434"
+      OLLAMA_UPSTREAM_TIMEOUT_MS: "${OLLAMA_UPSTREAM_TIMEOUT_MS:-900000}"
+      RESPONSES_CONTEXT_SHIFT: "${RESPONSES_CONTEXT_SHIFT:-false}"
+      ACTIVE_MODEL_FILE: /app/runtime/active-model.json
+      MODEL_POLICY_MODE: "${MODEL_POLICY_MODE:-active-only}"
+      REWRITE_REQUESTED_MODEL_TO_ACTIVE: "${REWRITE_REQUESTED_MODEL_TO_ACTIVE:-true}"
+      FORCE_KEEP_ALIVE: "${FORCE_KEEP_ALIVE:--1}"
+      PROTECTED_MODEL_ENDPOINTS: /api/chat,/api/generate,/api/embed,/api/embeddings
+      USE_ACTIVE_MODEL_WHEN_MISSING: "${USE_ACTIVE_MODEL_WHEN_MISSING:-false}"
+      ALLOW_MODEL_MANAGEMENT: "${ALLOW_MODEL_MANAGEMENT:-false}"
+      DATA_DIR: /app/data
+      REQUEST_HISTORY_LIMIT: "${REQUEST_HISTORY_LIMIT:-500}"
+      EVENT_HISTORY_LIMIT: "${EVENT_HISTORY_LIMIT:-500}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-0}"
+      PROMPT_LOGGING: "${PROMPT_LOGGING:-metadata}"
+      ENABLE_NVIDIA_SMI: "false"
+    volumes:
+      - ./config/active-model.json:/app/runtime/active-model.json:ro
+      - ./data/router:/app/data
+    networks:
+      ollama_net:
+        aliases:
+          - ai-router
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 networks:
   ollama_net:

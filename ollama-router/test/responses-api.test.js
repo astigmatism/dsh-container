@@ -631,6 +631,89 @@ test('request translation reconstructs multiple function calls and ordered outpu
   assert.equal(translated.upstreamBody.tools[0].function.name, 'lookup');
 });
 
+test('request translation preserves image-bearing function outputs for Ollama tool messages', () => {
+  const translated = translateResponsesRequest({
+    input: [
+      { role: 'user', content: 'inspect the screenshot' },
+      { type: 'function_call', call_id: 'call_screenshot', name: 'browser_screenshot', arguments: '{}' },
+      {
+        type: 'function_call_output',
+        call_id: 'call_screenshot',
+        output: [
+          { type: 'input_text', text: 'Current viewport' },
+          { type: 'input_image', detail: 'auto', image_url: 'data:image/png;base64,aGVsbG8=' },
+          { type: 'input_image', image_url: 'data:image/jpeg;base64,d29ybGQ=' }
+        ]
+      }
+    ]
+  }, 'active:model', -1);
+
+  assert.deepEqual(translated.upstreamBody.messages, [
+    { role: 'user', content: 'inspect the screenshot' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'call_screenshot',
+        type: 'function',
+        function: { name: 'browser_screenshot', arguments: {} }
+      }]
+    },
+    {
+      role: 'tool',
+      tool_name: 'browser_screenshot',
+      tool_call_id: 'call_screenshot',
+      content: 'Current viewport',
+      images: ['aGVsbG8=', 'd29ybGQ=']
+    }
+  ]);
+});
+
+test('request translation preserves untyped JSON-array function outputs as text', () => {
+  const translated = translateResponsesRequest({
+    input: [
+      { type: 'function_call', call_id: 'call_json', name: 'list_values', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call_json', output: [{ value: 1 }, { value: 2 }] }
+    ]
+  }, 'active:model', -1);
+
+  assert.deepEqual(translated.upstreamBody.messages[1], {
+    role: 'tool',
+    tool_name: 'list_values',
+    tool_call_id: 'call_json',
+    content: '[{"value":1},{"value":2}]'
+  });
+});
+
+test('request translation rejects malformed or remote image-bearing function outputs', () => {
+  const outputCases = [
+    {
+      output: [{ type: 'input_image', image_url: 'https://example.com/screenshot.png' }],
+      code: 'UNSUPPORTED_IMAGE_INPUT'
+    },
+    {
+      output: [{ type: 'input_text', text: 'ok' }, { value: 2 }],
+      code: 'INVALID_TOOL_OUTPUT'
+    },
+    {
+      output: [{ type: 'input_audio', audio_url: 'data:audio/wav;base64,aGVsbG8=' }],
+      code: 'UNSUPPORTED_TOOL_OUTPUT_CONTENT'
+    }
+  ];
+
+  for (const item of outputCases) {
+    assert.throws(
+      () => translateResponsesRequest({
+        input: [
+          { type: 'function_call', call_id: 'call_bad_output', name: 'browser_screenshot', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call_bad_output', output: item.output }
+        ]
+      }, 'active:model', -1),
+      (error) => error instanceof ResponsesApiError && error.code === item.code
+    );
+  }
+});
+
 test('request translation rejects unknown/duplicate call IDs and malformed arguments', () => {
   const cases = [
     {

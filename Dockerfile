@@ -22,7 +22,10 @@ RUN apt-get update \
       bash \
       bubblewrap \
       ca-certificates \
+      chromium \
       curl \
+      fonts-liberation \
+      fonts-noto-color-emoji \
       git \
       jq \
       less \
@@ -78,6 +81,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.5' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-session-pin@0.6.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ui-appearance@0.1.6' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \

@@ -99,6 +99,43 @@ function translateMessageContent(content, role, param) {
   return { content: textParts.join(''), images };
 }
 
+function translateFunctionOutput(output, param) {
+  if (!Array.isArray(output)) {
+    return { content: normalizeTextValue(output, param), images: [] };
+  }
+
+  // pi-ai uses a Responses content-part array when a tool result contains an
+  // image. Preserve ordinary JSON-array tool outputs as text for backwards
+  // compatibility, and only enter multimodal mode for typed content parts.
+  const containsTypedPart = output.some((part) => isPlainObject(part) && typeof part.type === 'string');
+  if (!containsTypedPart) {
+    return { content: normalizeTextValue(output, param), images: [] };
+  }
+
+  const textParts = [];
+  const images = [];
+  for (let index = 0; index < output.length; index += 1) {
+    const part = output[index];
+    const partParam = `${param}[${index}]`;
+    if (!isPlainObject(part) || typeof part.type !== 'string') {
+      invalid('INVALID_TOOL_OUTPUT', `${partParam} must be a typed content part.`, partParam);
+    }
+    if (part.type === 'input_text' || part.type === 'output_text' || part.type === 'text') {
+      if (typeof part.text !== 'string') {
+        invalid('INVALID_TOOL_OUTPUT', `${partParam}.text must be a string.`, `${partParam}.text`);
+      }
+      textParts.push(part.text);
+      continue;
+    }
+    if (part.type === 'input_image') {
+      images.push(parseDataImageUrl(part.image_url, `${partParam}.image_url`));
+      continue;
+    }
+    invalid('UNSUPPORTED_TOOL_OUTPUT_CONTENT', `Unsupported tool output content part type: ${part.type}.`, `${partParam}.type`);
+  }
+  return { content: textParts.join(''), images };
+}
+
 function parseFunctionArguments(value, param) {
   let parsed = value;
   if (typeof value === 'string') {
@@ -287,11 +324,13 @@ function translateInput(input, instructions, toolNames) {
       }
       if (completedCalls.has(callId)) invalid('DUPLICATE_TOOL_OUTPUT', `Duplicate output for function call_id: ${callId}.`, `${param}.call_id`);
       completedCalls.add(callId);
+      const translatedOutput = translateFunctionOutput(item.output, `${param}.output`);
       messages.push({
         role: 'tool',
         tool_name: knownCalls.get(callId),
         tool_call_id: callId,
-        content: normalizeTextValue(item.output, `${param}.output`)
+        content: translatedOutput.content,
+        ...(translatedOutput.images.length ? { images: translatedOutput.images } : {})
       });
       continue;
     }

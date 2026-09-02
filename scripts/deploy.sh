@@ -11,7 +11,8 @@ usage() {
 usage: ./scripts/deploy.sh [--external-ollama | --remote-ollama | --managed-ollama] [--no-build]
 
 External mode joins OLLAMA_NETWORK and expects the router alias `ai-router`.
-Remote mode maps `ai-router` to REMOTE_OLLAMA_HOST on a private Docker network.
+Remote mode runs the vendored adapter as `ai-router` on a private Docker
+network and forwards native Ollama calls to REMOTE_OLLAMA_HOST.
 Managed mode starts the pinned Ollama image, pulls the captured model set, and
 builds the vendored Responses-compatible router.
 With no mode flag, an existing recorded mode is reused; a new deployment uses

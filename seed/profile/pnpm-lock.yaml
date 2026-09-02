@@ -26,6 +26,9 @@ importers:
       dsh-loop-detector:
         specifier: ^1.0.0
         version: 1.0.0(patch_hash=012ec442faa4eeee41e63e480a9247cfe76a7ffc8fd1ac4b118f3c49114490e3)
+      dsh-playwright:
+        specifier: 0.1.0
+        version: 0.1.0
       dsh-plugin-task-notification:
         specifier: github:Cocowwy/dsh-plugin-task-notification
         version: https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4
@@ -90,6 +93,22 @@ packages:
       '@deepseek-ai/cordis': '*'
       '@deepseek-ai/dsh-llm': '*'
       '@deepseek-ai/dsh-session': '*'
+
+  dsh-playwright@0.1.0:
+    resolution: {integrity: sha512-nTx+WWLNohbOkXyHDCOGRk5oaWLu5VSQDb142d3hx5/D+V7nDacTGk7OkZFUBtmEptqJIp6T7eLQoPSVu4x0yQ==}
+    engines: {node: ^22.19.0 || >=24.0.0}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.1
+      '@deepseek-ai/dsh-attachment': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-client-connection': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-client-runtime': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-client-ui-layout': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-client-ui-slots': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-host-webserver': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-llm': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-system-prompt': ^0.1.0-rc.6
+      '@deepseek-ai/dsh-tools': ^0.1.0-rc.6
+      react: ^18.3.1
 
   dsh-plugin-task-notification@https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4:
     resolution: {gitHosted: true, integrity: sha512-JNL7NiiC0RrfO4xRDPIgJ8OjzNA0pDfTMQgwzaUsqezDFcCsYaq5XNlsuaFTBGnJMyaU0gjEMu1Cbk/Z9yGBpA==, tarball: https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4}
@@ -172,6 +191,15 @@ packages:
   node-notifier@10.0.1:
     resolution: {integrity: sha512-YX7TSyDukOZ0g+gmzjB6abKu+hTGvO8+8+gIFDsRCU2t8fLV/P2unmt+LGFaIa4y64aX98Qksa97rgz4vMNeLQ==}
 
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  pngjs@7.0.0:
+    resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
+    engines: {node: '>=14.19.0'}
+
   schemastery@3.18.0:
     resolution: {integrity: sha512-Jw2uxjoyyqc/yeurmChUEc/jbi8GsrdXV/KmqRUDZXJAXAmrJiPsz8vKa17l/VckyzljHZ9oGaul443CQiXxtA==}
 
@@ -192,6 +220,18 @@ packages:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
     engines: {node: '>= 8'}
     hasBin: true
+
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   zod@4.5.1:
     resolution: {integrity: sha512-P3GqeAEOEDqKvafVGLezbg+39YW/ze4xrD4qdS0adOY8eoI3zfjv1PQM4UwQzgT8mZKXEbqtVt8K+ZKGqkMFKg==}
@@ -228,6 +268,16 @@ snapshots:
 
   dsh-loop-detector@1.0.0(patch_hash=012ec442faa4eeee41e63e480a9247cfe76a7ffc8fd1ac4b118f3c49114490e3): {}
 
+  dsh-playwright@0.1.0:
+    dependencies:
+      '@deepseek-ai/schemastery': 3.18.2
+      playwright-core: 1.62.1
+      pngjs: 7.0.0
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   dsh-plugin-task-notification@https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4:
     dependencies:
       node-notifier: 10.0.1
@@ -261,6 +311,10 @@ snapshots:
       uuid: 8.3.2
       which: 2.0.2
 
+  playwright-core@1.62.1: {}
+
+  pngjs@7.0.0: {}
+
   schemastery@3.18.0:
     dependencies:
       '@standard-schema/spec': 1.1.0
@@ -275,5 +329,7 @@ snapshots:
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
+
+  ws@8.21.3: {}
 
   zod@4.5.1: {}

@@ -7,6 +7,7 @@
     "dsh-favicon-status": "0.1.0-rc.5",
     "dsh-local-speech-input": "link:/opt/dsh-local-speech",
     "dsh-loop-detector": "^1.0.0",
+    "dsh-playwright": "0.1.0",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification",
     "dsh-session-pin": "0.6.1",
     "dsh-ui-appearance": "0.1.6"
@@ -17,6 +18,7 @@
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
         "dsh-local-speech-input",
+        "dsh-playwright",
         "dsh-plugin-task-notification",
         "dsh-context",
         "@zoytown/dsh-token",

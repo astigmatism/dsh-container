@@ -36,6 +36,10 @@ services:
       HOST_EXEC_IMAGE: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.1-rc.2-portable}"
       OLLAMA_DSH_API_KEY: local-only
       HARNESS_TRUSTED_HOSTS: "${HARNESS_TRUSTED_HOSTS:-127.0.0.1:3443,deepseek-harness.local:3443,localhost:3443}"
+      # Leave private browser targets off for general web use. Enable this only
+      # in trusted application-validation deployments that need LAN/container
+      # targets; dsh-playwright otherwise blocks private hosts and subresources.
+      DSH_BROWSER_ALLOW_PRIVATE_HOSTS: "${DSH_BROWSER_ALLOW_PRIVATE_HOSTS:-false}"
     volumes:
       - ./data/dsh:/data/dsh
       - type: bind

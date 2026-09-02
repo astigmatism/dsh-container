@@ -33,28 +33,61 @@ needs the NVIDIA Container Toolkit.
   captured voice host, with separate file-based keys and locked deployment
   metadata in `config/speech.lock.json`.
 
-The locked web profile contains these eight plugins:
+The locked web profile contains these nine plugins:
 
 1. `@zoytown/dsh-token` 0.1.3
 2. `dsh-context` 0.37.0
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
-5. `dsh-plugin-task-notification` 0.2.1 at commit
+5. `dsh-playwright` 0.1.0, providing the shared Browser Use panel and
+   model-facing Playwright tools
+6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
-6. `dsh-session-pin` 0.6.1
-7. `dsh-ui-appearance` 0.1.6
-8. `dsh-favicon-status` 0.1.0-rc.5
+7. `dsh-session-pin` 0.6.1
+8. `dsh-ui-appearance` 0.1.6
+9. `dsh-favicon-status` 0.1.0-rc.5
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 `seed/` for the exact manifest, lockfile, provider, and patch.
 
+## Shared browser and visual validation
+
+The web profile includes `dsh-playwright`, which runs a headless Chromium page
+per DSH session and streams that same page into the in-app Browser Use panel.
+The model can navigate, inspect semantic snapshots, click or type, and request
+PNG screenshots through DSH's native image-attachment path. Both local model
+routes declare image input, and the Responses router preserves image-bearing
+tool results as Ollama tool-message images.
+
+Chromium is installed at `/usr/bin/chromium` in the Harness image. Public web
+targets work with the secure default. To validate an application on localhost,
+a Docker network, or a trusted LAN, set this deployment-local value in `.env`
+and rebuild/restart:
+
+```sh
+DSH_BROWSER_ALLOW_PRIVATE_HOSTS=true
+```
+
+This setting permits all private hosts and private subresources reachable from
+the Harness container; the upstream plugin does not currently expose a
+per-domain allowlist. Enable it only for trusted validation tasks, keep the
+Harness on its existing trusted network boundary, and turn it off for general
+browsing. Inside Chromium, `localhost` refers to the Harness container. Use a
+Compose service name for a colocated application or `host.docker.internal` on
+Docker Desktop for an application served by the host.
+
+See `docs/visual-validation-playbook.md` for acceptance tests and prompts for
+local and production validation agents.
+
 ## Choose a deployment mode
 
 Remote Ollama mode is the portable default and is intended for deploying
-Harness on another machine on the LAN. Harness uses the canonical
-`http://ai-router:11434/v1` setting while Compose maps that name to
-`REMOTE_OLLAMA_HOST`, so tracked application settings do not diverge by host.
+Harness on another machine on the LAN. Compose runs the vendored Responses
+adapter beside Harness under the canonical `ai-router` name, and that adapter
+forwards native Ollama-compatible calls to `REMOTE_OLLAMA_HOST`. This keeps
+tool-image translation and policy behavior pinned to this repository without
+making tracked Harness settings diverge by host.
 
 ```sh
 git clone https://github.com/astigmatism/dsh-container.git
@@ -65,11 +98,11 @@ cd dsh-container
 ```
 
 The no-flag deploy command selects remote mode for a new deployment and reuses
-the recorded mode on an existing deployment. A plain
-`docker compose up -d --build` now has the same network topology and creates
-its private network rather than requesting an external network, but
-`deploy.sh` remains the recommended entrypoint because it records the mode and
-performs post-start verification.
+the recorded mode on an existing deployment. Use `deploy.sh`, which includes
+the remote overlay, builds the local adapter, records the mode, and performs
+post-start verification. Plain base `docker compose up` retains the lightweight
+direct-host mapping for diagnostic use and does not include the pinned local
+Responses adapter.
 
 The container-only default exposes as much of the host filesystem as the
 platform permits at the stable Linux path `/host`. Native Windows Compose

@@ -72,8 +72,20 @@ for name, config in (("default", default), ("remote", remote)):
         raise SystemExit(f"{name}: portable remote network unexpectedly external")
     if network["name"] != "deepseek-harness_default":
         raise SystemExit(f"{name}: unexpected private network name: {network['name']}")
-    if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.21" for entry in extra_hosts(config)):
-        raise SystemExit(f"{name}: ai-router does not map to REMOTE_OLLAMA_HOST")
+
+if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.21" for entry in extra_hosts(default)):
+    raise SystemExit("default: ai-router does not map to REMOTE_OLLAMA_HOST")
+
+if extra_hosts(remote):
+    raise SystemExit(f"remote: direct ai-router host mapping survived local-adapter overlay: {extra_hosts(remote)!r}")
+remote_router = remote["services"].get("ai-router", {})
+if remote_router.get("environment", {}).get("OLLAMA_UPSTREAM_URL") != "http://192.168.1.21:11434":
+    raise SystemExit("remote: local router does not forward to REMOTE_OLLAMA_HOST")
+remote_aliases = remote_router.get("networks", {}).get("ollama_net", {}).get("aliases", [])
+if "ai-router" not in remote_aliases:
+    raise SystemExit("remote: local router is missing its ai-router alias")
+if remote["services"]["harness"].get("depends_on", {}).get("ai-router", {}).get("condition") != "service_healthy":
+    raise SystemExit("remote: harness can start before the local Responses adapter is healthy")
 
 for name, config in (("default", default), ("remote", remote), ("external", external), ("managed", managed)):
     environment = config["services"]["gateway"]["environment"]

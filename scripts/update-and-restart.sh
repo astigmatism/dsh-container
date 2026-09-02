@@ -32,7 +32,7 @@ usage: ./scripts/update-and-restart.sh [mode] [--dry-run]
 
 Modes:
   --external-ollama   join an existing local Ollama-router network
-  --remote-ollama     use the router at REMOTE_OLLAMA_HOST
+  --remote-ollama     proxy through the vendored router to REMOTE_OLLAMA_HOST
   --managed-ollama    update the managed Ollama/router stack too
 
 With no mode flag, the script uses the running container's Compose labels and

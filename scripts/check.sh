@@ -20,6 +20,19 @@ esac
 
 sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
 
+# The boot-service scripts must stay shellcheck-clean. SC1007 is excluded:
+# the repository's standard `CDPATH= cd --` idiom is a shellcheck false
+# positive.
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck -s sh --severity=warning --exclude=SC1007 \
+    "$project_dir/start-after-network.sh" \
+    "$project_dir/scripts/install-boot-service.sh" \
+    "$project_dir/scripts/deploy.sh" \
+    "$project_dir/scripts/update-and-restart.sh"
+else
+  echo "shellcheck is not installed; skipping the shell lint step."
+fi
+
 "$project_dir/tests/update-and-restart.test.sh"
 "$project_dir/tests/persisted-settings.test.sh"
 "$project_dir/tests/deployment-mode.test.sh"
@@ -27,6 +40,7 @@ sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/te
 "$project_dir/tests/compose-topology.test.sh"
 "$project_dir/tests/delegated-gateway.test.sh"
 "$project_dir/tests/profile-lockfile.test.sh"
+"$project_dir/tests/boot-service.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json

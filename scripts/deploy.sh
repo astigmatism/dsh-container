@@ -83,3 +83,10 @@ if ! docker compose --env-file "$project_dir/.env" $compose_files up -d $build_f
 fi
 
 "$script_dir/verify.sh" "--$mode-ollama"
+
+# Post-deployment, best effort: install or refresh the after-network boot
+# service on the host. A problem here is logged but never fails an otherwise
+# successful deployment.
+if ! "$script_dir/install-boot-service.sh"; then
+  echo "Warning: the boot service installer reported a problem; the deployment is unaffected." >&2
+fi

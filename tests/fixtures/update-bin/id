@@ -1,0 +1,17 @@
+#!/bin/sh
+# Test stub: mirrors the real `id`, except name resolution (-un/-n) answers
+# with a fixed name. Sandboxes where the running UID has no /etc/passwd
+# entry make the real `id -un` fail, which would kill the fetched
+# configure.sh before its maintenance guard runs.
+case "${1:-}" in
+  -un|-n)
+    printf 'test-user\n'
+    ;;
+  *)
+    stub_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    real_id_path=$(PATH=$(printf '%s' "$PATH" | awk -v skip="$stub_dir" 'BEGIN { RS = ORS = ":" } $0 != skip') \
+      command -v id)
+    [ -n "$real_id_path" ] || { echo "id stub cannot find the real id" >&2; exit 127; }
+    exec "$real_id_path" "$@"
+    ;;
+esac

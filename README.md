@@ -312,6 +312,66 @@ application. Keep it on loopback, a trusted LAN, or a VPN; do not publish it
 directly to the Internet. Review `compose.yaml`, `scripts/host-exec.sh`, and the
 gateway code before deployment.
 
+## Boot and auto-start
+
+Both containers run with `restart: unless-stopped`, so the Docker Engine
+restarts them as soon as the daemon starts after a reboot. That start happens
+before the host's LAN address exists, so the harness cannot publish its ports
+on `HARNESS_BIND_ADDRESS` yet. In external mode the problem is worse: the
+harness joins the shared Ollama network (`OLLAMA_NETWORK`, normally
+`local-ai-ollama_default`), which the host's local-ai bootstrap destroys and
+replaces on every boot, so the harness loses that attachment even while it is
+running.
+
+The repository therefore ships an after-network boot service that repairs the
+deployment once the network is actually up:
+
+- `start-after-network.sh` (project root) — waits for the Docker daemon, the
+  `HARNESS_BIND_ADDRESS` LAN address, the local-ai bootstrap
+  (`local-ai-apply-default.service` or the user
+  `local-ai-apply-default-after-network.service`), and, in external mode, the
+  shared network. It then verifies the harness port binding and network
+  attachment. When either is missing it recreates the harness for the recorded
+  `DSH_DEPLOYMENT_MODE` with
+  `docker compose up -d --force-recreate --no-deps harness`, waits up to
+  240 seconds for the harness healthcheck — exiting 1 with a clear message on
+  timeout so a broken image fails the unit visibly instead of hanging the
+  boot — then recreates the gateway and re-verifies binding, attachment, and
+  gateway status. A healthy deployment is a fast no-op that exits 0.
+- `deploy/deepseek-harness-after-network.service` — the canonical user unit
+  template (`Type=oneshot`, `RemainAfterExit=yes`, `Restart=on-failure`,
+  `RestartSec=10`, `TimeoutStartSec=infinity`, wanted by `default.target`).
+  The unbounded start timeout is intentional: the pre-recreate waits
+  legitimately run long early in boot, while the recreate wait is bounded
+  inside the script.
+- `scripts/install-boot-service.sh` — idempotent, content-driven installer.
+  It renders the template for this checkout into
+  `~/.config/systemd/user/`, creates the `default.target.wants` symlink, then
+  `systemctl --user daemon-reload` and `start` (or `restart`) the unit.
+  Identical files cause no writes and no reload. When the user bus is
+  unreachable (for example from a maintenance container without the host user
+  session) it still installs the files, prints the exact commands to run on
+  the host, and exits 0. `--dry-run` previews the rendered unit and the
+  planned actions without changing anything.
+
+`scripts/deploy.sh` and `scripts/update-and-restart.sh` invoke the installer
+after a successful deployment, best-effort: the outcome is logged and, for
+maintenance, recorded as `boot_service=...` in `data/maintenance-status`, but
+a boot-service problem never fails the deployment or the maintenance run.
+
+Check the service on the host as the deploying user:
+
+```sh
+systemctl --user status deepseek-harness-after-network
+systemctl --user cat deepseek-harness-after-network
+journalctl --user -u deepseek-harness-after-network --no-pager
+```
+
+A failed deployment leaves the unit as it was: if the recreation failed, the
+unit shows failed and systemd retries it every 10 seconds, and the deployment
+stays down until the next successful `update-and-restart.sh`, `deploy.sh`, or
+boot runs the boot script again.
+
 ## Operations
 
 Validate the repository and generated Compose configuration:

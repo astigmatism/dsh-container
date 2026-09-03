@@ -50,9 +50,18 @@ make_fixture() {
   cp "$source_root/scripts/update-and-restart.sh" "$fixture/scripts/"
   cp "$source_root/scripts/configure.sh" "$fixture/scripts/"
   cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/scripts/"
+  cp "$source_root/scripts/install-boot-service.sh" "$fixture/scripts/"
   cp "$source_root/tests/fixtures/deploy-stub.sh" "$fixture/scripts/deploy.sh"
+  mkdir -p "$fixture/deploy"
+  cp "$source_root/deploy/deepseek-harness-after-network.service" "$fixture/deploy/"
   cp "$source_root/tests/fixtures/update-bin/git" "$fixture/fake-bin/"
   cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+  # The systemctl stub keeps every fixture on the installer's documented
+  # bus-unreachable path, with the unit files landing in the fixture HOME.
+  cp "$source_root/tests/fixtures/update-bin/systemctl" "$fixture/fake-bin/"
+  # The id stub keeps `id -un` resolvable in sandboxes whose /etc/passwd has
+  # no entry for the running UID.
+  cp "$source_root/tests/fixtures/update-bin/id" "$fixture/fake-bin/"
   cp "$source_root/config/settings.yaml" "$fixture/config/settings.yaml"
   {
     printf '%s\n' 'DSH_DEPLOYMENT_MODE=external'
@@ -75,7 +84,11 @@ run_update() {
   fixture_path=$1
   shift
   set +e
+  # Fixtures run outside the harness container; do not inherit a deployment
+  # DSH_HOME, which would trigger the delegation path.
   PATH="$fixture_path/fake-bin:$PATH" \
+    HOME="$fixture_path/home" \
+    DSH_HOME= \
     FAKE_GIT_LOG="$fixture_path/git.log" \
     FAKE_GIT_STATE_FILE="$fixture_path/git-head" \
     FAKE_FAST_FORWARD_SOURCE="${TEST_FAST_FORWARD_SOURCE:-}" \
@@ -233,6 +246,12 @@ make_fixture updater-resume matching
 run_update "$fixture" --external-ollama
 [ "$update_status" -eq 0 ] || fail "updater resume path failed"
 assert_status "$fixture" 'state=ok'
+assert_status "$fixture" 'exit_code=0'
+# The post-deployment boot-service step ran against the fixture HOME with the
+# bus unreachable; it must be recorded without affecting state or exit_code.
+assert_status "$fixture" 'boot_service=warning:bus-unreachable'
+[ -f "$fixture/home/.config/systemd/user/deepseek-harness-after-network.service" ] \
+  || fail "post-deployment step did not install the boot unit into the fixture home"
 assert_status "$fixture" 'from_commit=1111111111111111111111111111111111111111'
 assert_status "$fixture" 'target_commit=2222222222222222222222222222222222222222'
 grep -Fq 'Restarting maintenance under the fetched updater before service interruption' "$fixture/output.log" \
@@ -428,8 +447,10 @@ do
   ln -s "$(command -v "$utility")" "$missing_docker_bin/$utility"
 done
 cp "$fixture/fake-bin/git" "$missing_docker_bin/git"
+# As in run_update: a deployment DSH_HOME would trigger the delegation path.
 set +e
 PATH="$missing_docker_bin" \
+  DSH_HOME= \
   FAKE_GIT_LOG="$fixture/git.log" \
   sh "$fixture/scripts/update-and-restart.sh" --external-ollama \
     >"$fixture/output.log" 2>&1

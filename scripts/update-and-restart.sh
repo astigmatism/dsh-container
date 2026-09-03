@@ -13,6 +13,7 @@ branch=unknown
 failure_type=none
 failure_stage=initialization
 recovery=not-needed
+boot_service=not-run
 lock_dir=$project_dir/data/update-and-restart.lock
 status_file=$project_dir/data/maintenance-status
 resume_file=$lock_dir/resume
@@ -64,6 +65,27 @@ delegate_from_harness() {
   docker_gid=$(stat -c '%g' /var/run/docker.sock)
   maintenance_name=deepseek-harness-maintenance-$(date -u +%Y%m%d%H%M%S)-$$
 
+  # Mount the host home (at its real path) into the maintenance container so
+  # the post-deployment boot-service step can install the user unit there.
+  # The harness container carries the host /etc/passwd and sees the host root
+  # at HARNESS_WORKSPACE_ROOT, so the deploying user's home resolves from
+  # here. The user systemd bus stays on the host; the installer degrades to
+  # installing the files and printing the activation commands.
+  host_home=
+  host_uid=$(get_env HOST_UID)
+  [ -n "$host_uid" ] || host_uid=1000
+  if command -v getent >/dev/null 2>&1; then
+    host_home=$(getent passwd "$host_uid" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')
+  fi
+  workspace_root=${HARNESS_WORKSPACE_ROOT:-/host}
+  boot_service_args=
+  if [ -n "$host_home" ] && [ -d "${workspace_root}${host_home}" ]; then
+    boot_service_args="--volume ${workspace_root}${host_home}:${host_home} --env DSH_BOOT_SERVICE_HOME=${host_home}"
+  fi
+
+  # Intentional split: boot_service_args is empty or holds exactly the two
+  # host-home flags (one volume, one env); every other word is quoted.
+  # shellcheck disable=SC2086
   maintenance_id=$(docker run --detach --rm --init \
     --name "$maintenance_name" \
     --pull=never \
@@ -72,6 +94,7 @@ delegate_from_harness() {
     --env DSH_UPDATE_DELEGATED=1 \
     --env DSH_UPDATE_CONTAINER_NAME="$maintenance_name" \
     --env HOME=/tmp \
+    $boot_service_args \
     --volume /var/run/docker.sock:/var/run/docker.sock \
     --volume "$project_dir:$project_dir" \
     --workdir "$project_dir" \
@@ -133,6 +156,7 @@ write_status() {
     echo "failure_type=$reported_failure"
     echo "failure_stage=$failure_stage"
     echo "recovery=$recovery"
+    echo "boot_service=$boot_service"
   } >"$temporary"
   chmod 0600 "$temporary"
   mv "$temporary" "$status_file"
@@ -458,6 +482,35 @@ if [ "$deploy_status" -ne 0 ]; then
   exit "$deploy_status"
 fi
 deployment_started=0
+
+# Post-deployment, best effort: install or refresh the after-network boot
+# service on the host. In the delegated maintenance container the host home
+# is mounted at its real path (DSH_BOOT_SERVICE_HOME); on the host this is
+# the operator's own $HOME. The outcome is logged and recorded in
+# maintenance-status, but it never changes maintenance state or exit_code.
+if [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ] \
+  && { [ -z "${DSH_BOOT_SERVICE_HOME:-}" ] || [ ! -d "${DSH_BOOT_SERVICE_HOME:-}" ]; }; then
+  boot_service=warning:host-home-unavailable
+  echo "Warning: the host home is not available in this maintenance context; the boot service was not refreshed." >&2
+else
+  installer_home=${DSH_BOOT_SERVICE_HOME:-$HOME}
+  if [ -x "$script_dir/install-boot-service.sh" ]; then
+    boot_output=$(HOME="$installer_home" "$script_dir/install-boot-service.sh" 2>&1) \
+      || boot_service=warning:installer-failed
+    if [ -n "$boot_output" ]; then
+      printf '%s\n' "$boot_output"
+    fi
+    if [ "$boot_service" = not-run ]; then
+      recorded_boot_service=$(printf '%s\n' "$boot_output" | grep '^boot_service=' | tail -n 1 || true)
+      if [ -n "$recorded_boot_service" ]; then
+        boot_service=${recorded_boot_service#boot_service=}
+      fi
+    fi
+  else
+    boot_service=warning:installer-missing
+    echo "Warning: scripts/install-boot-service.sh is missing; the boot service was not refreshed." >&2
+  fi
+fi
 
 failure_type=docker-compose
 failure_stage=image-inventory

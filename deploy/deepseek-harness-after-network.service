@@ -1,0 +1,25 @@
+# Template for the user systemd unit installed by
+# scripts/install-boot-service.sh. The two project-dir placeholders are
+# replaced with the absolute checkout path of the installing host; nothing
+# else is host-specific.
+#
+# TimeoutStartSec=infinity is intentional: the pre-recreate waits (Docker
+# daemon, LAN address, local-ai bootstrap, shared network) legitimately run
+# long early in boot, while the post-recreate health wait is bounded inside
+# start-after-network.sh (240s, then the unit fails visibly).
+[Unit]
+Description=Start DeepSeek Harness after the network and local-ai bootstrap are ready
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=infinity
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=@PROJECT_DIR@/start-after-network.sh
+
+[Install]
+WantedBy=default.target

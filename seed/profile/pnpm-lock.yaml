@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   dsh-loop-detector@1.0.0: 012ec442faa4eeee41e63e480a9247cfe76a7ffc8fd1ac4b118f3c49114490e3
-  dsh-playwright@0.1.0: 0093890849cf327dc7a9e6bb31972a46f279e3c0cdeb991d2dde1c3f57ced7c3
+  dsh-playwright@0.1.0: 650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457
 
 importers:
 
@@ -29,7 +29,7 @@ importers:
         version: 1.0.0(patch_hash=012ec442faa4eeee41e63e480a9247cfe76a7ffc8fd1ac4b118f3c49114490e3)
       dsh-playwright:
         specifier: 0.1.0
-        version: 0.1.0(patch_hash=0093890849cf327dc7a9e6bb31972a46f279e3c0cdeb991d2dde1c3f57ced7c3)
+        version: 0.1.0(patch_hash=650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457)
       dsh-plugin-task-notification:
         specifier: github:Cocowwy/dsh-plugin-task-notification
         version: https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4
@@ -269,7 +269,7 @@ snapshots:
 
   dsh-loop-detector@1.0.0(patch_hash=012ec442faa4eeee41e63e480a9247cfe76a7ffc8fd1ac4b118f3c49114490e3): {}
 
-  dsh-playwright@0.1.0:
+  dsh-playwright@0.1.0(patch_hash=650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457):
     dependencies:
       '@deepseek-ai/schemastery': 3.18.2
       playwright-core: 1.62.1
@@ -278,8 +278,6 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
-
-  dsh-playwright@0.1.0(patch_hash=0093890849cf327dc7a9e6bb31972a46f279e3c0cdeb991d2dde1c3f57ced7c3): {}
 
   dsh-plugin-task-notification@https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4:
     dependencies:

@@ -26,6 +26,7 @@ sh -n "$project_dir/entrypoint.sh" "$project_dir"/scripts/*.sh "$project_dir"/te
 "$project_dir/tests/service-portal.test.sh"
 "$project_dir/tests/compose-topology.test.sh"
 "$project_dir/tests/delegated-gateway.test.sh"
+"$project_dir/tests/profile-lockfile.test.sh"
 
 python3 - "$project_dir" <<'PY'
 import json
@@ -121,6 +122,14 @@ if [ "$build" -eq 1 ]; then
     test "$(cat /data/dsh/sessions/preserved-state)" = preserved
     cmp /opt/dsh-seed/profiles/web/package.json /data/dsh/profiles/web/package.json
     cmp /opt/dsh-seed/.dsh-plugins/dsh-web-search-free.js /data/dsh/.dsh-plugins/dsh-web-search-free.js
+  '
+
+  # Boot smoke check: actually import the plugin tree by starting `dsh web`
+  # from the image seed in a throwaway DSH_HOME and require a stable HTTP
+  # 200. The inventory grep above would pass a profile whose patched
+  # dsh-playwright snapshot dropped its dependencies.
+  docker run --rm --entrypoint /bin/sh "$harness_image" -eu -c '
+    /usr/local/bin/dsh-verify-plugin-boot
   '
 
   docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '

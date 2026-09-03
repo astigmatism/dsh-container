@@ -48,6 +48,7 @@ COPY scripts/host-exec.sh /usr/local/bin/host-exec
 COPY scripts/host-enter.sh /usr/local/bin/host-enter
 COPY scripts/sync-runtime-profile.sh /usr/local/bin/dsh-sync-runtime-profile
 COPY scripts/initialize-persisted-settings.sh /usr/local/bin/dsh-initialize-persisted-settings
+COPY scripts/verify-plugin-boot.sh /usr/local/bin/dsh-verify-plugin-boot
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 
 # Defend existing Windows checkouts that predate .gitattributes. A CRLF
@@ -58,7 +59,8 @@ RUN sed -i 's/\r$//' \
       /usr/local/bin/host-exec \
       /usr/local/bin/host-enter \
       /usr/local/bin/dsh-sync-runtime-profile \
-      /usr/local/bin/dsh-initialize-persisted-settings
+      /usr/local/bin/dsh-initialize-persisted-settings \
+      /usr/local/bin/dsh-verify-plugin-boot
 
 # Generate DSH's base web profile, then overlay the repository-authoritative
 # plugin manifest, lockfile, local search provider, and loop-detector patch.
@@ -86,9 +88,17 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-ui-appearance@0.1.6' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
-    && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings \
+    && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
     && chmod -R a+rwX /opt/dsh-pnpm-store
+
+# Boot smoke check: start the web profile in a throwaway DSH_HOME and require
+# a stable HTTP 200. Booting imports the full plugin tree (every bundle's
+# loader entry, including dsh-playwright's server-side entry that imports
+# playwright-core, pngjs, and ws), so this fails the build when the seed
+# lockfile's patched-dependency state drops a plugin's dependency graph -
+# exactly the state `--dump-config` and `plugin list` above would pass.
+RUN /usr/local/bin/dsh-verify-plugin-boot
 
 ENV DSH_HOME=/data/dsh \
     DSH_TELEMETRY_DISABLED=1 \

@@ -95,6 +95,7 @@ for expected in \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
+  'dsh-playwright@0.1.0' \
   'dsh-session-pin@0.6.1' \
   'dsh-ui-appearance@0.1.6'
 do
@@ -103,6 +104,20 @@ do
     exit "$configuration_exit"
   }
 done
+
+# Import the patched dsh-playwright loader entry from the live runtime
+# profile. The image build's boot smoke check proves the seed at build time;
+# this proves the re-synced runtime profile still resolves the plugin's
+# third-party dependencies (playwright-core, pngjs, ws) at deployment time.
+if ! compose exec -T harness node -e \
+  "import('file:///data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js').catch((e) => { console.error(e.message); process.exit(1); })"; then
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker Engine became unavailable during plugin import verification." >&2
+    exit "$docker_compose_exit"
+  fi
+  echo "The deployed plugin tree failed to import dsh-playwright." >&2
+  exit "$configuration_exit"
+fi
 
 if ! compose exec -T harness node -e \
   "fetch('http://ai-router:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then

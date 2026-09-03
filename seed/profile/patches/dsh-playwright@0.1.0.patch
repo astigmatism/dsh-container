@@ -1,5 +1,5 @@
 diff --git a/lib/client.cjs b/lib/client.cjs
-index 0e134a9..008ebd8 100644
+index 0e134a9a4263b40e027e6fbe388a5deacbcbb4e0..008ebd89bc1ea648da38bf9e0ab149388b2b5174 100644
 --- a/lib/client.cjs
 +++ b/lib/client.cjs
 @@ -34,19 +34,26 @@ window.__ModuleLoader__.load({

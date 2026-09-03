@@ -6,3 +6,4 @@ autoInstallPeers: false
 
 patchedDependencies:
   dsh-loop-detector@1.0.0: patches/dsh-loop-detector@1.0.0.patch
+  dsh-playwright@0.1.0: patches/dsh-playwright@0.1.0.patch

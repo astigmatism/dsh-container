@@ -1,0 +1,230 @@
+diff --git a/lib/client.cjs b/lib/client.cjs
+index 0e134a9..008ebd8 100644
+--- a/lib/client.cjs
++++ b/lib/client.cjs
+@@ -34,19 +34,26 @@ window.__ModuleLoader__.load({
+ 		];
+ 		const RATIO_KEY = "dsh-browser-use:ratio";
+ 		const OPEN_KEY = "dsh-browser-use:open";
++		const ORIENT_KEY = "dsh-browser-use:orientation";
+ 		const STYLE = `
+ .dbu-shell { position:absolute; inset:0; pointer-events:none !important; }
+-.dbu-share-host { box-sizing:border-box; padding-right:var(--dbu-shared-width, 0px); }
++.dbu-share-host { box-sizing:border-box; padding-right:var(--dbu-shared-width, 0px); padding-bottom:var(--dbu-shared-height, 0px); }
+ .dbu-panel { position:absolute; top:0; right:0; bottom:0; z-index:40; display:flex; flex-direction:column; width:var(--dbu-panel-width, 35%); overflow:visible; border-left:1px solid var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-base); pointer-events:auto; transition:transform 180ms var(--ds-ease-in-out); }
+ .dbu-panel[data-open='false'] { transform:translateX(100%); }
+ .dbu-panel[data-resizing='true'] { transition:none; user-select:none; }
++.dbu-shell[data-orientation='bottom'] .dbu-panel { top:auto; left:0; right:0; bottom:0; width:auto; height:var(--dbu-panel-height, 35%); border-left:none; border-top:1px solid var(--dsw-alias-border-l2); }
++.dbu-shell[data-orientation='bottom'] .dbu-panel[data-open='false'] { transform:translateY(100%); }
+ .dbu-resize { position:absolute; top:0; bottom:0; left:0; z-index:3; width:12px; transform:translateX(-50%); cursor:col-resize; touch-action:none; }
+ .dbu-resize::after { content:''; position:absolute; top:0; bottom:0; left:50%; width:2px; transform:translateX(-50%); background:var(--dsw-alias-border-l2); transition:background 120ms ease, width 120ms ease; }
+ .dbu-resize:hover::after, .dbu-panel[data-resizing='true'] .dbu-resize::after { width:4px; background:var(--dsw-alias-state-business-primary); }
++.dbu-shell[data-orientation='bottom'] .dbu-resize { top:0; right:0; bottom:auto; left:0; width:auto; height:12px; transform:translateY(-50%); cursor:row-resize; }
++.dbu-shell[data-orientation='bottom'] .dbu-resize::after { top:50%; right:0; bottom:auto; left:0; width:auto; height:2px; transform:translateY(-50%); transition:background 120ms ease, height 120ms ease; }
++.dbu-shell[data-orientation='bottom'] .dbu-resize:hover::after, .dbu-shell[data-orientation='bottom'] .dbu-panel[data-resizing='true'] .dbu-resize::after { height:4px; }
+ .dbu-header { display:flex; align-items:center; gap:8px; min-height:38px; padding:0 8px; border-bottom:1px solid var(--dsw-alias-border-l2); }
+ .dbu-title { flex:1; color:var(--dsw-alias-label-primary); font:600 13px/20px var(--dsw-font-family); }
+ .dbu-ratio { color:var(--dsw-alias-label-tertiary); font:11px/16px var(--dsw-font-family); }
+ .dbu-edge-button { position:absolute; top:50%; right:0; z-index:39; transform:translateY(-50%); padding:12px 6px; border:1px solid var(--dsw-alias-border-l2); border-right:none; border-radius:8px 0 0 8px; background:var(--dsw-alias-bg-overlay); color:var(--dsw-alias-label-primary); box-shadow:-4px 0 16px rgb(0 0 0 / 15%); cursor:pointer; pointer-events:auto; writing-mode:vertical-rl; font:12px/18px var(--dsw-font-family); }
++.dbu-shell[data-orientation='bottom'] .dbu-edge-button { top:auto; right:24px; bottom:0; transform:none; padding:4px 12px; border:1px solid var(--dsw-alias-border-l2); border-bottom:none; border-radius:8px 8px 0 0; box-shadow:0 -4px 16px rgb(0 0 0 / 15%); writing-mode:horizontal-tb; }
+ .dbu-root { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; background:var(--dsw-alias-bg-base); }
+ .dbu-bar { display:flex; align-items:center; gap:6px; padding:7px 8px; border-bottom:1px solid var(--dsw-alias-border-l2); }
+ .dbu-input { flex:1; min-width:0; padding:5px 8px; border:1px solid var(--dsw-alias-border-l3); border-radius:6px; background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); font:12px/18px var(--dsw-font-family); }
+@@ -55,8 +62,10 @@ window.__ModuleLoader__.load({
+ .dbu-status { min-width:0; overflow:hidden; color:var(--dsw-alias-label-secondary); text-overflow:ellipsis; white-space:nowrap; }
+ .dbu-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 8px; color:var(--dsw-alias-label-secondary); font:11px/16px var(--dsw-font-family); }
+ .dbu-marker-toggle { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+-.dbu-viewport { position:relative; flex:1; min-height:0; overflow:auto; background:#fff; }
++.dbu-viewport { position:relative; flex:1; min-height:0; overflow:auto; background:var(--dsw-specific-sidebar-fill); }
+ .dbu-page { position:relative; width:100%; aspect-ratio:var(--dbu-page-ratio); background:#fff; }
++.dbu-shell[data-orientation='bottom'] .dbu-viewport { display:flex; align-items:center; justify-content:center; }
++.dbu-shell[data-orientation='bottom'] .dbu-page { width:auto; height:100%; max-width:100%; }
+ .dbu-canvas { display:block; width:100%; height:100%; cursor:crosshair; user-select:none; }
+ .dbu-click-marker { position:absolute; box-sizing:border-box; transform:translate(-50%,-50%); border:3px solid var(--dbu-marker-color); background:var(--dbu-marker-fill); pointer-events:none; }
+ .dbu-empty { display:flex; align-items:center; justify-content:center; height:100%; box-sizing:border-box; padding:20px; color:var(--dsw-alias-label-tertiary); text-align:center; }
+@@ -103,6 +112,9 @@ window.__ModuleLoader__.load({
+ 			const value = Number(localStorage.getItem(RATIO_KEY));
+ 			return Number.isFinite(value) ? Math.min(1, Math.max(PANEL_RATIO_MIN, value)) : PANEL_RATIO_DEFAULT;
+ 		}
++		function storedOrientation() {
++			return localStorage.getItem(ORIENT_KEY) === "bottom" ? "bottom" : "right";
++		}
+ 		function BrowserUseSurface({ ctx, sessionId, visible }) {
+ 			const rpc = ctx.connection.rpc;
+ 			const [state, setState] = (0, react.useState)();
+@@ -271,7 +283,7 @@ window.__ModuleLoader__.load({
+ 								onChange: (event) => {
+ 									setShowLastClick(event.target.checked);
+ 								}
+-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: "显示上次点击" })]
++							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: "Show last click" })]
+ 						})]
+ 					}),
+ 					error !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+@@ -295,7 +307,7 @@ window.__ModuleLoader__.load({
+ 								onClick: clickCanvas
+ 							}), showLastClick && state.lastClick !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+ 								className: "dbu-click-marker",
+-								"aria-label": "上次点击位置",
++								"aria-label": "Last click position",
+ 								style: {
+ 									left: `${String(state.lastClick.x / state.width * 100)}%`,
+ 									top: `${String(state.lastClick.y / state.height * 100)}%`,
+@@ -316,6 +328,11 @@ window.__ModuleLoader__.load({
+ 			const [ratio, setRatio] = (0, react.useState)(storedRatio);
+ 			const ratioRef = (0, react.useRef)(ratio);
+ 			ratioRef.current = ratio;
++			const [orientation, setOrientation] = (0, react.useState)(storedOrientation);
++			const orientationRef = (0, react.useRef)(orientation);
++			orientationRef.current = orientation;
++			const openRef = (0, react.useRef)(open);
++			openRef.current = open;
+ 			const shellRef = (0, react.useRef)(null);
+ 			const frameRef = (0, react.useRef)();
+ 			const autoCollapsedWorkspaceSidebar = (0, react.useRef)(false);
+@@ -332,12 +349,71 @@ window.__ModuleLoader__.load({
+ 					frameRef.current = void 0;
+ 				};
+ 			}, []);
++			const applyBottomGeometry = () => {
++				const frame = frameRef.current;
++				const shell = shellRef.current;
++				if (frame === void 0 || shell === null) return;
++				const panel = shell.querySelector(".dbu-panel");
++				if (panel === null) return;
++				const frameRect = frame.getBoundingClientRect();
++				const center = [...frame.children].filter((child) => getComputedStyle(child).position !== "absolute")[1];
++				if (center === void 0) return;
++				center.style.boxSizing = "border-box";
++				const centerX = center.getBoundingClientRect().x;
++				const panelH = Math.round(ratioRef.current * frameRect.height);
++				center.style.setProperty("padding-bottom", `${String(openRef.current ? panelH : 0)}px`);
++				panel.style.left = `${String(Math.round(centerX))}px`;
++				panel.style.right = "auto";
++				panel.style.width = `${String(Math.max(0, Math.round(frameRect.width - centerX)))}px`;
++				panel.style.setProperty("--dbu-panel-height", `${String(panelH)}px`);
++			};
++			const applyBottomGeometryRef = (0, react.useRef)(applyBottomGeometry);
++			applyBottomGeometryRef.current = applyBottomGeometry;
++			(0, react.useLayoutEffect)(() => {
++				const frame = frameRef.current;
++				if (frame === void 0) return;
++				if (orientation !== "bottom") {
++					frame.style.setProperty("--dbu-shared-width", open ? `${String(ratio * 100)}%` : "0px");
++					const panel = shellRef.current?.querySelector(".dbu-panel");
++					if (panel !== null) {
++						panel.style.removeProperty("left");
++						panel.style.removeProperty("right");
++						panel.style.removeProperty("width");
++					}
++					return;
++				}
++				frame.style.setProperty("--dbu-shared-width", "0px");
++				applyBottomGeometryRef.current();
++			}, [open, ratio, orientation]);
+ 			(0, react.useLayoutEffect)(() => {
++				if (orientation !== "bottom") return;
+ 				const frame = frameRef.current;
+ 				if (frame === void 0) return;
+-				frame.style.setProperty("--dbu-shared-width", open ? `${String(ratio * 100)}%` : "0px");
+-			}, [open, ratio]);
++				const center = [...frame.children].filter((child) => getComputedStyle(child).position !== "absolute")[1];
++				if (center === void 0) return;
++				const ro = new ResizeObserver(() => {
++					if (orientationRef.current === "bottom") applyBottomGeometryRef.current();
++				});
++				ro.observe(frame);
++				ro.observe(center);
++				const onResize = () => {
++					if (orientationRef.current === "bottom") applyBottomGeometryRef.current();
++				};
++				window.addEventListener("resize", onResize);
++				return () => {
++					ro.disconnect();
++					window.removeEventListener("resize", onResize);
++					center.style.removeProperty("padding-bottom");
++					const panel = shellRef.current?.querySelector(".dbu-panel");
++					if (panel !== null) {
++						panel.style.removeProperty("left");
++						panel.style.removeProperty("right");
++						panel.style.removeProperty("width");
++					}
++				};
++			}, [orientation]);
+ 			const syncWorkspaceSidebar = (nextRatio) => {
++				if (orientationRef.current !== "right") return;
+ 				const frame = frameRef.current;
+ 				if (frame === void 0) return;
+ 				const collapsed = frame.hasAttribute("data-sidebar-collapsed");
+@@ -357,13 +433,24 @@ window.__ModuleLoader__.load({
+ 					return !previous;
+ 				});
+ 			};
++			const toggleOrientation = () => {
++				setOrientation((previous) => {
++					const next = previous === "right" ? "bottom" : "right";
++					localStorage.setItem(ORIENT_KEY, next);
++					return next;
++				});
++			};
+ 			const resizeStart = (event) => {
+-				const frameWidth = frameRef.current?.getBoundingClientRect().width ?? window.innerWidth;
++				const rect = frameRef.current?.getBoundingClientRect();
++				const frameWidth = rect?.width ?? window.innerWidth;
++				const frameHeight = rect?.height ?? window.innerHeight;
+ 				drag.current = {
+ 					pointerId: event.pointerId,
+ 					startX: event.clientX,
++					startY: event.clientY,
+ 					startRatio: ratio,
+-					frameWidth
++					frameWidth,
++					frameHeight
+ 				};
+ 				setResizing(true);
+ 				event.currentTarget.setPointerCapture(event.pointerId);
+@@ -372,7 +459,7 @@ window.__ModuleLoader__.load({
+ 			const resizeMove = (event) => {
+ 				const active = drag.current;
+ 				if (active === void 0 || active.pointerId !== event.pointerId) return;
+-				const delta = (active.startX - event.clientX) / active.frameWidth;
++				const delta = orientationRef.current === "bottom" ? (active.startY - event.clientY) / active.frameHeight : (active.startX - event.clientX) / active.frameWidth;
+ 				const next = resolvePanelRatio(active.startRatio + delta);
+ 				ratioRef.current = next;
+ 				setRatio(next);
+@@ -389,17 +476,18 @@ window.__ModuleLoader__.load({
+ 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+ 				ref: shellRef,
+ 				className: "dbu-shell",
++				"data-orientation": orientation,
+ 				children: [!open && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+ 					type: "button",
+ 					className: "dbu-edge-button",
+-					"aria-label": "打开 Browser Use",
++					"aria-label": "Open Browser Use",
+ 					onClick: toggle,
+ 					children: "Browser Use"
+ 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("aside", {
+ 					className: "dbu-panel",
+ 					"data-open": String(open),
+ 					"data-resizing": String(resizing),
+-					style: { "--dbu-panel-width": `${String(ratio * 100)}%` },
++					style: { "--dbu-panel-width": `${String(ratio * 100)}%`, "--dbu-panel-height": `${String(ratio * 100)}%` },
+ 					"aria-label": "Browser Use sidebar",
+ 					children: [
+ 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+@@ -423,7 +511,13 @@ window.__ModuleLoader__.load({
+ 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+ 									type: "button",
+ 									className: "dbu-button",
+-									"aria-label": "关闭 Browser Use",
++									"aria-label": "Switch Browser Use dock edge",
++									onClick: toggleOrientation,
++									children: orientation === "right" ? "⇩ bottom" : "⇥ right"
++								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
++									type: "button",
++									className: "dbu-button",
++									"aria-label": "Close Browser Use",
+ 									onClick: toggle,
+ 									children: "×"
+ 								})

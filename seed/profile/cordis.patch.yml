@@ -36,3 +36,11 @@
         minLen: 512
         maxRetries: 1
         checkReasoning: true
+
+- insert:
+    - id: router-model-discovery
+      name: '../../.dsh-plugins/dsh-router-model-discovery.js?v=7'
+      config:
+        providers: [ local-ollama, local-ollama-256k ]
+        model: local-active
+        pollIntervalMs: 30000

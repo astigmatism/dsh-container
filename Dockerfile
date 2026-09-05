@@ -38,6 +38,12 @@ RUN apt-get update \
 
 RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}"
 
+# DSH is pinned above. Apply the router discovery/error boundary contract with
+# exact source anchors so a future DSH layout change fails the image build
+# instead of silently dropping the compatibility behavior.
+COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
+RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
+
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 

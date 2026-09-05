@@ -92,8 +92,11 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check gateway/server.mjs
     node --check plugin/dsh-local-speech/client.js
     node --check seed/plugins/dsh-web-search-free.js
+    node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
+    node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check ollama-router/src/server.js
     node --test gateway/*.test.mjs
+    node --test tests/*.test.mjs
     node --test ollama-router/test/*.test.js
   '
 
@@ -136,6 +139,7 @@ if [ "$build" -eq 1 ]; then
     test "$(cat /data/dsh/sessions/preserved-state)" = preserved
     cmp /opt/dsh-seed/profiles/web/package.json /data/dsh/profiles/web/package.json
     cmp /opt/dsh-seed/.dsh-plugins/dsh-web-search-free.js /data/dsh/.dsh-plugins/dsh-web-search-free.js
+    cmp /opt/dsh-seed/.dsh-plugins/dsh-router-model-discovery.js /data/dsh/.dsh-plugins/dsh-router-model-discovery.js
   '
 
   # Boot smoke check: actually import the plugin tree by starting `dsh web`

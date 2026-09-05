@@ -41,6 +41,16 @@ function mapStopReason(message, contextWindow) {
 }
 `;
 
+function evaluatePatchedFixture() {
+  const patched = patchSource(fixture);
+  return Function(
+    "isContextOverflow",
+    "isContextWindowExceededError",
+    "CONTEXT_WINDOW_EXCEEDED_CODE",
+    `${patched}\nreturn { mapStopReason };`,
+  )(() => false, () => false, "CONTEXT_WINDOW_EXCEEDED");
+}
+
 test("pinned pi-ai patch consumes router capacities and normalizes stream errors", () => {
   const patched = patchSource(fixture);
   assert.match(patched, /reasoning\?\.absolute_max_output_tokens/);
@@ -59,4 +69,21 @@ test("structured router errors retain their code and message", () => {
 
 test("structured error fallback is JSON rather than object coercion", () => {
   assert.equal(renderStructuredError({ status: 400, detail: "bad request" }), '{"status":400,"detail":"bad request"}');
+});
+
+test("generated adapter classifies a structured router error without losing its message", () => {
+  const { mapStopReason } = evaluatePatchedFixture();
+  assert.deepEqual(
+    mapStopReason({
+      stopReason: "error",
+      errorMessage: { error: { code: "OUTPUT_LIMIT_EXCEEDED", message: "maximum is 16384" } },
+    }, 131072),
+    {
+      kind: "error",
+      failure: {
+        message: "OUTPUT_LIMIT_EXCEEDED: maximum is 16384",
+        code: "PI_AI_ERROR",
+      },
+    },
+  );
 });

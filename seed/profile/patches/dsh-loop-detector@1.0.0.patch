@@ -3,11 +3,26 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191a1658c6d
 --- /dev/null
 +++ b/lib/index.js
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,198 @@
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
 +
 +export const name = 'loop-detector'
 +export const inject = ['agents']
++
++function hasSemanticSignal(text) {
++  const symbols = text.match(/[\p{L}\p{N}]/gu) ?? []
++  if (symbols.length < 2) return false
++  return new Set(symbols.map((symbol) => symbol.toLocaleLowerCase())).size >= 2
++}
++
++function primitivePeriod(text) {
++  for (let period = 1; period <= Math.floor(text.length / 2); period++) {
++    if (text.length % period !== 0) continue
++    const unit = text.slice(0, period)
++    if (unit.repeat(text.length / period) === text) return period
++  }
++  return text.length
++}
 +
 +function detectRepetition(text) {
 +  const window = 2048
@@ -16,7 +31,7 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +
 +  const tail = text.slice(-window)
 +
-+  for (let period = 8; period <= 256; period++) {
++  for (let period = 4; period <= 256; period++) {
 +    const need = period * 4
 +    if (tail.length < need) break
 +    const last = tail.slice(-need)
@@ -28,12 +43,16 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +        break
 +      }
 +    }
-+    if (repeated) return [true, `periodic repeat: period=${period}`]
++    if (!repeated) continue
++    if (primitivePeriod(first) !== period) continue
++    if (!hasSemanticSignal(first)) continue
++    return [true, `periodic repeat: period=${period}`]
 +  }
 +
 +  const seen = new Map()
 +  for (let offset = 0; offset + 64 <= tail.length; offset += 64) {
 +    const segment = tail.slice(offset, offset + 64)
++    if (!hasSemanticSignal(segment)) continue
 +    const count = (seen.get(segment) ?? 0) + 1
 +    if (count >= 3) return [true, `n-gram repeat: 64-char block seen ${count}x`]
 +    seen.set(segment, count)
@@ -44,7 +63,7 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +    const anchor = big.slice(-512)
 +    const head = big.slice(0, -512)
 +    const index = head.lastIndexOf(anchor)
-+    if (index !== -1) {
++    if (index !== -1 && hasSemanticSignal(anchor)) {
 +      let match = 512
 +      let left = index - 1
 +      let right = big.length - 513

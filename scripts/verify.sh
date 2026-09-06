@@ -123,6 +123,50 @@ if ! compose exec -T harness node -e \
   exit "$configuration_exit"
 fi
 
+# Import the deployed loop detector itself (not a source-side helper) and
+# require the corrected generated implementation markers. This detects both a
+# stale runtime profile and a patch that was present in source but not applied
+# by pnpm to the installed package.
+if ! compose exec -T harness node --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const path = "/data/dsh/profiles/web/node_modules/dsh-loop-detector/lib/index.js";
+  const plugin = await import(`file://${path}`);
+  if (plugin.name !== "loop-detector" || typeof plugin.apply !== "function") {
+    throw new Error("deployed loop detector exports are invalid");
+  }
+  const source = await readFile(path, "utf8");
+  for (const marker of ["hasSemanticSignal", "primitivePeriod", "if (!hasSemanticSignal(segment)) continue"]) {
+    if (!source.includes(marker)) throw new Error(`deployed loop detector is missing ${marker}`);
+  }
+  console.log("Verified corrected deployed dsh-loop-detector import and source markers.");
+'; then
+  echo "The deployed loop detector is stale or failed its runtime import probe." >&2
+  exit "$configuration_exit"
+fi
+
+# The browser module is generated from the pinned DSH package during the image
+# build. Compile the exact deployed file and require the cancellation node,
+# locale, and interrupted-output preservation markers.
+if ! compose exec -T harness node --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const path = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
+  const source = await readFile(path, "utf8");
+  Function(source);
+  for (const marker of [
+    "dsh-cancellation-presentation-v1",
+    "turn-cancellation",
+    "Stopped by user",
+    "The session or transport lifecycle ended before this turn completed.",
+    "hasInterruptionEvidence(blocks)",
+  ]) {
+    if (!source.includes(marker)) throw new Error(`deployed cancellation presentation is missing ${marker}`);
+  }
+  console.log("Verified visible cancellation provenance in the deployed browser module.");
+'; then
+  echo "The deployed browser module is missing visible cancellation provenance." >&2
+  exit "$configuration_exit"
+fi
+
 if ! compose exec -T harness node -e \
   "fetch('http://ai-router:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
   if ! docker info >/dev/null 2>&1; then

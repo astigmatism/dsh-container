@@ -76,16 +76,12 @@ for name, config in (("default", default), ("remote", remote)):
 if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.21" for entry in extra_hosts(default)):
     raise SystemExit("default: ai-router does not map to REMOTE_OLLAMA_HOST")
 
-if extra_hosts(remote):
-    raise SystemExit(f"remote: direct ai-router host mapping survived local-adapter overlay: {extra_hosts(remote)!r}")
-remote_router = remote["services"].get("ai-router", {})
-if remote_router.get("environment", {}).get("OLLAMA_UPSTREAM_URL") != "http://192.168.1.21:11434":
-    raise SystemExit("remote: local router does not forward to REMOTE_OLLAMA_HOST")
-remote_aliases = remote_router.get("networks", {}).get("ollama_net", {}).get("aliases", [])
-if "ai-router" not in remote_aliases:
-    raise SystemExit("remote: local router is missing its ai-router alias")
-if remote["services"]["harness"].get("depends_on", {}).get("ai-router", {}).get("condition") != "service_healthy":
-    raise SystemExit("remote: harness can start before the local Responses adapter is healthy")
+if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.21" for entry in extra_hosts(remote)):
+    raise SystemExit("remote: ai-router does not map directly to REMOTE_OLLAMA_HOST")
+if "ai-router" in remote["services"]:
+    raise SystemExit("remote: obsolete local ai-router service is still present")
+if "ai-router" in remote["services"]["harness"].get("depends_on", {}):
+    raise SystemExit("remote: harness still depends on a local ai-router service")
 
 for name, config in (("default", default), ("remote", remote), ("external", external), ("managed", managed)):
     environment = config["services"]["gateway"]["environment"]
@@ -114,4 +110,4 @@ if "ai-router" not in aliases:
     raise SystemExit("managed: bundled router is missing its ai-router alias")
 PY
 
-echo "ok - default/remote, external, and managed Compose network topologies are isolated"
+echo "ok - default/remote direct routing, external, and managed Compose network topologies are isolated"

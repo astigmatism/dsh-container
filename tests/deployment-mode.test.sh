@@ -191,4 +191,49 @@ set -e
 grep -Fq -- "-f $fixture/compose.yaml -f $fixture/compose.external-ollama.yaml up -d" "$fixture/docker.log" \
   || fail "no-flag deployment did not preserve the recorded external mode"
 
-echo "ok - deployment mode recording is atomic, conflict-safe, portable by default, and precedes Compose"
+make_env direct-remote-cleanup remote
+mkdir -p "$fixture/scripts" "$fixture/fake-bin"
+cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
+cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
+cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+{
+  printf '%s\n' '#!/bin/sh'
+  printf '%s\n' 'printf "verify %s\\n" "$*" >>"${FAKE_DOCKER_LOG:?}"'
+} >"$fixture/scripts/verify.sh"
+{
+  printf '%s\n' '#!/bin/sh'
+  printf '%s\n' 'exit 0'
+} >"$fixture/scripts/install-boot-service.sh"
+chmod +x "$fixture/scripts/verify.sh" "$fixture/scripts/install-boot-service.sh"
+: >"$fixture/docker.log"
+PATH="$fixture/fake-bin:$PATH" \
+  FAKE_DOCKER_LOG="$fixture/docker.log" \
+  FAKE_CONTAINER_EXISTS=1 \
+  FAKE_CONTAINER_PROJECT=deepseek-harness \
+  FAKE_CONTAINER_SERVICE=ai-router \
+  sh "$fixture/scripts/deploy.sh" --remote-ollama --no-build >"$fixture/deploy.log" 2>&1
+[ "$(grep -Fc 'verify --remote-ollama' "$fixture/docker.log")" -eq 2 ] \
+  || fail "direct remote deployment did not verify both before and after legacy-router removal"
+grep -Fxq 'container rm --force deepseek-harness-ollama-router' "$fixture/docker.log" \
+  || fail "direct remote deployment did not remove only the legacy router container"
+if grep -Eq '(^| )volume (rm|prune)( |$)|(^| )image rm( |$)' "$fixture/docker.log"; then
+  fail "direct remote cleanup removed a volume or the rollback image"
+fi
+
+: >"$fixture/docker.log"
+set +e
+PATH="$fixture/fake-bin:$PATH" \
+  FAKE_DOCKER_LOG="$fixture/docker.log" \
+  FAKE_CONTAINER_EXISTS=1 \
+  FAKE_CONTAINER_PROJECT=unrelated-project \
+  FAKE_CONTAINER_SERVICE=ai-router \
+  sh "$fixture/scripts/deploy.sh" --remote-ollama --no-build >"$fixture/deploy.log" 2>&1
+unsafe_cleanup_status=$?
+set -e
+[ "$unsafe_cleanup_status" -eq 20 ] \
+  || fail "direct remote deployment did not reject an unrelated same-name container"
+if grep -Fq 'container rm' "$fixture/docker.log"; then
+  fail "direct remote cleanup removed an unrelated same-name container"
+fi
+
+echo "ok - deployment mode recording is atomic and remote mode safely cuts over to the direct production router"

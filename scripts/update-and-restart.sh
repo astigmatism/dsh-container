@@ -33,7 +33,7 @@ usage: ./scripts/update-and-restart.sh [mode] [--dry-run]
 
 Modes:
   --external-ollama   join an existing local Ollama-router network
-  --remote-ollama     proxy through the vendored router to REMOTE_OLLAMA_HOST
+  --remote-ollama     route directly to REMOTE_OLLAMA_HOST (no local router)
   --managed-ollama    update the managed Ollama/router stack too
 
 With no mode flag, the script uses the running container's Compose labels and
@@ -43,9 +43,11 @@ canonical origin/main, checks persisted settings before fetching and again
 under the fetched updater after fast-forwarding. Runtime settings are preserved
 when they differ from repository defaults. It validates Compose and
 pulls/builds replacement images while the deployment remains available before
-recreating the project and verifying it. It removes only superseded images
-captured from this project and creates no backup, archive, stash, rollback tag,
-or rollback directory.
+recreating the project and verifying it. In remote mode, deploy.sh removes only
+the obsolete deepseek-harness/ai-router container after direct-route
+verification and retains its image and data. The updater removes only
+superseded images captured from this project and creates no backup, archive,
+stash, rollback tag, or rollback directory.
 EOF
 }
 

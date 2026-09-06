@@ -21,6 +21,9 @@ llm-pi-ai:
       baseURL: http://ai-router:11434/v1
       timeoutMs: 600000
       streamIdleTimeoutMs: 600000
+      # The production router uses volatile slot-prefix caching but does not
+      # accept OpenAI's explicit prompt_cache_key request field.
+      cacheRetention: none
       retryPolicy:
         mode: normal
         maxRetries: 2
@@ -46,6 +49,8 @@ llm-pi-ai:
       baseURL: http://ai-router:11434/v1
       timeoutMs: 600000
       streamIdleTimeoutMs: 600000
+      # Keep pi-ai from sending prompt_cache_key to the production router.
+      cacheRetention: none
       retryPolicy:
         mode: normal
         maxRetries: 2

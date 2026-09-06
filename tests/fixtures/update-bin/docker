@@ -8,6 +8,22 @@ case "${1:-}" in
     exit "${FAKE_DOCKER_INFO_EXIT:-0}"
     ;;
   inspect)
+    case "$*" in
+      *com.docker.compose.project.config_files*) ;;
+      *com.docker.compose.project*)
+        [ -n "${FAKE_CONTAINER_PROJECT:-}" ] || exit 1
+        printf '%s\n' "$FAKE_CONTAINER_PROJECT"
+        exit 0
+        ;;
+      *com.docker.compose.service*)
+        [ -n "${FAKE_CONTAINER_SERVICE:-}" ] || exit 1
+        printf '%s\n' "$FAKE_CONTAINER_SERVICE"
+        exit 0
+        ;;
+      *)
+        [ "${FAKE_CONTAINER_EXISTS:-0}" = 1 ] && exit 0
+        ;;
+    esac
     if [ -n "${FAKE_COMPOSE_LABELS:-}" ]; then
       printf '%s\n' "$FAKE_COMPOSE_LABELS"
       exit 0
@@ -39,6 +55,12 @@ case "${1:-}" in
     ;;
   image)
     exit 0
+    ;;
+  container)
+    case "${2:-}" in
+      rm) exit "${FAKE_CONTAINER_RM_EXIT:-0}" ;;
+    esac
+    exit 99
     ;;
   *)
     echo "Unexpected fake docker invocation: $*" >&2

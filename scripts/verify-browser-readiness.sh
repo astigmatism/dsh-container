@@ -59,8 +59,8 @@ docker exec "$container" node --input-type=module -e '
   const body = await response.json();
   const model = body?.data?.find((entry) => entry?.id === "local-active");
   const metadata = model?.x_ollama_router;
-  if (!metadata?.complete || metadata?.warnings?.length) {
-    throw new Error(`local-active discovery is incomplete: ${JSON.stringify(metadata?.warnings ?? [])}`);
+  if (metadata?.schema_version !== 2 || !metadata?.complete || metadata?.warnings?.length) {
+    throw new Error(`local-active discovery is not complete schema-v2: ${JSON.stringify(metadata)}`);
   }
   for (const modality of ["text", "image"]) {
     if (!metadata.input_modalities?.includes(modality)) throw new Error(`missing ${modality} input modality`);

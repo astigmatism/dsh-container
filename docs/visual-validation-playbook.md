@@ -12,17 +12,18 @@ result rather than inferring an answer from the DOM.
 dsh-playwright browser_screenshot
   -> DSH image attachment
   -> Responses function_call_output with input_image
-  -> local-ai-ollama-router tool message with images[]
-  -> Ollama
+  -> production local-ai-ollama-router /v1/responses
+  -> active inference backend
   -> Qwen3.8 visual reasoning
 ```
 
-`dsh-playwright` and Chromium are included in the Harness image. The router in
-this repository preserves image-bearing function outputs. Managed and remote
-deployment modes build it automatically. Remote mode uses it as a local adapter
-in front of `REMOTE_OLLAMA_HOST`. In external Ollama mode, the separate router
-already answering as `ai-router` must be updated to the same router code before
-the screenshot acceptance test can pass.
+`dsh-playwright` and Chromium are included in the Harness image. Remote mode
+maps `ai-router` directly to `REMOTE_OLLAMA_HOST`, whose production router must
+accept image-bearing function outputs through `/v1/responses`; it does not run
+a local adapter. Managed mode builds the vendored router in this repository.
+In external Ollama mode, the separate router already answering as `ai-router`
+must support the same Responses image contract before the screenshot acceptance
+test can pass.
 
 ## Deployment preflight
 

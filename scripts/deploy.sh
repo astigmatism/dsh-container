@@ -11,8 +11,8 @@ usage() {
 usage: ./scripts/deploy.sh [--external-ollama | --remote-ollama | --managed-ollama] [--no-build]
 
 External mode joins OLLAMA_NETWORK and expects the router alias `ai-router`.
-Remote mode runs the vendored adapter as `ai-router` on a private Docker
-network and forwards native Ollama calls to REMOTE_OLLAMA_HOST.
+Remote mode maps `ai-router` directly to the Responses-compatible production
+router at REMOTE_OLLAMA_HOST; it does not start a local router service.
 Managed mode starts the pinned Ollama image, pulls the captured model set, and
 builds the vendored Responses-compatible router.
 With no mode flag, an existing recorded mode is reused; a new deployment uses
@@ -83,6 +83,26 @@ if ! docker compose --env-file "$project_dir/.env" $compose_files up -d $build_f
 fi
 
 "$script_dir/verify.sh" "--$mode-ollama"
+
+if [ "$mode" = remote ]; then
+  legacy_router=deepseek-harness-ollama-router
+  if docker inspect "$legacy_router" >/dev/null 2>&1; then
+    legacy_project=$(docker inspect "$legacy_router" \
+      --format '{{ index .Config.Labels "com.docker.compose.project" }}')
+    legacy_service=$(docker inspect "$legacy_router" \
+      --format '{{ index .Config.Labels "com.docker.compose.service" }}')
+    if [ "$legacy_project" != deepseek-harness ] || [ "$legacy_service" != ai-router ]; then
+      echo "Refusing to remove $legacy_router because its Compose identity is not deepseek-harness/ai-router." >&2
+      exit 20
+    fi
+    if ! docker container rm --force "$legacy_router" >/dev/null; then
+      echo "Could not stop and remove the obsolete remote-mode router container." >&2
+      exit 20
+    fi
+    echo "Removed obsolete remote-mode router container; its image and persistent data were retained."
+    "$script_dir/verify.sh" "--$mode-ollama"
+  fi
+fi
 
 # Post-deployment, best effort: install or refresh the after-network boot
 # service on the host. A problem here is logged but never fails an otherwise

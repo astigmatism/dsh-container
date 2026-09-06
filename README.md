@@ -2,8 +2,9 @@
 
 This repository reconstructs the live `deepseek-harness` deployment captured
 on 2026-08-31. It produces a reusable Harness image plus its authenticated
-HTTP/HTTPS gateway and can reach a router elsewhere on the LAN, join an existing local
-router network, or start a managed, pinned Ollama/router stack.
+HTTP/HTTPS gateway and can connect directly to a production router elsewhere
+on the LAN, join an existing local router network, or start a managed, pinned
+Ollama/router stack.
 
 The image is reproducible configuration, not a `docker commit` snapshot. Plugin
 versions and patches are locked in Git; sessions, derived credential hashes,
@@ -24,10 +25,13 @@ needs the NVIDIA Container Toolkit.
   `http://ai-router:11434/v1`: a default 262,144-token route and an optional
   131,072-token route for smaller active models.
 - Medium default reasoning, with all supported reasoning levels still selectable.
-- Active Ollama model `qwen3.8:27b-mtp-q8_0`, 262,144-token Ollama context,
-  persistent keep-alive, one parallel request, one loaded model, flash attention,
-  `f16` KV cache, and the captured reasoning-effort mapping.
-- The vendored router is from
+- Remote mode delegates active-model selection, Responses, tools, reasoning,
+  vision, and schema-v2 discovery to the production router at
+  `REMOTE_OLLAMA_HOST`.
+- Managed mode retains the captured `qwen3.8:27b-mtp-q8_0` Ollama model,
+  262,144-token context, persistent keep-alive, one parallel request, one
+  loaded model, flash attention, `f16` KV cache, and reasoning-effort mapping.
+- The managed-mode vendored router is from
   `astigmatism/local-ai-ollama-router@14be1958e17328afa6eec53b3a153224a9aea078`.
 - OpenAI-compatible faster-whisper STT and routed Kokoro/Chatterbox TTS on the
   captured voice host, with separate file-based keys and locked deployment
@@ -57,8 +61,8 @@ The web profile includes `dsh-playwright`, which runs a headless Chromium page
 per DSH session and streams that same page into the in-app Browser Use panel.
 The model can navigate, inspect semantic snapshots, click or type, and request
 PNG screenshots through DSH's native image-attachment path. Both local model
-routes declare image input, and the Responses router preserves image-bearing
-tool results as Ollama tool-message images.
+routes declare image input, and the production Responses router accepts
+image-bearing function-call results directly.
 
 Chromium is installed at `/usr/bin/chromium` in the Harness image. Public web
 targets work with the secure default. To validate an application on localhost,
@@ -83,11 +87,10 @@ local and production validation agents.
 ## Choose a deployment mode
 
 Remote Ollama mode is the portable default and is intended for deploying
-Harness on another machine on the LAN. Compose runs the vendored Responses
-adapter beside Harness under the canonical `ai-router` name, and that adapter
-forwards native Ollama-compatible calls to `REMOTE_OLLAMA_HOST`. This keeps
-tool-image translation and policy behavior pinned to this repository without
-making tracked Harness settings diverge by host.
+Harness on another machine on the LAN. Compose maps the canonical `ai-router`
+name directly to `REMOTE_OLLAMA_HOST`. The production router owns the OpenAI
+Responses endpoint, tools, reasoning, vision, schema-v2 discovery, and
+`local-active` translation; remote mode does not start a local router service.
 
 ```sh
 git clone https://github.com/astigmatism/dsh-container.git
@@ -98,11 +101,12 @@ cd dsh-container
 ```
 
 The no-flag deploy command selects remote mode for a new deployment and reuses
-the recorded mode on an existing deployment. Use `deploy.sh`, which includes
-the remote overlay, builds the local adapter, records the mode, and performs
-post-start verification. Plain base `docker compose up` retains the lightweight
-direct-host mapping for diagnostic use and does not include the pinned local
-Responses adapter.
+the recorded mode on an existing deployment. Use `deploy.sh`, which includes a
+no-op remote mode marker, builds Harness and the gateway, records the mode, and
+verifies the direct route. When upgrading the obsolete proxy topology, it
+verifies the direct production route before stopping and removing only the
+`deepseek-harness-ollama-router` container, verifies again, and retains the
+router image plus all persistent data for rollback.
 
 The container-only default exposes as much of the host filesystem as the
 platform permits at the stable Linux path `/host`. Native Windows Compose
@@ -170,10 +174,13 @@ is supplied explicitly.
 `config/settings.yaml` is the reviewed default configuration used to seed a
 new deployment: it selects the 262,144-token `local-active` route by default and
 also exposes a 131,072-token route for new tasks using a smaller active model.
-Both routes use the same local `ai-router` endpoint and wire model ID; only the
+Both routes use the same `ai-router` endpoint and wire model ID; only the
 Harness context metadata differs, so the router continues to resolve
 `local-active` normally. Local timeout failures are not automatically retried,
 which prevents a single stalled generation from multiplying into a long queue.
+Both routes set `cacheRetention: none` so pi-ai does not send the unsupported
+OpenAI `prompt_cache_key` field; the production backend still performs its own
+volatile slot-prefix caching.
 The file also contains the captured reasoning levels,
 the intended permission preset, and an environment-variable name for the
 provider key rather than the key itself. Remote mode changes name resolution
@@ -400,11 +407,13 @@ fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
 before it can change services. The updater pulls non-buildable images and builds
-the selected overlay while the current deployment remains available, then uses
+the selected topology while the current deployment remains available, then uses
 the normal verified deployment command without an explicit `compose down` or
 `compose stop`. It creates no backup or rollback artifacts. After success it
 removes only superseded image IDs captured from this Compose project; it never
-runs a global Docker prune.
+runs a global Docker prune. Remote-mode deployment additionally removes the
+exact obsolete `deepseek-harness/ai-router` container only after direct-route
+verification, while retaining its image and persistent data.
 
 The `harness` service is the only service carrying the Service Portal update
 labels. The portal therefore offers one project-level update job for every
@@ -450,7 +459,7 @@ Verify a running external, remote, or managed deployment:
 ./scripts/verify.sh --managed-ollama
 ```
 
-Routine Compose commands for the default remote mode are standard:
+Routine Compose commands for the default direct-remote mode are standard:
 
 ```sh
 docker compose ps

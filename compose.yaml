@@ -1,7 +1,8 @@
 name: deepseek-harness
 
-# Portable default: reach a Responses-compatible router on another LAN host.
-# External same-engine and managed Ollama deployments apply explicit overlays.
+# Portable default and remote mode: resolve ai-router directly to the
+# Responses-compatible production router on another LAN host. External
+# same-engine and managed Ollama deployments apply explicit overlays.
 
 services:
   harness:

@@ -72,6 +72,7 @@ test("capability synchronization never changes maxTokens or contextWindow", () =
   const settings = {
     providers: {
       local: {
+        cacheRetention: "none",
         models: [{
           id: "local-active",
           contextWindow: 262144,
@@ -104,6 +105,7 @@ test("capability synchronization never changes maxTokens or contextWindow", () =
   assert.deepEqual(ops[0].value[0].input, ["text"]);
   assert.equal("compat" in ops[0].value[0], false);
   assert.equal(settings.providers.local.models[0].maxTokens, 32768);
+  assert.equal(settings.providers.local.cacheRetention, "none");
 });
 
 test("capability synchronization is a no-op once metadata is current", () => {

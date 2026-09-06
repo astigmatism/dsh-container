@@ -47,6 +47,10 @@ esac
 # shellcheck disable=SC2086
 compose() { docker compose --env-file "$project_dir/.env" $compose_files "$@"; }
 
+get_env() {
+  awk -F= -v wanted="$1" '$1 == wanted { print substr($0, index($0, "=") + 1); exit }' "$project_dir/.env"
+}
+
 if ! "$script_dir/verify-persisted-settings.sh"; then
   exit "$configuration_exit"
 fi
@@ -127,6 +131,36 @@ if ! compose exec -T harness node -e \
   fi
   echo "The configured model provider is unavailable or rejected access." >&2
   exit "$provider_exit"
+fi
+
+if [ "$mode" = --remote-ollama ]; then
+  remote_host=$(get_env REMOTE_OLLAMA_HOST)
+  [ -n "$remote_host" ] || remote_host=192.168.1.21
+  resolved_hosts=$(compose exec -T harness getent hosts ai-router 2>/dev/null \
+    | awk '{ print $1 }' | sort -u)
+  if [ "$resolved_hosts" != "$remote_host" ]; then
+    echo "Remote mode resolved ai-router to '$resolved_hosts' instead of REMOTE_OLLAMA_HOST '$remote_host'." >&2
+    exit "$provider_exit"
+  fi
+  if ! compose exec -T harness node --input-type=module -e '
+    const response = await fetch("http://ai-router:11434/v1/models");
+    if (!response.ok) throw new Error(`model discovery returned HTTP ${response.status}`);
+    const body = await response.json();
+    const model = body?.data?.find((entry) => entry?.id === "local-active");
+    const metadata = model?.x_ollama_router;
+    if (metadata?.schema_version !== 2 || !metadata?.complete || metadata?.warnings?.length) {
+      throw new Error(`local-active discovery is not complete schema-v2: ${JSON.stringify(metadata)}`);
+    }
+    for (const modality of ["text", "image"]) {
+      if (!metadata.input_modalities?.includes(modality)) throw new Error(`missing ${modality} input modality`);
+    }
+    for (const capability of ["vision", "tools"]) {
+      if (!metadata.capabilities?.includes(capability)) throw new Error(`missing ${capability} capability`);
+    }
+  '; then
+    echo "The direct remote router did not advertise complete schema-v2 vision and tool support." >&2
+    exit "$provider_exit"
+  fi
 fi
 
 # Trusted TLS gateway verification. verify-gateway-tls.sh probes

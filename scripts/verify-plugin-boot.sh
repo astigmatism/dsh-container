@@ -55,6 +55,7 @@ DSH_SETTINGS_GID=$(id -g) \
 cd "$parent"
 
 (
+  unset DISPLAY WAYLAND_DISPLAY
   DSH_HOME=$home DSH_TELEMETRY_DISABLED=1 \
     exec dsh web --no-open --port "$port"
 ) >/dev/null 2>&1 &
@@ -62,6 +63,32 @@ boot_pid=$!
 
 probe() {
   node -e "fetch('http://127.0.0.1:${port}/').then(r => { process.exit(r.ok ? 0 : 1); }).catch(() => process.exit(1))" 2>/dev/null
+}
+
+probe_headless_capability() {
+  node -e "
+    const request = {
+      type: 'client-request',
+      rpcId: 'dsh-container-headless-capability-probe',
+      method: 'host.describe',
+      payload: {},
+    };
+    fetch('http://127.0.0.1:${port}/api/host.describe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error('host.describe returned HTTP ' + response.status);
+      const envelope = await response.json();
+      if (envelope?.result?.ok !== true) throw new Error('host.describe returned an RPC error');
+      if (envelope.result.value?.canOpenPath !== false) {
+        throw new Error('headless Host did not advertise canOpenPath: false');
+      }
+    }).catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
+  "
 }
 
 ok=0
@@ -80,6 +107,11 @@ while [ "$elapsed" -lt "$timeout_seconds" ]; do
   elapsed=$((elapsed + 1))
 done
 
+capability_ok=0
+if [ "$ok" -ge "$stable" ] && probe_headless_capability; then
+  capability_ok=1
+fi
+
 kill "$boot_pid" 2>/dev/null || true
 wait "$boot_pid" 2>/dev/null || true
 
@@ -89,4 +121,9 @@ if [ "$ok" -lt "$stable" ]; then
   exit 1
 fi
 
-echo "Plugin boot check passed: web profile booted and served a stable HTTP 200."
+if [ "$capability_ok" -ne 1 ]; then
+  echo "Plugin boot check failed: the headless Host did not advertise canOpenPath: false." >&2
+  exit 1
+fi
+
+echo "Plugin boot check passed: web profile served HTTP 200 and advertised canOpenPath: false when headless."

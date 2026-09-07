@@ -145,8 +145,8 @@ if ! compose exec -T harness node --input-type=module -e '
 fi
 
 # The browser module is generated from the pinned DSH package during the image
-# build. Compile the exact deployed file and require the cancellation node,
-# locale, and interrupted-output preservation markers.
+# build. Compile the exact deployed files and require the cancellation and
+# native-file capability markers.
 if ! compose exec -T harness node --input-type=module -e '
   import { readFile } from "node:fs/promises";
   const path = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
@@ -158,12 +158,26 @@ if ! compose exec -T harness node --input-type=module -e '
     "Stopped by user",
     "The session or transport lifecycle ended before this turn completed.",
     "hasInterruptionEvidence(blocks)",
+    "dsh-native-file-opening-v1",
+    "openFile: availableOpenFile",
+    "owner.openFile === void 0 ? void 0",
+    "guardedWorkspaceFileOpener(connection.hostDescription",
   ]) {
-    if (!source.includes(marker)) throw new Error(`deployed cancellation presentation is missing ${marker}`);
+    if (!source.includes(marker)) throw new Error(`deployed conversation browser module is missing ${marker}`);
   }
-  console.log("Verified visible cancellation provenance in the deployed browser module.");
+  const deliverablesPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
+  const deliverables = await readFile(deliverablesPath, "utf8");
+  Function(deliverables);
+  for (const marker of [
+    "dsh-native-file-opening-v1",
+    "shown.map((path) => canOpenPath ?",
+    "hidden > 0 && isLoopback && canOpenPath",
+  ]) {
+    if (!deliverables.includes(marker)) throw new Error(`deployed deliverables browser module is missing ${marker}`);
+  }
+  console.log("Verified visible cancellation provenance and fail-closed native file actions in the deployed browser modules.");
 '; then
-  echo "The deployed browser module is missing visible cancellation provenance." >&2
+  echo "The deployed browser modules are missing cancellation or native-file capability behavior." >&2
   exit "$configuration_exit"
 fi
 

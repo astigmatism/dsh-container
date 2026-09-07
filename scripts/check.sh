@@ -95,6 +95,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
     node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
+    node --check scripts/patch-dsh-native-file-opening.mjs
     node --check ollama-router/src/server.js
     node --test gateway/*.test.mjs
     node --test tests/*.test.mjs
@@ -129,6 +130,33 @@ if [ "$build" -eq 1 ]; then
       exit 1
     }
   done
+
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" --input-type=module -e '
+    import { readFile } from "node:fs/promises";
+    const conversationPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
+    const deliverablesPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
+    const conversation = await readFile(conversationPath, "utf8");
+    const deliverables = await readFile(deliverablesPath, "utf8");
+    Function(conversation);
+    Function(deliverables);
+    for (const [name, source, markers] of [
+      ["conversation", conversation, [
+        "dsh-native-file-opening-v1",
+        "openFile: availableOpenFile",
+        "owner.openFile === void 0 ? void 0",
+        "guardedWorkspaceFileOpener(connection.hostDescription",
+      ]],
+      ["deliverables", deliverables, [
+        "dsh-native-file-opening-v1",
+        "shown.map((path) => canOpenPath ?",
+        "hidden > 0 && isLoopback && canOpenPath",
+      ]],
+    ]) {
+      for (const marker of markers) {
+        if (!source.includes(marker)) throw new Error(`${name} browser module is missing ${marker}`);
+      }
+    }
+  '
 
   docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
     mkdir -p /data/dsh/profiles/web /data/dsh/.dsh-plugins /data/dsh/sessions

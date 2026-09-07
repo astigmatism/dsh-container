@@ -308,6 +308,15 @@ container proxy. `host-exec` is intentionally more powerful on a native Linux
 host: it launches a short-lived privileged helper, enters the host namespaces,
 and executes as host root.
 
+The Harness process itself runs in headless Linux, so its Host description
+reports `canOpenPath: false`. Assistant-produced workspace paths remain visible
+and copyable in conversation output, but the browser does not offer a native
+open action that would run `xdg-open` inside the container. Open those paths
+with a host application after copying them. Native file actions remain enabled
+for DSH hosts that explicitly report the capability (macOS, Windows, WSL, or
+desktop Linux with a display). This DSH release has no authenticated arbitrary
+workspace-file viewer or download route to use as a container-side fallback.
+
 Docker Desktop's Linux VM is not the Windows kernel. On Windows, Harness can
 manage the mounted Windows files and Docker resources, but `host-exec` cannot
 run native Windows programs or administer Windows services. That requires a

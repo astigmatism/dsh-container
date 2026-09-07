@@ -1,10 +1,9 @@
 /**
  * Keep DSH's local-active model capabilities aligned with the router marker.
  *
- * The router owns per-effort output limits. This plugin deliberately does not
- * mutate DSH's maxTokens (or its intentionally distinct context-window
- * profiles); it only consumes facts that can be represented losslessly by
- * dsh-llm-pi-ai today: input modalities and reasoning effort wire values.
+ * Complete schema-v2 metadata is authoritative for every request-capacity fact
+ * DSH can represent: total context, output ceiling, endpoint concurrency,
+ * input modalities, reasoning default, and effort wire values.
  */
 
 export const name = "router-model-discovery";
@@ -12,6 +11,16 @@ export const name = "router-model-discovery";
 const DSH_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const DSH_INPUT_MODALITIES = new Set(["text", "image"]);
 const DEFAULT_PROVIDERS = ["local-ollama", "local-ollama-256k"];
+const PROVIDER_PRESENTATION = new Map([
+  ["local-ollama", {
+    displayName: "Local router (128k total)",
+    modelName: "Local active model (128k total)",
+  }],
+  ["local-ollama-256k", {
+    displayName: "Local router (legacy ID; 128k total)",
+    modelName: "Local active model (legacy route; 128k total)",
+  }],
+]);
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const MIN_POLL_INTERVAL_MS = 5_000;
 
@@ -43,6 +52,12 @@ export function routerMetadataOf(entry) {
   if (!positiveInteger(metadata.context_window)) {
     throw new Error("router discovery metadata has no valid context_window");
   }
+  if (!positiveInteger(metadata.max_output_tokens)) {
+    throw new Error("router discovery metadata has no valid max_output_tokens");
+  }
+  if (!positiveInteger(metadata.active_request_limit)) {
+    throw new Error("router discovery metadata has no valid active_request_limit");
+  }
   if (!Array.isArray(metadata.input_modalities) || metadata.input_modalities.some((value) => !nonEmptyString(value))) {
     throw new Error("router discovery metadata has invalid input_modalities");
   }
@@ -55,6 +70,9 @@ export function routerMetadataOf(entry) {
   }
   if (!positiveInteger(reasoning.absolute_max_output_tokens)) {
     throw new Error("router discovery metadata has no valid absolute reasoning output limit");
+  }
+  if (reasoning.absolute_max_output_tokens !== metadata.max_output_tokens) {
+    throw new Error("router discovery metadata has inconsistent output limits");
   }
   for (const [level, wire] of Object.entries(reasoning.efforts)) {
     if (!nonEmptyString(level) || !nonEmptyString(wire) || !plainObject(reasoning.per_effort[level])) {
@@ -75,6 +93,15 @@ export function routerMetadataOf(entry) {
       throw new Error(`router discovery metadata has an invalid reasoning alias "${alias}"`);
     }
   }
+  if (reasoning.supported === true) {
+    if (!nonEmptyString(reasoning.default) || !DSH_REASONING_LEVELS.includes(reasoning.default)) {
+      throw new Error("router discovery metadata has no DSH-compatible reasoning default");
+    }
+    const target = reasoning.aliases[reasoning.default] ?? reasoning.default;
+    if (!nonEmptyString(reasoning.efforts[target])) {
+      throw new Error("router discovery metadata reasoning default is not supported");
+    }
+  }
   return metadata;
 }
 
@@ -89,8 +116,9 @@ export function dshReasoningEfforts(reasoning) {
     }
     const target = reasoning.aliases[level];
     if (nonEmptyString(target) && nonEmptyString(reasoning.efforts[target])) {
-      // Send the documented alias itself. The router canonicalizes it to target.
-      mapped[level] = level;
+      // Keep the DSH selector alias, but send the router's canonical native wire
+      // value (for example, the user-facing max choice is sent as xhigh).
+      mapped[level] = reasoning.efforts[target];
     }
   }
   if (!Object.keys(mapped).some((level) => level !== "off")) {
@@ -99,7 +127,7 @@ export function dshReasoningEfforts(reasoning) {
   return mapped;
 }
 
-/** Return only lossless capability mutations; never output/context capacities. */
+/** Converge one configured compatibility route on the complete router contract. */
 export function capabilityOps(settings, providerName, modelId, metadata, storedSettings = settings) {
   const provider = settings?.providers?.[providerName];
   const models = provider?.models;
@@ -111,7 +139,45 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
   const input = metadata.input_modalities.filter((value) => DSH_INPUT_MODALITIES.has(value));
   if (input.length === 0) throw new Error("router advertises no input modality DSH can represent");
   const reasoningEfforts = dshReasoningEfforts(metadata.reasoning);
-  if (sameJson(model.input, input) && sameJson(model.reasoningEfforts, reasoningEfforts)) return [];
+  const presentation = PROVIDER_PRESENTATION.get(providerName);
+  const operations = [];
+  if (presentation !== undefined && provider.displayName !== presentation.displayName) {
+    operations.push({
+      op: "set",
+      path: ["providers", providerName, "displayName"],
+      value: presentation.displayName,
+    });
+  }
+  if (provider.maxConcurrency !== metadata.active_request_limit) {
+    operations.push({
+      op: "set",
+      path: ["providers", providerName, "maxConcurrency"],
+      value: metadata.active_request_limit,
+    });
+  }
+  if (metadata.reasoning.supported === true && provider.reasoning !== metadata.reasoning.default) {
+    operations.push({
+      op: "set",
+      path: ["providers", providerName, "reasoning"],
+      value: metadata.reasoning.default,
+    });
+  } else if (
+    metadata.reasoning.supported === false &&
+    Object.hasOwn(storedSettings?.providers?.[providerName] ?? {}, "reasoning")
+  ) {
+    operations.push({
+      op: "unset",
+      path: ["providers", providerName, "reasoning"],
+    });
+  }
+
+  const modelCurrent =
+    (presentation === undefined || model.name === presentation.modelName) &&
+    model.contextWindow === metadata.context_window &&
+    model.maxTokens === metadata.max_output_tokens &&
+    sameJson(model.input, input) &&
+    sameJson(model.reasoningEfforts, reasoningEfforts);
+  if (modelCurrent) return operations;
 
   // SettingsPathOp descends through plain objects, not arrays. Replace the
   // stored provider models array atomically. Prefer the raw user-layer rows so
@@ -122,13 +188,23 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
     : models;
   const sourceIndex = sourceModels.findIndex((candidate) => candidate?.id === modelId);
   const nextModels = sourceModels.map((candidate, index) =>
-    index === sourceIndex ? { ...candidate, input, reasoningEfforts } : candidate,
+    index === sourceIndex
+      ? {
+          ...candidate,
+          ...(presentation === undefined ? {} : { name: presentation.modelName }),
+          contextWindow: metadata.context_window,
+          maxTokens: metadata.max_output_tokens,
+          input,
+          reasoningEfforts,
+        }
+      : candidate,
   );
-  return [{
+  operations.push({
     op: "set",
     path: ["providers", providerName, "models"],
     value: nextModels,
-  }];
+  });
+  return operations;
 }
 
 function listingUrl(baseURL) {

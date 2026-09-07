@@ -38,14 +38,16 @@ RUN apt-get update \
 
 RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}"
 
-# DSH is pinned above. Apply the router discovery/error boundary, visible
-# cancellation provenance, and native-file capability contracts with exact
-# source anchors so a future DSH layout change fails the image build instead
-# of silently dropping behavior.
+# DSH is pinned above. Apply the router discovery/error/concurrency boundary,
+# visible cancellation provenance, and native-file capability contracts with
+# exact source anchors so a future DSH layout change fails the image build
+# instead of silently dropping behavior.
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
+COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
+    && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
     && node /opt/dsh-build/patch-dsh-cancellation-presentation.mjs \
     && node /opt/dsh-build/patch-dsh-native-file-opening.mjs
 

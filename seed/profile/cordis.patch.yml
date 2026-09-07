@@ -39,7 +39,7 @@
 
 - insert:
     - id: router-model-discovery
-      name: '../../.dsh-plugins/dsh-router-model-discovery.js?v=7'
+      name: '../../.dsh-plugins/dsh-router-model-discovery.js?v=8'
       config:
         providers: [ local-ollama, local-ollama-256k ]
         model: local-active

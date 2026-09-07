@@ -144,6 +144,14 @@ if ! compose exec -T harness node --input-type=module -e '
   exit "$configuration_exit"
 fi
 
+# Exercise the exact installed adapter and pi-ai package, including dynamic
+# context/output budgeting and reasoning/tool continuation, rather than
+# relying only on checked-in patch markers.
+if ! compose exec -T harness node /opt/dsh-build/verify-dsh-inference-contract.mjs; then
+  echo "The deployed Harness inference adapter does not satisfy the local router contract." >&2
+  exit "$configuration_exit"
+fi
+
 # The browser module is generated from the pinned DSH package during the image
 # build. Compile the exact deployed files and require the cancellation and
 # native-file capability markers.
@@ -209,14 +217,38 @@ if [ "$mode" = --remote-ollama ]; then
     if (metadata?.schema_version !== 2 || !metadata?.complete || metadata?.warnings?.length) {
       throw new Error(`local-active discovery is not complete schema-v2: ${JSON.stringify(metadata)}`);
     }
+    for (const [field, expected] of Object.entries({
+      context_window: 131072,
+      active_request_limit: 2,
+      max_output_tokens: 32768,
+    })) {
+      if (metadata[field] !== expected) {
+        throw new Error(field + " is " + metadata[field] + "; expected " + expected);
+      }
+    }
     for (const modality of ["text", "image"]) {
       if (!metadata.input_modalities?.includes(modality)) throw new Error(`missing ${modality} input modality`);
     }
     for (const capability of ["vision", "tools"]) {
       if (!metadata.capabilities?.includes(capability)) throw new Error(`missing ${capability} capability`);
     }
+    const reasoning = metadata.reasoning;
+    if (
+      reasoning?.supported !== true ||
+      reasoning.default !== "medium" ||
+      reasoning.absolute_max_output_tokens !== 32768 ||
+      reasoning.efforts?.off !== "none" ||
+      reasoning.efforts?.low !== "low" ||
+      reasoning.efforts?.medium !== "medium" ||
+      reasoning.efforts?.xhigh !== "xhigh" ||
+      reasoning.aliases?.minimal !== "low" ||
+      reasoning.aliases?.high !== "xhigh" ||
+      reasoning.aliases?.max !== "xhigh"
+    ) {
+      throw new Error("local-active reasoning contract is incompatible: " + JSON.stringify(reasoning));
+    }
   '; then
-    echo "The direct remote router did not advertise complete schema-v2 vision and tool support." >&2
+    echo "The direct remote router did not advertise the qualified local-active request contract." >&2
     exit "$provider_exit"
   fi
 fi

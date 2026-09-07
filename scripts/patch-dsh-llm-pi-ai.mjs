@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js";
-const PATCH_MARKER = "dsh-router-contract-v1";
+const PATCH_MARKER = "dsh-router-contract-v2";
 
 function replaceOnce(source, before, after, description) {
   const first = source.indexOf(before);
@@ -40,6 +40,72 @@ export function renderStructuredError(value) {
   return String(value);
 }
 
+/**
+ * Fair endpoint-level generation gate used by the patched adapter. Provider
+ * compatibility aliases sharing one base URL therefore share one pool.
+ */
+export class EndpointConcurrencyGate {
+  constructor() {
+    this.entries = new Map();
+  }
+
+  acquire(profile, signal) {
+    const limit = profile.maxConcurrency;
+    if (limit === undefined) return Promise.resolve(() => {});
+    const key = (profile.baseURL ?? profile.provider).replace(/\/+$/, "");
+    let entry = this.entries.get(key);
+    if (entry === undefined) {
+      entry = { active: 0, limit, queue: [] };
+      this.entries.set(key, entry);
+    } else {
+      // Multiple compatibility provider IDs can name one endpoint. The most
+      // conservative declared limit wins for the lifetime of this adapter.
+      entry.limit = Math.min(entry.limit, limit);
+    }
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason ?? new Error("model request cancelled while waiting for provider capacity"));
+    }
+    if (entry.active < entry.limit && entry.queue.length === 0) {
+      entry.active += 1;
+      return Promise.resolve(this.lease(entry));
+    }
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, signal, onAbort: undefined };
+      waiter.onAbort = () => {
+        const index = entry.queue.indexOf(waiter);
+        if (index < 0) return;
+        entry.queue.splice(index, 1);
+        reject(signal.reason ?? new Error("model request cancelled while waiting for provider capacity"));
+      };
+      signal?.addEventListener("abort", waiter.onAbort, { once: true });
+      entry.queue.push(waiter);
+    });
+  }
+
+  lease(entry) {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      entry.active -= 1;
+      this.drain(entry);
+    };
+  }
+
+  drain(entry) {
+    while (entry.active < entry.limit && entry.queue.length > 0) {
+      const waiter = entry.queue.shift();
+      waiter.signal?.removeEventListener("abort", waiter.onAbort);
+      if (waiter.signal?.aborted) {
+        waiter.reject(waiter.signal.reason ?? new Error("model request cancelled while waiting for provider capacity"));
+        continue;
+      }
+      entry.active += 1;
+      waiter.resolve(this.lease(entry));
+    }
+  }
+}
+
 /** Apply the pinned dsh-llm-pi-ai source patch, failing loudly on drift. */
 export function patchSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
@@ -50,6 +116,20 @@ export function patchSource(input) {
     `\t\tconst name = label(entry?.name, entry?.display_name);\n\t\tconst contextWindow = capacity(entry?.context_window, entry?.context_length);\n\t\tconst maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens);`,
     `\t\t// ${PATCH_MARKER}: prefer the router's complete public schema over legacy listing fields.\n\t\tconst router = entry?.x_ollama_router?.schema_version === 2 && entry.x_ollama_router.complete === true\n\t\t\t? entry.x_ollama_router\n\t\t\t: void 0;\n\t\tconst name = label(entry?.name, entry?.display_name);\n\t\tconst contextWindow = capacity(router?.context_window, entry?.context_window, entry?.context_length);\n\t\tconst maxTokens = capacity(router?.reasoning?.absolute_max_output_tokens, router?.max_output_tokens, entry?.max_output_tokens, entry?.max_tokens);`,
     "router discovery capacities",
+  );
+
+  source = replaceOnce(
+    source,
+    `\tstreamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),\n\tmaxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),`,
+    `\tstreamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),\n\tmaxConcurrency: z.number().step(1).min(1),\n\tmaxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),`,
+    "provider concurrency schema",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\tconst streamIdleTimeoutMs = source.streamIdleTimeoutMs ?? 3e5;\n\t\tif (!Number.isFinite(streamIdleTimeoutMs) || streamIdleTimeoutMs <= 0 || streamIdleTimeoutMs > MAX_TIMER_DELAY_MS) throw new Error(\`llm-pi-ai: provider "\${provider}" streamIdleTimeoutMs must be a positive finite number no greater than \${MAX_TIMER_DELAY_MS}\`);\n\t\tconst maxRequestImageBytes = source.maxRequestImageBytes ?? 20971520;`,
+    `\t\tconst streamIdleTimeoutMs = source.streamIdleTimeoutMs ?? 3e5;\n\t\tif (!Number.isFinite(streamIdleTimeoutMs) || streamIdleTimeoutMs <= 0 || streamIdleTimeoutMs > MAX_TIMER_DELAY_MS) throw new Error(\`llm-pi-ai: provider "\${provider}" streamIdleTimeoutMs must be a positive finite number no greater than \${MAX_TIMER_DELAY_MS}\`);\n\t\tif (source.maxConcurrency !== void 0 && (!Number.isSafeInteger(source.maxConcurrency) || source.maxConcurrency < 1)) throw new Error(\`llm-pi-ai: provider "\${provider}" maxConcurrency must be a positive safe integer\`);\n\t\tconst maxRequestImageBytes = source.maxRequestImageBytes ?? 20971520;`,
+    "provider concurrency validation",
   );
 
   source = replaceOnce(
@@ -85,6 +165,41 @@ export function patchSource(input) {
     `\t\tcase "error": {\n\t\t\tconst text = message.errorMessage ?? "pi-ai stream error";`,
     `\t\tcase "error": {\n\t\t\tconst text = errorText ?? "pi-ai stream error";`,
     "terminal error rendering",
+  );
+
+  source = replaceOnce(
+    source,
+    `var PiAiAdapter = class extends LlmAdapter {`,
+    `${EndpointConcurrencyGate.toString()}\nvar PiAiAdapter = class extends LlmAdapter {`,
+    "endpoint concurrency gate",
+  );
+
+  source = replaceOnce(
+    source,
+    `\tconfig;\n\tsnapshot;`,
+    `\tconfig;\n\tsnapshot;\n\tconcurrency = new EndpointConcurrencyGate();`,
+    "adapter concurrency state",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\t\tconst watchdog = __addDisposableResource(env_1, idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);\n\t\t\ttry {`,
+    `\t\t\tconst watchdog = __addDisposableResource(env_1, idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);\n\t\t\tlet releaseConcurrency;\n\t\t\ttry {`,
+    "concurrency lease declaration",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {`,
+    `\t\t\t\treleaseConcurrency = await this.concurrency.acquire(profile, upstream);\n\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {`,
+    "generation concurrency acquisition",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\t\t} finally {\n\t\t\t\tconsumer.abort("pi-ai stream consumer stopped");\n\t\t\t}`,
+    `\t\t\t} finally {\n\t\t\t\treleaseConcurrency?.();\n\t\t\t\tconsumer.abort("pi-ai stream consumer stopped");\n\t\t\t}`,
+    "generation concurrency release",
   );
 
   return source;

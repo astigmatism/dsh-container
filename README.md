@@ -21,10 +21,15 @@ needs the NVIDIA Container Toolkit.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
-- Selectable `local-active` OpenAI Responses routes at
-  `http://ai-router:11434/v1`: a default 262,144-token route and an optional
-  131,072-token route for smaller active models.
-- Medium default reasoning, with all supported reasoning levels still selectable.
+- One authoritative `local-active` OpenAI Responses route at
+  `http://ai-router:11434/v1`, with 131,072 total tokens per request, a
+  32,768-token output ceiling, and at most two simultaneous generations.
+- A deprecated `local-ollama-256k` provider ID remains only for persisted
+  selections. It names the same endpoint, alias, and 131,072-token request
+  capacity as the canonical `local-ollama` provider.
+- Medium default reasoning; explicit off, low, medium, and xhigh are supported,
+  while the existing minimal, high, and max selectors map to low, xhigh, and
+  xhigh respectively.
 - Remote mode delegates active-model selection, Responses, tools, reasoning,
   vision, and schema-v2 discovery to the production router at
   `REMOTE_OLLAMA_HOST`.
@@ -172,19 +177,66 @@ is supplied explicitly.
 ## Persisted settings lifecycle
 
 `config/settings.yaml` is the reviewed default configuration used to seed a
-new deployment: it selects the 262,144-token `local-active` route by default and
-also exposes a 131,072-token route for new tasks using a smaller active model.
-Both routes use the same `ai-router` endpoint and wire model ID; only the
-Harness context metadata differs, so the router continues to resolve
-`local-active` normally. Local timeout failures are not automatically retried,
-which prevents a single stalled generation from multiplying into a long queue.
-Both routes set `cacheRetention: none` so pi-ai does not send the unsupported
-OpenAI `prompt_cache_key` field; the production backend still performs its own
-volatile slot-prefix caching.
-The file also contains the captured reasoning levels,
-the intended permission preset, and an environment-variable name for the
-provider key rather than the key itself. Remote mode changes name resolution
-in Compose rather than changing this file.
+new deployment. It selects `local-ollama/local-active`, whose `contextWindow`
+is the complete 131,072-token capacity of one request, not input capacity and
+not the backend's aggregate allocation. The historical
+`local-ollama-256k` ID remains as a deprecated compatibility entry so persisted
+task selections do not break, but it sends the same request to the same public
+alias and advertises the same 131,072-token capacity. It does not reserve or
+name a server slot. No client configuration depends on the replaceable backend
+model or its MTP implementation.
+
+The schema-v2 discovery plugin validates and synchronizes both provider IDs
+from the router's complete metadata: context capacity, output ceiling,
+generation concurrency, input modalities, reasoning default, and effort wire
+values. It also replaces stale 256k labels on the two repository-owned provider
+IDs without changing an existing saved selection. The checked-in settings are
+the fallback when discovery is temporarily unavailable. A fresh configuration
+omits an agent-level reasoning choice and
+sets the provider default to medium; this is necessary because explicit off is
+a real model capability rather than the meaning of an omitted user choice.
+Selecting off sends the router's `none` wire value, and the compatibility
+choice max sends the native `xhigh` value.
+
+The pinned pi-ai layer dynamically clamps every request's output allowance:
+
+```text
+max_output_tokens =
+  min(requested output cap (normally 32,768),
+      max(transport minimum,
+          131,072 - estimated serialized context - 4,096 safety tokens))
+
+estimated serialized context budget for a requested output reservation =
+  131,072 - requested output tokens - 4,096 safety tokens
+```
+
+The estimate includes the system prompt, tool schemas, messages, tool calls,
+tool results, retained reasoning, and image allowance. The router exposes no
+tokenization endpoint, so the estimator uses prior provider usage when
+available and otherwise a four-characters-per-token heuristic. Harness durable
+replay currently clears pi-ai usage values, so continued Harness turns usually
+take the heuristic path. The 4,096-token reserve accounts for template and
+tokenizer uncertainty. There is no fixed 98K input limit. An already oversized
+estimate collapses the output request to the transport minimum; a true router
+overflow is classified separately, excluded from ordinary retries, and handed
+to Harness's existing compaction path.
+
+Both provider entries declare `maxConcurrency: 2`. The patched adapter enforces
+that limit immediately around model generation with a shared FIFO gate keyed by
+normalized endpoint URL, so the compatibility provider cannot create a second
+pool. Context conversion and ordinary local tool execution do not consume a
+generation slot, queued calls can be cancelled, and a slot is released before
+any higher-level retry begins.
+
+Busy/rate-limit, server, transport, and empty-response failures retain at most
+two bounded Harness retries; the underlying SDK retry loop is disabled.
+Timeout and context-overflow failures are not in that retry set. Request and
+stream-idle timeouts both remain 600 seconds for long fresh prefills. Both
+routes set `cacheRetention: none` so pi-ai does not send the unsupported OpenAI
+`prompt_cache_key` field; the production backend still performs its own
+volatile slot-prefix caching. Reasoning summaries and opaque signatures are
+stored separately in replay state and reconstructed before tool calls on
+tool-result continuations.
 
 `scripts/configure.sh` atomically initializes a missing
 `data/dsh/settings.yaml` from that canonical file with the configured

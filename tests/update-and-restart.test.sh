@@ -89,6 +89,8 @@ run_update() {
   PATH="$fixture_path/fake-bin:$PATH" \
     HOME="$fixture_path/home" \
     DSH_HOME= \
+    DSH_UPDATE_DELEGATED="${TEST_UPDATE_DELEGATED:-0}" \
+    DSH_BOOT_SERVICE_HOME="${TEST_BOOT_SERVICE_HOME:-}" \
     FAKE_GIT_LOG="$fixture_path/git.log" \
     FAKE_GIT_STATE_FILE="$fixture_path/git-head" \
     FAKE_FAST_FORWARD_SOURCE="${TEST_FAST_FORWARD_SOURCE:-}" \
@@ -260,6 +262,54 @@ grep -Fq 'Restarting maintenance under the fetched updater before service interr
   || fail "resumed updater fetched more than once"
 [ ! -e "$fixture/data/update-and-restart.lock" ] \
   || fail "successful updater left its transferred lock behind"
+
+# Delegated maintenance installs through the real host-home path mounted into
+# the helper, not its ephemeral HOME. The initial handoff maps the checkout
+# from HARNESS_WORKSPACE_ROOT to HOST_FILESYSTEM_SOURCE, while both Docker bind
+# sources remain host-native paths.
+grep -Fq -- '--volume "$host_home:$host_home"' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation does not pass the real host-home bind source to Docker"
+if grep -Fq -- '--volume "${workspace_root}${host_home}:' "$source_root/scripts/update-and-restart.sh"; then
+  fail "delegation passes the harness /host view as a Docker bind source"
+fi
+grep -Fq 'host_workspace=$(get_env HOST_FILESYSTEM_SOURCE)' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation ignores the configured host-filesystem bind source"
+grep -Fq 'project_relative=${project_dir#"$workspace_root"}' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation does not calculate the checkout path within the workspace mount"
+grep -Fq 'host_project_dir=$host_workspace$project_relative' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation does not reconstruct the host-native checkout path"
+grep -Fq -- '--volume "$host_project_dir:$host_project_dir"' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation does not mount the checkout at its host-native path"
+grep -Fq -- '--workdir "$host_project_dir"' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegated installer would render the harness /host checkout path"
+if grep -Fq -- '--volume "$project_dir:$project_dir"' "$source_root/scripts/update-and-restart.sh"; then
+  fail "delegation passes the harness checkout view as a Docker bind source"
+fi
+
+make_fixture delegated-host-home matching
+delegated_home=$fixture/mounted-host-home
+delegated_legacy=$delegated_home/.config/systemd/user/deepseek-harness-after-network.service.d/10-project-path.conf
+mkdir -p "$(dirname "$delegated_legacy")"
+{
+  echo '[Service]'
+  echo 'ExecStart='
+  echo 'ExecStart=/bin/sh -c '\''. "$1"'\'' /old/checkout/scripts/start-after-network.sh /old/checkout/start-after-network.sh'
+} >"$delegated_legacy"
+TEST_UPDATE_DELEGATED=1
+TEST_BOOT_SERVICE_HOME=$delegated_home
+run_update "$fixture" --external-ollama
+unset TEST_UPDATE_DELEGATED TEST_BOOT_SERVICE_HOME
+[ "$update_status" -eq 0 ] || fail "delegated host-home update failed"
+assert_status "$fixture" 'boot_service=warning:bus-unreachable'
+delegated_unit=$delegated_home/.config/systemd/user/deepseek-harness-after-network.service
+[ -f "$delegated_unit" ] \
+  || fail "delegated update did not install the user unit into the mounted host home"
+[ ! -e "$delegated_legacy" ] \
+  || fail "delegated host-home install did not migrate the exact legacy drop-in"
+grep -Fxq "ExecStart=$fixture/start-after-network.sh" "$delegated_unit" \
+  || fail "delegated update installed a non-direct or incorrect ExecStart"
+[ ! -e "$fixture/home/.config/systemd/user/deepseek-harness-after-network.service" ] \
+  || fail "delegated update installed the unit into its ephemeral HOME"
 
 external_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.external-ollama.yaml"
 config_line=$(line_number "$external_prefix config --quiet" "$fixture/docker.log")

@@ -477,7 +477,10 @@ deployment once the network is actually up:
   gateway status. A healthy deployment is a fast no-op that exits 0.
 - `deploy/deepseek-harness-after-network.service` — the canonical user unit
   template (`Type=oneshot`, `RemainAfterExit=yes`, `Restart=on-failure`,
-  `RestartSec=10`, `TimeoutStartSec=infinity`, wanted by `default.target`).
+  `RestartPreventExitStatus=78`, `RestartSec=10`,
+  `TimeoutStartSec=infinity`, wanted by `default.target`). Configuration
+  failures use exit 78 and therefore do not enter a restart loop; transient
+  runtime failures remain retryable.
   The unbounded start timeout is intentional: the pre-recreate waits
   legitimately run long early in boot, while the recreate wait is bounded
   inside the script.
@@ -485,11 +488,17 @@ deployment once the network is actually up:
   It renders the template for this checkout into
   `~/.config/systemd/user/`, creates the `default.target.wants` symlink, then
   `systemctl --user daemon-reload` and `start` (or `restart`) the unit.
-  Identical files cause no writes and no reload. When the user bus is
+  Identical files cause no writes and normally no reload. When the user bus is
   unreachable (for example from a maintenance container without the host user
   session) it still installs the files, prints the exact commands to run on
   the host, and exits 0. `--dry-run` previews the rendered unit and the
   planned actions without changing anything.
+  The installer also removes the exact obsolete
+  `10-project-path.conf` shell-wrapper drop-in from early installations. It
+  preserves other user drop-ins and refuses an unrecognized `ExecStart`
+  override with a diagnostic instead of deleting user-authored configuration.
+  It also reloads once if unchanged files leave the user manager exposing a
+  stale effective `ExecStart` from an earlier bus-unreachable migration.
 
 `scripts/deploy.sh` and `scripts/update-and-restart.sh` invoke the installer
 after a successful deployment, best-effort: the outcome is logged and, for
@@ -504,10 +513,11 @@ systemctl --user cat deepseek-harness-after-network
 journalctl --user -u deepseek-harness-after-network --no-pager
 ```
 
-A failed deployment leaves the unit as it was: if the recreation failed, the
-unit shows failed and systemd retries it every 10 seconds, and the deployment
-stays down until the next successful `update-and-restart.sh`, `deploy.sh`, or
-boot runs the boot script again.
+A failed deployment leaves the unit as it was: if recreation fails at runtime,
+the unit shows failed and systemd retries it every 10 seconds. Permanent
+configuration failures exit 78 and remain failed without retrying. In either
+case the deployment stays down until the next successful
+`update-and-restart.sh`, `deploy.sh`, or boot-service run repairs it.
 
 ## Operations
 

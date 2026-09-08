@@ -69,10 +69,9 @@ delegate_from_harness() {
 
   # Mount the host home (at its real path) into the maintenance container so
   # the post-deployment boot-service step can install the user unit there.
-  # The harness container carries the host /etc/passwd and sees the host root
-  # at HARNESS_WORKSPACE_ROOT, so the deploying user's home resolves from
-  # here. The user systemd bus stays on the host; the installer degrades to
-  # installing the files and printing the activation commands.
+  # The harness container carries the host /etc/passwd. The user systemd bus
+  # stays on the host; the installer degrades to installing the files and
+  # printing the activation commands.
   host_home=
   host_uid=$(get_env HOST_UID)
   [ -n "$host_uid" ] || host_uid=1000
@@ -80,29 +79,68 @@ delegate_from_harness() {
     host_home=$(getent passwd "$host_uid" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')
   fi
   workspace_root=${HARNESS_WORKSPACE_ROOT:-/host}
-  boot_service_args=
-  if [ -n "$host_home" ] && [ -d "${workspace_root}${host_home}" ]; then
-    boot_service_args="--volume ${workspace_root}${host_home}:${host_home} --env DSH_BOOT_SERVICE_HOME=${host_home}"
+  host_workspace=$(get_env HOST_FILESYSTEM_SOURCE)
+  [ -n "$host_workspace" ] || host_workspace=/
+  [ "$workspace_root" = / ] || workspace_root=${workspace_root%/}
+  [ "$host_workspace" = / ] || host_workspace=${host_workspace%/}
+
+  if [ "$workspace_root" = / ]; then
+    project_relative=$project_dir
+  else
+    case "$project_dir" in
+      "$workspace_root") project_relative= ;;
+      "$workspace_root"/*) project_relative=${project_dir#"$workspace_root"} ;;
+      *)
+        echo "Cannot delegate maintenance: checkout $project_dir is not below the host-filesystem view $workspace_root." >&2
+        return 1
+        ;;
+    esac
+  fi
+  if [ "$host_workspace" = / ]; then
+    host_project_dir=${project_relative:-/}
+  else
+    host_project_dir=$host_workspace$project_relative
   fi
 
-  # Intentional split: boot_service_args is empty or holds exactly the two
-  # host-home flags (one volume, one env); every other word is quoted.
-  # shellcheck disable=SC2086
-  maintenance_id=$(docker run --detach --rm --init \
-    --name "$maintenance_name" \
-    --pull=never \
-    --user "$(id -u):$(id -g)" \
-    --group-add "$docker_gid" \
-    --env DSH_UPDATE_DELEGATED=1 \
-    --env DSH_UPDATE_CONTAINER_NAME="$maintenance_name" \
-    --env HOME=/tmp \
-    $boot_service_args \
-    --volume /var/run/docker.sock:/var/run/docker.sock \
-    --volume "$project_dir:$project_dir" \
-    --workdir "$project_dir" \
-    --entrypoint /bin/sh \
-    "$helper_image" \
-    ./scripts/update-and-restart.sh "$@")
+  case "$host_home" in
+    /*)
+    # Both bind sources are host-native paths. Docker resolves them in the
+    # daemon's mount namespace, not through the harness container's workspace
+    # view (which may be /host or a same-path mount).
+    maintenance_id=$(docker run --detach --rm --init \
+      --name "$maintenance_name" \
+      --pull=never \
+      --user "$(id -u):$(id -g)" \
+      --group-add "$docker_gid" \
+      --env DSH_UPDATE_DELEGATED=1 \
+      --env DSH_UPDATE_CONTAINER_NAME="$maintenance_name" \
+      --env HOME=/tmp \
+      --volume "$host_home:$host_home" \
+      --env "DSH_BOOT_SERVICE_HOME=$host_home" \
+      --volume /var/run/docker.sock:/var/run/docker.sock \
+      --volume "$host_project_dir:$host_project_dir" \
+      --workdir "$host_project_dir" \
+      --entrypoint /bin/sh \
+      "$helper_image" \
+      ./scripts/update-and-restart.sh "$@")
+      ;;
+    *)
+    maintenance_id=$(docker run --detach --rm --init \
+      --name "$maintenance_name" \
+      --pull=never \
+      --user "$(id -u):$(id -g)" \
+      --group-add "$docker_gid" \
+      --env DSH_UPDATE_DELEGATED=1 \
+      --env DSH_UPDATE_CONTAINER_NAME="$maintenance_name" \
+      --env HOME=/tmp \
+      --volume /var/run/docker.sock:/var/run/docker.sock \
+      --volume "$host_project_dir:$host_project_dir" \
+      --workdir "$host_project_dir" \
+      --entrypoint /bin/sh \
+      "$helper_image" \
+      ./scripts/update-and-restart.sh "$@")
+      ;;
+  esac
 
   short_id=$(printf '%.12s' "$maintenance_id")
   echo "Maintenance handed off to $maintenance_name ($short_id)."

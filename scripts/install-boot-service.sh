@@ -3,8 +3,9 @@ set -eu
 
 # Install the deepseek-harness-after-network user systemd unit for this
 # checkout. The installer is idempotent and content-driven: identical files
-# cause no writes and no daemon-reload; drifted files are replaced and the
-# change is logged. When the user systemd bus is reachable the unit is
+# cause no writes and normally no daemon-reload; a reload is still used when
+# the manager has a stale effective ExecStart. Drifted files are replaced and
+# the change is logged. When the user systemd bus is reachable the unit is
 # reloaded and started (or restarted if it was already active). When the bus
 # is not reachable (for example from a maintenance container that has no host
 # user session) the files are still installed, the exact commands the
@@ -29,7 +30,7 @@ install it under ~/.config/systemd/user/ with a default.target.wants symlink.
 With a reachable user systemd bus the unit is daemon-reloaded and started
 (or restarted if already active). Without one, the files are installed and
 the commands to run on the host are printed. Identical installs are a no-op
-(no writes, no reload).
+unless the user manager still has a stale effective ExecStart to reload.
 EOF
 }
 
@@ -74,6 +75,65 @@ unit_path=$user_unit_dir/$unit_name
 wants_dir=$user_unit_dir/default.target.wants
 wants_link=$wants_dir/$unit_name
 wants_target=../$unit_name
+drop_in_dir=$user_unit_dir/$unit_name.d
+legacy_drop_in=$drop_in_dir/10-project-path.conf
+
+# One early installer wrote this exact three-line drop-in. Its shell wrapper
+# sources the root script while leaving $0 set to scripts/start-after-network.sh,
+# so the sourced script looks for scripts/.env. Recognize the complete shape,
+# including the relationship between its two checkout paths; a file that only
+# happens to share the legacy name is user-owned and must not be removed.
+recognized_legacy_drop_in() {
+  [ -f "$legacy_drop_in" ] && [ ! -L "$legacy_drop_in" ] || return 1
+  [ "$(awk 'END { print NR + 0 }' "$legacy_drop_in")" -eq 3 ] || return 1
+  [ "$(sed -n '1p' "$legacy_drop_in")" = '[Service]' ] || return 1
+  [ "$(sed -n '2p' "$legacy_drop_in")" = 'ExecStart=' ] || return 1
+
+  legacy_command=$(sed -n '3p' "$legacy_drop_in")
+  legacy_prefix="ExecStart=/bin/sh -c '. \"\$1\"' "
+  [ "${legacy_command#"$legacy_prefix"}" != "$legacy_command" ] || return 1
+  legacy_arguments=${legacy_command#"$legacy_prefix"}
+  legacy_wrapper=${legacy_arguments%% *}
+  legacy_direct=${legacy_arguments#* }
+  [ "$legacy_direct" != "$legacy_arguments" ] || return 1
+  case "$legacy_wrapper:$legacy_direct" in
+    *' '*) return 1 ;;
+  esac
+  case "$legacy_wrapper" in
+    /*/scripts/start-after-network.sh) ;;
+    *) return 1 ;;
+  esac
+  legacy_project=${legacy_wrapper%/scripts/start-after-network.sh}
+  [ -n "$legacy_project" ] \
+    && [ "$legacy_direct" = "$legacy_project/start-after-network.sh" ]
+}
+
+legacy_drop_in_state=absent
+if recognized_legacy_drop_in; then
+  legacy_drop_in_state=remove
+fi
+
+# Preserve all other drop-ins. An unrecognized ExecStart override would make
+# the effective command unknowable while the user bus is unavailable, so fail
+# without touching it and tell the operator exactly what must be reviewed.
+for drop_in in "$drop_in_dir"/*.conf; do
+  [ -e "$drop_in" ] || [ -L "$drop_in" ] || continue
+  if [ "$drop_in" = "$legacy_drop_in" ] \
+    && [ "$legacy_drop_in_state" = remove ]; then
+    continue
+  fi
+  [ -f "$drop_in" ] || continue
+  if [ ! -r "$drop_in" ]; then
+    echo "Refusing to install while a user drop-in cannot be read: $drop_in" >&2
+    echo "Fix its permissions or inspect it for an ExecStart override, then rerun this installer." >&2
+    exit 1
+  fi
+  if grep -Eq '^[[:space:]]*ExecStart[[:space:]]*=' "$drop_in"; then
+    echo "Refusing to change user-authored ExecStart override: $drop_in" >&2
+    echo "Move or update that drop-in so ExecStart directly invokes $project_dir/start-after-network.sh, then rerun this installer." >&2
+    exit 1
+  fi
+done
 
 bus_reachable() {
   command -v systemctl >/dev/null 2>&1 || return 1
@@ -92,6 +152,16 @@ unit_loaded() {
   load=$(systemctl --user show "$unit_name" -p LoadState 2>/dev/null \
     | awk -F= '$1 == "LoadState" { print $2; exit }')
   [ "$load" = loaded ]
+}
+
+effective_exec_start_is_direct() {
+  effective_exec_start=$(systemctl --user show "$unit_name" -p ExecStart --value 2>/dev/null) \
+    || return 1
+  expected_exec_prefix="{ path=$project_dir/start-after-network.sh ; argv[]=$project_dir/start-after-network.sh ;"
+  case "$effective_exec_start" in
+    "$expected_exec_prefix"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 file_state() {
@@ -142,8 +212,13 @@ if [ "$dry_run" -eq 1 ]; then
   echo "dry-run: unit file ($existing_state) at $unit_path:"
   printf '%s\n' "$rendered"
   echo "dry-run: wants link ($wants_state): $wants_link -> $wants_target"
+  if [ "$legacy_drop_in_state" = remove ]; then
+    echo "dry-run: remove recognized legacy drop-in $legacy_drop_in"
+  fi
   if bus_reachable; then
-    if [ "$existing_state" != unchanged ] || [ "$wants_state" != unchanged ]; then
+    if [ "$existing_state" != unchanged ] \
+      || [ "$wants_state" != unchanged ] \
+      || [ "$legacy_drop_in_state" = remove ]; then
       echo "dry-run: systemctl --user daemon-reload"
     fi
     if [ "$was_active" -eq 1 ]; then
@@ -159,6 +234,18 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 
 changed=0
+if [ "$legacy_drop_in_state" = remove ]; then
+  # Recheck immediately before removal so a concurrent user edit cannot turn
+  # the narrowly recognized migration into deletion of arbitrary content.
+  if ! recognized_legacy_drop_in; then
+    echo "Refusing to remove $legacy_drop_in because it changed during installation; review it and rerun." >&2
+    exit 1
+  fi
+  rm -f "$legacy_drop_in"
+  rmdir "$drop_in_dir" 2>/dev/null || true
+  changed=1
+  echo "Removed recognized legacy drop-in: $legacy_drop_in"
+fi
 if [ "$existing_state" != unchanged ]; then
   changed=1
   mkdir -p "$user_unit_dir"
@@ -203,6 +290,20 @@ fi
 if [ "$needs_reload" -eq 1 ]; then
   echo "Reloading the user systemd manager..."
   systemctl --user daemon-reload
+fi
+
+if [ "$needs_reload" -eq 0 ] && ! effective_exec_start_is_direct; then
+  # Files may have been migrated earlier from a delegated container while the
+  # host user bus was unreachable. A loaded manager can still cache the old
+  # drop-in even though the on-disk installation is now unchanged.
+  echo "Reloading the user systemd manager to discard a stale effective ExecStart..."
+  systemctl --user daemon-reload
+  needs_reload=1
+fi
+if ! effective_exec_start_is_direct; then
+  echo "Refusing to start $unit_name: its effective ExecStart is not the direct command $project_dir/start-after-network.sh." >&2
+  echo "Inspect all overrides with: systemctl --user cat $unit_name" >&2
+  exit 1
 fi
 
 if [ "$was_active" -eq 1 ]; then

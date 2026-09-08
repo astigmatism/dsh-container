@@ -5,6 +5,8 @@ set -eu
 #   - the unit template carries the required directives and placeholders
 #   - install-boot-service.sh --dry-run renders a valid unit and is stable
 #     across a second run
+#   - exact legacy migration removes only the stale ExecStart wrapper, reloads
+#     systemd, preserves unrelated drop-ins, and follows checkout renames
 #   - a real install without a user bus is idempotent and drift-repairing
 #   - start-after-network.sh reads .env beside itself and covers both its
 #     healthy no-op and missing-port repair paths with mocked host commands
@@ -64,7 +66,7 @@ stray_placeholder=$(grep -F '@PROJECT_DIR@' "$template" \
 # 3. Deterministic bus-unreachable context: a PATH without systemctl.
 no_bus_bin=$temporary_root/no-bus-bin
 mkdir "$no_bus_bin"
-for utility in sh sed awk grep cat dirname mkdir mktemp chmod mv rm ln readlink; do
+for utility in sh sed awk grep cat dirname mkdir mktemp chmod mv rm rmdir ln readlink; do
   utility_path=$(command -v "$utility" 2>/dev/null) \
     || fail "required test utility is missing: $utility"
   ln -s "$utility_path" "$no_bus_bin/$utility"
@@ -162,7 +164,167 @@ grep -Fq 'Unit file update' "$drift_log" \
 grep -Fqx 'boot_service=warning:bus-unreachable' "$drift_log" \
   || fail "drift-repair install did not report a warning result"
 
-# 8. Execute the real recovery script from an isolated repository root. The
+# 8. Migrate the exact stale drop-in after a checkout rename. The fake user
+#    manager verifies that migration has happened before daemon-reload and
+#    reports the effective direct ExecStart only after the stale override is
+#    gone. An unrelated user drop-in must survive byte-for-byte.
+renamed_project=$temporary_root/renamed-checkout
+renamed_home=$temporary_root/renamed-home
+renamed_bin=$temporary_root/renamed-bin
+renamed_systemctl_log=$temporary_root/renamed-systemctl.log
+mkdir -p "$renamed_project/scripts" "$renamed_project/deploy" "$renamed_bin"
+cp "$installer" "$renamed_project/scripts/install-boot-service.sh"
+cp "$boot_script" "$renamed_project/start-after-network.sh"
+cp "$template" "$renamed_project/deploy/$unit_name"
+chmod +x "$renamed_project/scripts/install-boot-service.sh" "$renamed_project/start-after-network.sh"
+for utility in sh sed awk grep cat dirname mkdir mktemp chmod mv rm rmdir ln readlink; do
+  ln -s "$(command -v "$utility")" "$renamed_bin/$utility"
+done
+
+renamed_drop_in_dir=$renamed_home/.config/systemd/user/$unit_name.d
+legacy_drop_in=$renamed_drop_in_dir/10-project-path.conf
+user_drop_in=$renamed_drop_in_dir/90-user-environment.conf
+mkdir -p "$renamed_drop_in_dir"
+old_project=$temporary_root/original-checkout-name
+{
+  echo '[Service]'
+  echo 'ExecStart='
+  printf 'ExecStart=/bin/sh -c '\''. "$1"'\'' %s/scripts/start-after-network.sh %s/start-after-network.sh\n' \
+    "$old_project" "$old_project"
+} >"$legacy_drop_in"
+{
+  echo '[Service]'
+  echo 'Environment=DSH_OPERATOR_SETTING=preserved'
+} >"$user_drop_in"
+user_drop_in_before=$(cksum "$user_drop_in")
+
+cat >"$renamed_bin/systemctl" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$MOCK_SYSTEMCTL_LOG"
+case "$*" in
+  '--user show -p LoadState')
+    echo 'LoadState=loaded'
+    ;;
+  "--user is-active $MOCK_UNIT_NAME")
+    echo inactive
+    exit 3
+    ;;
+  "--user show $MOCK_UNIT_NAME -p LoadState")
+    echo 'LoadState=loaded'
+    ;;
+  '--user daemon-reload')
+    [ ! -e "$MOCK_LEGACY_DROP_IN" ] || {
+      echo 'daemon-reload occurred before legacy migration' >&2
+      exit 1
+    }
+    : >"$MOCK_RELOAD_STATE"
+    ;;
+  "--user show $MOCK_UNIT_NAME -p ExecStart --value")
+    [ ! -e "$MOCK_LEGACY_DROP_IN" ] || exit 1
+    if [ ! -e "$MOCK_RELOAD_STATE" ]; then
+      echo '{ path=/bin/sh ; argv[]=/bin/sh -c stale-legacy-wrapper ; ignore_errors=no ; }'
+      exit 0
+    fi
+    grep -Fxq "ExecStart=$MOCK_PROJECT/start-after-network.sh" "$MOCK_UNIT_FILE" || exit 1
+    printf '{ path=%s/start-after-network.sh ; argv[]=%s/start-after-network.sh ; ignore_errors=no ; }\n' \
+      "$MOCK_PROJECT" "$MOCK_PROJECT"
+    ;;
+  "--user start $MOCK_UNIT_NAME") ;;
+  *)
+    echo "unexpected systemctl invocation: $*" >&2
+    exit 99
+    ;;
+esac
+EOF
+chmod +x "$renamed_bin/systemctl"
+
+renamed_install_log=$temporary_root/renamed-install.log
+renamed_reload_state=$temporary_root/renamed-reloaded
+MOCK_SYSTEMCTL_LOG=$renamed_systemctl_log \
+  MOCK_UNIT_NAME=$unit_name \
+  MOCK_LEGACY_DROP_IN=$legacy_drop_in \
+  MOCK_UNIT_FILE=$renamed_home/.config/systemd/user/$unit_name \
+  MOCK_PROJECT=$renamed_project \
+  MOCK_RELOAD_STATE=$renamed_reload_state \
+  HOME=$renamed_home PATH=$renamed_bin \
+  sh "$renamed_project/scripts/install-boot-service.sh" >"$renamed_install_log" 2>&1 \
+  || fail "renamed-checkout legacy migration failed"
+[ ! -e "$legacy_drop_in" ] || fail "exact legacy drop-in was not removed"
+[ -f "$user_drop_in" ] || fail "unrelated user drop-in was removed"
+[ "$user_drop_in_before" = "$(cksum "$user_drop_in")" ] \
+  || fail "unrelated user drop-in was modified"
+renamed_unit=$renamed_home/.config/systemd/user/$unit_name
+grep -Fxq "WorkingDirectory=$renamed_project" "$renamed_unit" \
+  || fail "renamed checkout did not update WorkingDirectory"
+grep -Fxq "ExecStart=$renamed_project/start-after-network.sh" "$renamed_unit" \
+  || fail "renamed checkout did not install the direct ExecStart"
+grep -Fq 'Removed recognized legacy drop-in' "$renamed_install_log" \
+  || fail "legacy migration was not reported"
+[ "$(grep -Fxc -- '--user daemon-reload' "$renamed_systemctl_log")" -eq 1 ] \
+  || fail "legacy migration did not cause exactly one daemon-reload"
+reload_line=$(grep -n -m 1 -F -- '--user daemon-reload' "$renamed_systemctl_log" | awk -F: '{ print $1 }')
+effective_line=$(grep -n -m 1 -F -- "--user show $unit_name -p ExecStart --value" "$renamed_systemctl_log" | awk -F: '{ print $1 }')
+start_line=$(grep -n -m 1 -F -- "--user start $unit_name" "$renamed_systemctl_log" | awk -F: '{ print $1 }')
+[ "$reload_line" -lt "$effective_line" ] && [ "$effective_line" -lt "$start_line" ] \
+  || fail "daemon-reload, effective ExecStart verification, and start were out of order"
+
+# If delegated migration removed the file while the host bus was unreachable,
+# the manager can still have the old command cached despite unchanged files.
+# The next reachable install must detect that stale effective command, reload,
+# verify again, and only then start the unit.
+renamed_unit_before=$(cksum "$renamed_unit")
+: >"$renamed_systemctl_log"
+rm -f "$renamed_reload_state"
+MOCK_SYSTEMCTL_LOG=$renamed_systemctl_log \
+  MOCK_UNIT_NAME=$unit_name \
+  MOCK_LEGACY_DROP_IN=$legacy_drop_in \
+  MOCK_UNIT_FILE=$renamed_unit \
+  MOCK_PROJECT=$renamed_project \
+  MOCK_RELOAD_STATE=$renamed_reload_state \
+  HOME=$renamed_home PATH=$renamed_bin \
+  sh "$renamed_project/scripts/install-boot-service.sh" >"$temporary_root/stale-effective.log" 2>&1 \
+  || fail "stale effective ExecStart recovery failed"
+[ "$renamed_unit_before" = "$(cksum "$renamed_unit")" ] \
+  || fail "stale-cache recovery rewrote an unchanged unit"
+[ "$(grep -Fxc -- '--user daemon-reload' "$renamed_systemctl_log")" -eq 1 ] \
+  || fail "stale effective ExecStart did not cause exactly one daemon-reload"
+first_effective_line=$(grep -n -F -- "--user show $unit_name -p ExecStart --value" "$renamed_systemctl_log" | sed -n '1s/:.*//p')
+second_effective_line=$(grep -n -F -- "--user show $unit_name -p ExecStart --value" "$renamed_systemctl_log" | sed -n '2s/:.*//p')
+reload_line=$(grep -n -m 1 -F -- '--user daemon-reload' "$renamed_systemctl_log" | awk -F: '{ print $1 }')
+start_line=$(grep -n -m 1 -F -- "--user start $unit_name" "$renamed_systemctl_log" | awk -F: '{ print $1 }')
+[ "$first_effective_line" -lt "$reload_line" ] \
+  && [ "$reload_line" -lt "$second_effective_line" ] \
+  && [ "$second_effective_line" -lt "$start_line" ] \
+  || fail "stale effective ExecStart was not reloaded and verified before start"
+grep -Fq 'discard a stale effective ExecStart' "$temporary_root/stale-effective.log" \
+  || fail "stale effective ExecStart recovery was not reported"
+
+# A same-named or unrelated user-authored ExecStart override is never deleted.
+# It blocks installation with an actionable diagnostic before the main unit is
+# written, because preserving it would violate the direct-ExecStart invariant.
+conflict_home=$temporary_root/conflict-home
+conflict_drop_in=$conflict_home/.config/systemd/user/$unit_name.d/10-project-path.conf
+mkdir -p "$(dirname "$conflict_drop_in")"
+{
+  echo '[Service]'
+  echo 'ExecStart='
+  echo 'ExecStart=/usr/local/bin/operator-wrapper'
+} >"$conflict_drop_in"
+conflict_before=$(cksum "$conflict_drop_in")
+set +e
+HOME=$conflict_home PATH=$no_bus_bin sh "$installer" >"$temporary_root/conflict.log" 2>&1
+conflict_status=$?
+set -e
+[ "$conflict_status" -ne 0 ] || fail "user-authored ExecStart override was accepted"
+[ "$conflict_before" = "$(cksum "$conflict_drop_in")" ] \
+  || fail "user-authored ExecStart override was changed"
+[ ! -e "$conflict_home/.config/systemd/user/$unit_name" ] \
+  || fail "installer wrote the main unit despite a conflicting drop-in"
+grep -Fq "Refusing to change user-authored ExecStart override: $conflict_drop_in" "$temporary_root/conflict.log" \
+  || fail "conflicting drop-in diagnostic was not actionable"
+
+# 9. Execute the real recovery script from an isolated repository root. The
 #    fixture's parent intentionally has no .env: deriving project_dir as ..
 #    would fail before reaching any mocked host command.
 runtime_project=$temporary_root/runtime-project

@@ -135,7 +135,16 @@ if ! compose exec -T harness node --input-type=module -e '
     throw new Error("deployed loop detector exports are invalid");
   }
   const source = await readFile(path, "utf8");
-  for (const marker of ["hasSemanticSignal", "primitivePeriod", "if (!hasSemanticSignal(segment)) continue"]) {
+  for (const marker of [
+    "hasSemanticSignal",
+    "primitivePeriod",
+    "if (!hasSemanticSignal(segment)) continue",
+    "DUPLICATE_READ_SUPPRESSED",
+    "read_only_hard_limit",
+    "continuation_hard_limit",
+    "reasoning_prefix_cycle",
+    "Compaction preserved the progress guard state",
+  ]) {
     if (!source.includes(marker)) throw new Error(`deployed loop detector is missing ${marker}`);
   }
   console.log("Verified corrected deployed dsh-loop-detector import and source markers.");
@@ -157,6 +166,11 @@ fi
 # bundle layers and require the route-specific automatic policy to be active.
 if ! compose exec -T harness node /opt/dsh-build/verify-dsh-context-compaction.mjs; then
   echo "The deployed Harness context-overflow recovery contract is incomplete." >&2
+  exit "$configuration_exit"
+fi
+if ! compose exec -T harness env DSH_PROFILE_ROOT=/data/dsh/profiles/web \
+  node /opt/dsh-build/verify-dsh-semantic-progress.mjs; then
+  echo "The deployed Harness semantic progress guard is incomplete." >&2
   exit "$configuration_exit"
 fi
 if ! compose exec -T harness dsh --profile web --dump-config \

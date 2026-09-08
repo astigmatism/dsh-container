@@ -55,6 +55,16 @@ test("loop-detector hook cancellation retains its concise structured reason", ()
   );
 });
 
+test("semantic-progress cancellation remains distinct from literal repetition", () => {
+  const reason = "semantic-no-progress: guard=read_only_hard_limit. No implementation occurred. Safe counts: continuations=8; consecutive_read_only=8.";
+  assert.deepEqual(cancellationPresentation({ kind: "hook", reason }), {
+    severity: "warning",
+    titleKey: "message.cancellation.hook",
+    detail: reason,
+  });
+  assert.doesNotMatch(reason, /^loop-detected:/);
+});
+
 test("transport and lifecycle cancellation is distinguishable from user Stop", () => {
   const lifecycle = cancellationPresentation({ kind: "disposed" });
   assert.equal(lifecycle.severity, "error");

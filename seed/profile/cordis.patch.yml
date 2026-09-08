@@ -72,6 +72,19 @@
         minLen: 512
         maxRetries: 1
         checkReasoning: true
+        # Provider-independent semantic progress containment. These defaults
+        # are explicit here so production bounds and contract tests share one
+        # reviewed configuration surface. The read defaults match the pinned
+        # @deepseek-ai/dsh-tool-fs schema/runtime (offset 1, limit 2000).
+        readOnlyDirective: 4
+        readOnlyHard: 8
+        continuationDirective: 12
+        continuationHard: 24
+        reasoningPrefixChars: 128
+        reasoningDirectiveOccurrence: 2
+        reasoningHardOccurrence: 3
+        readDefaultOffset: 1
+        readDefaultLimit: 2000
 
 - insert:
     - id: router-model-discovery

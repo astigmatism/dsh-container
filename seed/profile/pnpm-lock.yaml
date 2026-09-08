@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  dsh-loop-detector@1.0.0: 7f5ec21d065ed79a26eb3c0e7ca1fbd634b25908a239aad7e7eba25324947a81
+  dsh-loop-detector@1.0.0: 67bb4438d3d1533b0e6172462a5b25e91d52d65ce9c5da779a00338f51c424a2
   dsh-playwright@0.1.0: 650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457
 
 importers:
@@ -26,7 +26,7 @@ importers:
         version: link:../../../dsh-local-speech
       dsh-loop-detector:
         specifier: ^1.0.0
-        version: 1.0.0(patch_hash=7f5ec21d065ed79a26eb3c0e7ca1fbd634b25908a239aad7e7eba25324947a81)
+        version: 1.0.0(patch_hash=67bb4438d3d1533b0e6172462a5b25e91d52d65ce9c5da779a00338f51c424a2)
       dsh-playwright:
         specifier: 0.1.0
         version: 0.1.0(patch_hash=650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457)
@@ -267,7 +267,7 @@ snapshots:
     dependencies:
       '@deepseek-ai/schemastery': 3.18.2
 
-  dsh-loop-detector@1.0.0(patch_hash=7f5ec21d065ed79a26eb3c0e7ca1fbd634b25908a239aad7e7eba25324947a81): {}
+  dsh-loop-detector@1.0.0(patch_hash=67bb4438d3d1533b0e6172462a5b25e91d52d65ce9c5da779a00338f51c424a2): {}
 
   dsh-playwright@0.1.0(patch_hash=650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457):
     dependencies:

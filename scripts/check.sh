@@ -96,6 +96,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check scripts/verify-dsh-inference-contract.mjs
     node --check scripts/verify-dsh-context-compaction.mjs
+    node --check scripts/verify-dsh-semantic-progress.mjs
+    node --check scripts/qualify-dsh-read-schema.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
     node --check ollama-router/src/server.js

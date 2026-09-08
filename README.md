@@ -269,6 +269,27 @@ After the owner opens that task, the safest explicit recovery is to submit
 the proactive `agent/pre-step` policy before dispatch, but `/compact` makes the
 one-time recovery visible and complete while the task is idle.
 
+The Web profile also maintains a semantic-progress ledger for each human turn.
+The ledger is held outside the transcript, survives automatic compaction, and
+stores only counters, safe action categories, and hashes of canonical tool
+semantics or normalized reasoning prefixes. It never records source, prompt,
+reasoning, credential, or raw tool-argument text in routine telemetry. Exact
+duplicate reads are suppressed once and cancel the turn if immediately retried;
+a successful mutation or a new relevant test result advances the progress
+epoch and permits a changed file to be read again.
+
+For implementation requests with write-capable tools, the default read-only
+directive and hard-stop thresholds are four and eight actions. The overall
+no-progress continuation thresholds are 12 and 24, and normalized reasoning
+prefixes of at least 128 characters direct on their second occurrence and stop
+on their third. These values are centralized under `dsh-loop-detector` in
+`seed/profile/cordis.patch.yml`. Diagnosis and review tasks remain read-only;
+duplicate-read and reasoning-cycle protection still applies. Semantic guard
+cancellations use distinct reason codes and explicitly report that no
+implementation occurred, while the character-level repetition detector remains
+enabled as an independent secondary defense. None of these policies changes
+the selected model, reasoning effort, context window, sampling, or concurrency.
+
 Both provider entries declare `maxConcurrency: 2`. The patched adapter enforces
 that limit immediately around model generation with a shared FIFO gate keyed by
 normalized endpoint URL, so the compatibility provider cannot create a second

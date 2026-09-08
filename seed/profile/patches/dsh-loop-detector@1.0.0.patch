@@ -3,11 +3,25 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191a1658c6d
 --- /dev/null
 +++ b/lib/index.js
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,722 @@
++import { createHash } from 'node:crypto'
++import { resolve as resolvePath } from 'node:path'
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
 +
 +export const name = 'loop-detector'
-+export const inject = ['agents']
++export const inject = ['agents', 'fs', 'tools']
++
++export const DEFAULT_PROGRESS_LIMITS = Object.freeze({
++  readOnlyDirective: 4,
++  readOnlyHard: 8,
++  continuationDirective: 12,
++  continuationHard: 24,
++  reasoningPrefixChars: 128,
++  reasoningDirectiveOccurrence: 2,
++  reasoningHardOccurrence: 3,
++  readDefaultOffset: 1,
++  readDefaultLimit: 2000,
++})
 +
 +function hasSemanticSignal(text) {
 +  const symbols = text.match(/[\p{L}\p{N}]/gu) ?? []
@@ -79,57 +93,497 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  return [false, '']
 +}
 +
++const READ_TOOL_NAMES = new Set([
++  'read',
++  'glob',
++  'grep',
++  'web_search',
++  'web_fetch',
++])
++const MUTATION_TOOL_NAMES = new Set(['write', 'edit', 'apply_patch'])
++const BLOCKER_TOOL_NAMES = new Set(['ask_user_question', 'exit_plan_mode'])
++const WRITE_CAPABLE_TOOL_NAMES = [
++  'str_replace_editor',
++  'write',
++  'edit',
++  'apply_patch',
++  'bash',
++  'pwsh',
++  'run_code',
++]
++const IMPLEMENTATION_WORDS = /\b(?:implement|fix|change|modify|add|remove|create|build|refactor|update|patch|write|edit|deploy|upgrade|migrate|repair|harden)\b/iu
++const EXPLICIT_READ_ONLY = /\b(?:read[- ]only|do not (?:edit|change|modify|implement)|without (?:editing|changing|modifying)|no (?:edits|changes|implementation))\b/iu
++const TEST_COMMAND = /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|lint|build|typecheck)|(?:^|[\s;&|])(?:pytest|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|make\s+(?:test|check|build)|node\s+--test|deno\s+test|dotnet\s+test|ctest)(?:\s|$)/iu
++const MUTATION_COMMAND = /(?:^|[\s;&|])(?:apply_patch|patch|touch|mkdir|install|cp|mv|rm|truncate)\b|(?:sed|perl)\s+[^\n]*(?:-i|-pi)\b|(?:^|[^<>])>{1,2}(?!>)/iu
++
++function hash(value) {
++  return createHash('sha256').update(String(value)).digest('hex')
++}
++
++function stableJson(value) {
++  if (value === null || typeof value !== 'object') return JSON.stringify(value)
++  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
++  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
++}
++
++function positiveInteger(value, fallback, name) {
++  const resolved = value ?? fallback
++  if (!Number.isSafeInteger(resolved) || resolved < 1) {
++    throw new Error(`[loop-detector] ${name} must be a positive safe integer`)
++  }
++  return resolved
++}
++
++function resolveLimits(config) {
++  const limits = {
++    readOnlyDirective: positiveInteger(config.readOnlyDirective, DEFAULT_PROGRESS_LIMITS.readOnlyDirective, 'readOnlyDirective'),
++    readOnlyHard: positiveInteger(config.readOnlyHard, DEFAULT_PROGRESS_LIMITS.readOnlyHard, 'readOnlyHard'),
++    continuationDirective: positiveInteger(config.continuationDirective, DEFAULT_PROGRESS_LIMITS.continuationDirective, 'continuationDirective'),
++    continuationHard: positiveInteger(config.continuationHard, DEFAULT_PROGRESS_LIMITS.continuationHard, 'continuationHard'),
++    reasoningPrefixChars: positiveInteger(config.reasoningPrefixChars, DEFAULT_PROGRESS_LIMITS.reasoningPrefixChars, 'reasoningPrefixChars'),
++    reasoningDirectiveOccurrence: positiveInteger(config.reasoningDirectiveOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningDirectiveOccurrence, 'reasoningDirectiveOccurrence'),
++    reasoningHardOccurrence: positiveInteger(config.reasoningHardOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningHardOccurrence, 'reasoningHardOccurrence'),
++    readDefaultOffset: positiveInteger(config.readDefaultOffset, DEFAULT_PROGRESS_LIMITS.readDefaultOffset, 'readDefaultOffset'),
++    readDefaultLimit: positiveInteger(config.readDefaultLimit, DEFAULT_PROGRESS_LIMITS.readDefaultLimit, 'readDefaultLimit'),
++  }
++  if (limits.readOnlyDirective >= limits.readOnlyHard) {
++    throw new Error('[loop-detector] readOnlyDirective must be lower than readOnlyHard')
++  }
++  if (limits.continuationDirective >= limits.continuationHard) {
++    throw new Error('[loop-detector] continuationDirective must be lower than continuationHard')
++  }
++  if (limits.reasoningDirectiveOccurrence >= limits.reasoningHardOccurrence) {
++    throw new Error('[loop-detector] reasoningDirectiveOccurrence must be lower than reasoningHardOccurrence')
++  }
++  return Object.freeze(limits)
++}
++
++function messageText(message) {
++  return (message?.content ?? [])
++    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
++    .map((block) => block.text)
++    .join('\n')
++}
++
++function isImplementationRequest(message) {
++  if (message?.source?.kind !== 'user') return false
++  const text = messageText(message)
++  return !EXPLICIT_READ_ONLY.test(text) && IMPLEMENTATION_WORDS.test(text)
++}
++
++function newProgressState(turn) {
++  return {
++    turn,
++    implementationRequested: false,
++    writeCapable: false,
++    progressEpoch: 0,
++    mutationGeneration: 0,
++    modelContinuations: 0,
++    consecutiveReadOnly: 0,
++    correctiveInjected: false,
++    pendingDirective: undefined,
++    postCompactionFact: false,
++    terminated: false,
++    duplicateSuppressed: undefined,
++    fingerprints: new Set(),
++    inFlightFingerprints: new Set(),
++    reasoningHasher: undefined,
++    reasoningChars: 0,
++    reasoningPendingSpace: false,
++    reasoningPrefixHash: undefined,
++    reasoningStep: undefined,
++    reasoningPrefixCounts: new Map(),
++    testMilestones: new Set(),
++    verifiedBlocker: false,
++    totalMutations: 0,
++    totalTests: 0,
++    categories: {
++      read: 0,
++      search: 0,
++      other: 0,
++      mutation: 0,
++      test: 0,
++      blocker: 0,
++      duplicate_suppressed: 0,
++    },
++  }
++}
++
++function implementationGuardApplies(state) {
++  return state.implementationRequested && state.writeCapable
++}
++
++function resetSinceProgress(state, kind) {
++  state.progressEpoch += 1
++  state.modelContinuations = 0
++  state.consecutiveReadOnly = 0
++  state.correctiveInjected = false
++  state.pendingDirective = undefined
++  state.postCompactionFact = false
++  state.duplicateSuppressed = undefined
++  state.fingerprints.clear()
++  state.inFlightFingerprints.clear()
++  state.reasoningHasher = undefined
++  state.reasoningChars = 0
++  state.reasoningPendingSpace = false
++  state.reasoningPrefixHash = undefined
++  state.reasoningStep = undefined
++  state.reasoningPrefixCounts.clear()
++  if (kind === 'mutation') {
++    state.mutationGeneration += 1
++    state.totalMutations += 1
++  } else if (kind === 'test') {
++    state.totalTests += 1
++  } else if (kind === 'blocker') {
++    state.verifiedBlocker = true
++  }
++}
++
++function classifyTool(execution) {
++  const name = String(execution?.name ?? '').toLowerCase()
++  const args = execution?.arguments
++  if (name === 'str_replace_editor') {
++    return args?.command === 'view' ? { kind: 'read', name } : { kind: 'mutation', name }
++  }
++  if (READ_TOOL_NAMES.has(name) || /(?:^|_)(?:read|grep|glob|search)$/.test(name)) {
++    return { kind: name === 'read' ? 'read' : 'search', name }
++  }
++  if (MUTATION_TOOL_NAMES.has(name) || /(?:^|_)(?:write|edit|apply_patch)$/.test(name)) {
++    return { kind: 'mutation', name }
++  }
++  if (name === 'bash' || name === 'pwsh') {
++    const command = typeof args?.command === 'string' ? args.command : ''
++    if (TEST_COMMAND.test(command)) return { kind: 'test', name }
++    if (MUTATION_COMMAND.test(command)) return { kind: 'mutation', name }
++  }
++  if (BLOCKER_TOOL_NAMES.has(name)) return { kind: 'blocker', name }
++  return { kind: 'other', name }
++}
++
++function recordCategory(state, kind) {
++  const category = kind === 'read' ? 'read' : kind === 'search' ? 'search' : kind
++  if (Object.hasOwn(state.categories, category)) state.categories[category] += 1
++  else state.categories.other += 1
++}
++
++function workspacePath(execution, requestedPath) {
++  const cwd = execution?.agent?.session?.header?.cwd
++  return resolvePath(typeof cwd === 'string' ? cwd : process.cwd(), requestedPath || '.')
++}
++
++async function resolvedPathState(ctx, execution, requestedPath) {
++  const cwd = execution?.agent?.session?.header?.cwd
++  let path = workspacePath(execution, requestedPath)
++  let state = 'state-unavailable'
++  if (ctx.fs?.resolve === undefined || ctx.fs?.stat === undefined) return { path, state }
++  try {
++    const target = await ctx.fs.resolve(requestedPath || '.', {
++      ...(typeof cwd === 'string' ? { cwd } : {}),
++      signal: execution.signal,
++    })
++    path = target.displayPath ?? path
++    const info = await ctx.fs.stat(target, execution.signal)
++    state = info === undefined ? 'absent' : `present:${hash(info.version ?? stableJson({ type: info.type, size: info.size }))}`
++  } catch {
++    // The actual tool owns path/stat errors. Fingerprinting falls back to the
++    // normalized process path and never reads file content.
++  }
++  return { path, state }
++}
++
++async function readFingerprint(ctx, execution, limits) {
++  const name = String(execution.name).toLowerCase()
++  const args = execution.arguments && typeof execution.arguments === 'object' ? execution.arguments : {}
++  let semantics
++  if (name === 'read') {
++    const location = await resolvedPathState(ctx, execution, args.file_path)
++    semantics = {
++      name,
++      path: location.path,
++      fileState: location.state,
++      offset: args.offset ?? limits.readDefaultOffset,
++      limit: args.limit ?? limits.readDefaultLimit,
++    }
++  } else if (name === 'str_replace_editor' && args.command === 'view') {
++    const location = await resolvedPathState(ctx, execution, args.path)
++    semantics = {
++      name,
++      command: 'view',
++      path: location.path,
++      fileState: location.state,
++      viewRange: args.view_range ?? [1, -1],
++    }
++  } else if (name === 'grep') {
++    const location = await resolvedPathState(ctx, execution, args.path)
++    semantics = {
++      name,
++      path: location.path,
++      fileState: location.state,
++      pattern: args.pattern ?? '',
++      include: args.include ?? null,
++    }
++  } else if (name === 'glob') {
++    const location = await resolvedPathState(ctx, execution, args.path)
++    semantics = {
++      name,
++      path: location.path,
++      fileState: location.state,
++      pattern: args.pattern ?? '',
++    }
++  } else {
++    semantics = { name, arguments: args }
++  }
++  return hash(stableJson(semantics))
++}
++
++function semanticError(code, message) {
++  return {
++    isError: true,
++    error: {
++      message,
++      info: { name: 'SemanticProgressError', code },
++    },
++    content: [{ type: 'text', text: message }],
++  }
++}
++
++function safeCounts(state) {
++  const categories = Object.entries(state.categories)
++    .filter(([, value]) => value > 0)
++    .map(([name, value]) => `${name}=${value}`)
++    .join(', ') || 'none'
++  return `continuations=${state.modelContinuations}; consecutive_read_only=${state.consecutiveReadOnly}; categories=${categories}`
++}
++
++function terminationSummary(state, guard, exactGuard) {
++  const implementation = state.totalMutations === 0
++    ? 'No implementation occurred during this human turn.'
++    : 'Implementation occurred earlier, but no implementation progress occurred in the current progress epoch.'
++  return [
++    `semantic-no-progress: guard=${guard}.`,
++    implementation,
++    `Safe counts: ${safeCounts(state)}.`,
++    `Exact guard: ${exactGuard}`,
++    'Resume next action: make a concrete edit/write/test from the retained context, investigate a materially different region tied to a specific unknown, or state an evidence-backed blocker/final response.',
++  ].join(' ')
++}
++
++function cancelSemantic(ctx, sessionId, state, guard, exactGuard, toolCode = 'SEMANTIC_NO_PROGRESS') {
++  const summary = terminationSummary(state, guard, exactGuard)
++  if (!state.terminated) {
++    state.terminated = true
++    ctx.logger.error(`[loop-detector] session ${sessionId} semantic cancellation guard=${guard}; ${safeCounts(state)}`)
++    const agent = ctx.agents.get(sessionId)
++    agent?.cancel({ kind: 'hook', reason: summary })
++  }
++  return semanticError(toolCode, summary)
++}
++
++function progressDirective(state, trigger) {
++  return createUserMessage({
++    content: [{
++      type: 'text',
++      text: `[semantic-progress] No meaningful implementation progress has occurred (${safeCounts(state)}; trigger=${trigger}). The next step must make a concrete edit/write/test, perform a materially different investigation justified by a specific unknown, or state an explicit blocker/final response. Keep the configured reasoning effort unchanged.`,
++    }],
++    source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++  })
++}
++
++function compactionProgressFact(state) {
++  const status = state.totalMutations === 0
++    ? 'no implementation has occurred in this human turn'
++    : 'implementation occurred earlier, but no meaningful progress occurred in the current progress epoch'
++  const blocker = state.verifiedBlocker ? 'an explicit blocker was recorded' : 'no verified blocker is recorded'
++  return createUserMessage({
++    content: [{
++      type: 'text',
++      text: `[semantic-progress] Compaction preserved the progress guard state: ${status}; ${safeCounts(state)}; ${blocker}. Required next: concrete edit/write/test, a materially different investigation tied to a specific unknown, or an explicit blocker/final response.`,
++    }],
++    source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++  })
++}
++
++function addNormalizedReasoning(state, text, minimum) {
++  if (state.reasoningPrefixHash !== undefined || typeof text !== 'string') return
++  state.reasoningHasher ??= createHash('sha256')
++  for (const character of text.normalize('NFKC').toLocaleLowerCase()) {
++    if (/\s/u.test(character)) {
++      if (state.reasoningChars > 0) state.reasoningPendingSpace = true
++      continue
++    }
++    if (state.reasoningPendingSpace && state.reasoningChars < minimum) {
++      state.reasoningHasher.update(' ')
++      state.reasoningChars += 1
++      state.reasoningPendingSpace = false
++    }
++    if (state.reasoningChars < minimum) {
++      state.reasoningHasher.update(character)
++      state.reasoningChars += 1
++    }
++    if (state.reasoningChars >= minimum) {
++      state.reasoningPrefixHash = state.reasoningHasher.digest('hex')
++      state.reasoningHasher = undefined
++      state.reasoningPendingSpace = false
++      break
++    }
++  }
++}
++
++function hasWriteCapableTool(ctx, agent) {
++  if (ctx.tools?.get === undefined) return true
++  return WRITE_CAPABLE_TOOL_NAMES.some((toolName) => ctx.tools.get(toolName, agent) !== undefined)
++}
++
 +export function apply(ctx, config = {}) {
 +  const minLen = config.minLen ?? 512
 +  const maxRetries = config.maxRetries ?? 1
 +  const checkReasoning = config.checkReasoning ?? true
++  const limits = resolveLimits(config)
 +
-+  const buffers = new Map()
-+  const retries = new Map()
++  const progressStates = new Map()
++  const literalBuffers = new Map()
++  const literalRetries = new Map()
 +  const searchHistories = new Map()
-+  const stallCounts = new Map()
++  const searchStalls = new Map()
++
++  function stateFor(id) {
++    return progressStates.get(String(id))
++  }
++
++  function clearTurn(sessionId) {
++    progressStates.delete(sessionId)
++    literalBuffers.delete(sessionId)
++    literalRetries.delete(sessionId)
++    searchHistories.delete(sessionId)
++    searchStalls.delete(sessionId)
++  }
++
++  ctx.on('agent/pre-step', async ({ agent }, next) => {
++    const decision = await next()
++    if (decision.kind !== 'enter') return decision
++    const state = stateFor(agent.id)
++    if (state === undefined || state.terminated) return decision
++
++    state.writeCapable = hasWriteCapableTool(ctx, agent)
++    const messages = [...decision.messages]
++    if (state.postCompactionFact && (state.modelContinuations > 0 || state.consecutiveReadOnly > 0)) {
++      messages.push(compactionProgressFact(state))
++      state.postCompactionFact = false
++    }
++
++    if (implementationGuardApplies(state)) {
++      if (state.pendingDirective === undefined && state.modelContinuations >= limits.continuationDirective) {
++        state.pendingDirective = `continuation_no_progress_${state.modelContinuations}`
++      }
++    }
++    if (!state.correctiveInjected && state.pendingDirective !== undefined) {
++      messages.push(progressDirective(state, state.pendingDirective))
++      state.correctiveInjected = true
++      ctx.logger.warn(
++        `[loop-detector] session ${String(agent.id)} injected semantic progress correction; ${safeCounts(state)}`,
++      )
++    }
++    return messages.length === decision.messages.length ? decision : { ...decision, messages }
++  })
 +
 +  ctx.on('session/event', (session, event) => {
++    const sessionId = String(session.id)
++
++    if (event.type === 'turn/start') {
++      clearTurn(sessionId)
++      progressStates.set(sessionId, newProgressState(event.data.turn))
++      return
++    }
 +    if (event.type === 'turn/end') {
-+      const sessionId = String(session.id)
-+      buffers.delete(sessionId)
-+      retries.delete(sessionId)
-+      searchHistories.delete(sessionId)
-+      stallCounts.delete(sessionId)
++      clearTurn(sessionId)
++      return
++    }
++
++    const state = stateFor(sessionId)
++    if (state !== undefined && event.type === 'user/message') {
++      if (isImplementationRequest(event.data)) state.implementationRequested = true
++      if (typeof event.surfaceOp === 'object' && event.surfaceOp?.op === 'replace') {
++        state.postCompactionFact = true
++      }
++      return
++    }
++
++    if (event.type === 'assistant/message' && state !== undefined) {
++      state.modelContinuations += 1
++      if (state.reasoningPrefixHash !== undefined) {
++        const count = (state.reasoningPrefixCounts.get(state.reasoningPrefixHash) ?? 0) + 1
++        state.reasoningPrefixCounts.set(state.reasoningPrefixHash, count)
++        if (count >= limits.reasoningHardOccurrence) {
++          cancelSemantic(
++            ctx,
++            sessionId,
++            state,
++            'reasoning_prefix_cycle',
++            `the same normalized ${limits.reasoningPrefixChars}-character reasoning prefix reached occurrence ${count}; only hashes were retained`,
++          )
++        } else if (count >= limits.reasoningDirectiveOccurrence && !state.correctiveInjected) {
++          state.pendingDirective = `reasoning_prefix_occurrence_${count}`
++        }
++      }
++      state.reasoningHasher = undefined
++      state.reasoningChars = 0
++      state.reasoningPendingSpace = false
++      state.reasoningPrefixHash = undefined
++      state.reasoningStep = undefined
++
++      if (!state.terminated && implementationGuardApplies(state) && state.modelContinuations >= limits.continuationHard) {
++        cancelSemantic(
++          ctx,
++          sessionId,
++          state,
++          'continuation_hard_limit',
++          `${limits.continuationHard} model continuations completed without a successful mutation, new relevant test result, or explicit blocker`,
++        )
++      }
 +      return
 +    }
 +
 +    if (event.type !== 'assistant/chunk') return
 +    const chunk = event.data.chunk
++    if (state !== undefined && chunk.type === 'reasoning-delta') {
++      const step = `${event.data.turn}:${event.data.step}`
++      if (state.reasoningStep !== step) {
++        state.reasoningStep = step
++        state.reasoningHasher = undefined
++        state.reasoningChars = 0
++        state.reasoningPendingSpace = false
++        state.reasoningPrefixHash = undefined
++      }
++      addNormalizedReasoning(state, chunk.text, limits.reasoningPrefixChars)
++    }
 +    if (chunk.type !== 'text-delta' && !(checkReasoning && chunk.type === 'reasoning-delta')) return
 +
-+    const sessionId = String(session.id)
-+    const buffer = (buffers.get(sessionId) ?? '') + chunk.text
-+    buffers.set(sessionId, buffer)
++    const buffer = (literalBuffers.get(sessionId) ?? '') + chunk.text
++    literalBuffers.set(sessionId, buffer)
 +    if (buffer.length < minLen) return
 +
 +    const [isLoop, reason] = detectRepetition(buffer)
 +    if (!isLoop) return
 +
 +    const agent = ctx.agents.get(session.id)
-+    buffers.set(sessionId, '')
++    literalBuffers.set(sessionId, '')
 +    if (!agent) return
 +
-+    const attempts = retries.get(sessionId) ?? 0
++    const attempts = literalRetries.get(sessionId) ?? 0
 +    if (attempts < maxRetries) {
-+      retries.set(sessionId, attempts + 1)
++      literalRetries.set(sessionId, attempts + 1)
 +      ctx.logger.warn(
-+        `[loop-detector] session ${sessionId} detected a loop (${attempts + 1}/${maxRetries}): ${reason}; steering a retry`,
++        `[loop-detector] session ${sessionId} detected a literal loop (${attempts + 1}/${maxRetries}): ${reason}; steering a retry`,
 +      )
 +      agent.steer(createUserMessage({
 +        content: [{
 +          type: 'text',
 +          text: '[loop-detector] Repeated output was detected. Stop the current approach and answer again without repeating any text already produced. Give a concise, complete final answer.',
 +        }],
-+        source: { kind: 'user' },
++        source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
 +      }))
 +    } else {
-+      retries.delete(sessionId)
++      literalRetries.delete(sessionId)
 +      ctx.logger.error(
 +        `[loop-detector] session ${sessionId} still looped after ${maxRetries} retries; cancelling: ${reason}`,
 +      )
@@ -137,69 +591,139 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +    }
 +  })
 +
-+  function extractTokens(query) {
++  function extractTokenHashes(query) {
 +    return new Set(
-+      query.toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/).filter((token) => token.length >= 2),
++      query.toLocaleLowerCase()
++        .split(/[^a-z0-9\u4e00-\u9fff]+/u)
++        .filter((token) => token.length >= 2)
++        .map(hash),
 +    )
 +  }
 +
-+  ctx.on('tools/execute', (execution, next) => {
-+    if (execution?.name !== 'web_search') return next()
-+    const sessionId = execution.agent?.id
-+    if (!sessionId) return next()
++  async function detectRepeatedSearchTopic(execution, result, state, sessionId) {
++    if (execution.name !== 'web_search' || result.isError) return
 +    const query = typeof execution.arguments?.query === 'string' ? execution.arguments.query : ''
-+    if (!query) return next()
-+
-+    const tokens = extractTokens(query)
-+    if (tokens.size === 0) return next()
++    if (!query) return
++    const tokens = extractTokenHashes(query)
++    if (tokens.size === 0) return
 +
 +    const history = searchHistories.get(sessionId) ?? []
-+    const topic = new Set()
-+    for (const previousQuery of history.slice(-3)) {
-+      for (const token of extractTokens(previousQuery)) topic.add(token)
-+    }
-+
-+    let novelRatio = 1
-+    if (topic.size > 0) {
-+      const novel = [...tokens].filter((token) => !topic.has(token)).length
-+      novelRatio = novel / tokens.size
-+    }
-+    history.push(query)
++    const topic = new Set(history.slice(-3).flatMap((entry) => [...entry]))
++    const novel = topic.size === 0 ? tokens.size : [...tokens].filter((token) => !topic.has(token)).length
++    const novelRatio = novel / tokens.size
++    history.push(tokens)
 +    searchHistories.set(sessionId, history.slice(-6))
 +
-+    if (novelRatio < 0.25) {
-+      const count = (stallCounts.get(sessionId) ?? 0) + 1
-+      stallCounts.set(sessionId, count)
-+      if (count >= 2) {
-+        stallCounts.delete(sessionId)
-+        const agent = ctx.agents.get(sessionId)
-+        if (agent) {
-+          const attempts = retries.get(sessionId) ?? 0
-+          if (attempts < maxRetries) {
-+            retries.set(sessionId, attempts + 1)
-+            ctx.logger.warn(
-+              `[loop-detector] session ${sessionId} searched the same topic ${count} times without new information: "${query}"; steering it to stop`,
-+            )
-+            agent.steer(createUserMessage({
-+              content: [{
-+                type: 'text',
-+                text: '[loop-detector] Repeated searches on the same topic were detected. Stop searching and answer directly from the information already collected. Do not call web_search again.',
-+              }],
-+              source: { kind: 'user' },
-+            }))
-+          } else {
-+            retries.delete(sessionId)
-+            ctx.logger.error(
-+              `[loop-detector] session ${sessionId} continued repeated searches after ${maxRetries} retries; cancelling`,
-+            )
-+            agent.cancel({ kind: 'hook', reason: 'repeated-search-same-topic' })
-+          }
-+        }
-+      }
-+    } else {
-+      stallCounts.delete(sessionId)
++    if (novelRatio >= 0.25) {
++      searchStalls.delete(sessionId)
++      return
 +    }
-+    return next()
++    const count = (searchStalls.get(sessionId) ?? 0) + 1
++    searchStalls.set(sessionId, count)
++    if (count < 2) return
++    searchStalls.delete(sessionId)
++    const agent = ctx.agents.get(sessionId)
++    if (!agent) return
++    const attempts = literalRetries.get(sessionId) ?? 0
++    if (attempts < maxRetries) {
++      literalRetries.set(sessionId, attempts + 1)
++      ctx.logger.warn(
++        `[loop-detector] session ${sessionId} repeated a search topic ${count} times without new information; steering it to stop`,
++      )
++      agent.steer(createUserMessage({
++        content: [{
++          type: 'text',
++          text: '[loop-detector] Repeated searches on the same topic were detected. Stop searching and answer directly from the information already collected. Do not call web_search again.',
++        }],
++        source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++      }))
++    } else {
++      literalRetries.delete(sessionId)
++      ctx.logger.error(
++        `[loop-detector] session ${sessionId} continued repeated searches after ${maxRetries} retries; cancelling`,
++      )
++      agent.cancel({ kind: 'hook', reason: 'repeated-search-same-topic' })
++    }
++  }
++
++  ctx.on('tools/execute', async (execution, next) => {
++    const sessionId = execution?.agent?.id === undefined ? undefined : String(execution.agent.id)
++    const state = sessionId === undefined ? undefined : stateFor(sessionId)
++    if (state === undefined || state.terminated) return next()
++
++    const classification = classifyTool(execution)
++    recordCategory(state, classification.kind)
++    state.writeCapable ||= ['mutation', 'test'].includes(classification.kind)
++
++    if (classification.kind === 'read' || classification.kind === 'search') {
++      const fingerprint = await readFingerprint(ctx, execution, limits)
++      const immediateDuplicate = state.duplicateSuppressed === fingerprint
++      state.consecutiveReadOnly += 1
++
++      if (immediateDuplicate) {
++        return cancelSemantic(
++          ctx,
++          sessionId,
++          state,
++          'duplicate_read_repeated',
++          'the immediately preceding duplicate_read_suppressed result was followed by the same semantic read again before progress',
++          'SEMANTIC_DUPLICATE_READ_LOOP',
++        )
++      }
++      state.duplicateSuppressed = undefined
++
++      if (implementationGuardApplies(state) && state.consecutiveReadOnly >= limits.readOnlyHard) {
++        return cancelSemantic(
++          ctx,
++          sessionId,
++          state,
++          'read_only_hard_limit',
++          `${limits.readOnlyHard} consecutive read/search actions were attempted; action ${limits.readOnlyHard} was blocked before tool dispatch`,
++        )
++      }
++
++      if (state.fingerprints.has(fingerprint) || state.inFlightFingerprints.has(fingerprint)) {
++        state.categories.duplicate_suppressed += 1
++        state.duplicateSuppressed = fingerprint
++        return semanticError(
++          'DUPLICATE_READ_SUPPRESSED',
++          'duplicate_read_suppressed: The same canonical read/search region is already in context (or in flight) and no relevant mutation or file-state change intervened. Choose a different range/query tied to a specific unknown, or take a concrete edit/write/test/final action.',
++        )
++      }
++
++      if (implementationGuardApplies(state) && state.consecutiveReadOnly >= limits.readOnlyDirective && !state.correctiveInjected) {
++        state.pendingDirective ??= `read_only_count_${state.consecutiveReadOnly}`
++      }
++
++      state.inFlightFingerprints.add(fingerprint)
++      let result
++      try {
++        result = await next()
++      } finally {
++        state.inFlightFingerprints.delete(fingerprint)
++      }
++      if (!result.isError) state.fingerprints.add(fingerprint)
++      await detectRepeatedSearchTopic(execution, result, state, sessionId)
++      return result
++    }
++
++    state.duplicateSuppressed = undefined
++    state.consecutiveReadOnly = 0
++    const result = await next()
++    if (result.isError) return result
++
++    if (classification.kind === 'mutation') {
++      resetSinceProgress(state, 'mutation')
++    } else if (classification.kind === 'test') {
++      const milestone = hash(`${state.mutationGeneration}:${hash(stableJson(execution.arguments))}:${hash(stableJson({ value: result.value, content: result.content }))}`)
++      if (!state.testMilestones.has(milestone)) {
++        state.testMilestones.add(milestone)
++        resetSinceProgress(state, 'test')
++      }
++    } else if (classification.kind === 'blocker') {
++      resetSinceProgress(state, 'blocker')
++    }
++    return result
 +  })
 +}
 diff --git a/package.json b/package.json

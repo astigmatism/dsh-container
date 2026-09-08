@@ -20,12 +20,13 @@ render external -f "$project_dir/compose.external-ollama.yaml"
 render managed -f "$project_dir/compose.managed-ollama.yaml"
 SYSTEMDRIVE="$temporary_root/windows-drive" render windows
 
-python3 - "$temporary_root" <<'PY'
+python3 - "$temporary_root" "$project_dir" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
+project = Path(sys.argv[2])
 
 
 def load(name):
@@ -65,6 +66,13 @@ if Path(unix_workspace["source"]).resolve() != Path("/").resolve():
     raise SystemExit(f"Unix root is not the default workspace source: {unix_workspace!r}")
 if harness["working_dir"] != "/host" or harness["environment"].get("HOME") != "/host":
     raise SystemExit("Harness does not default its workspace picker to /host")
+
+session_volume = next(
+    volume for volume in harness["volumes"]
+    if volume.get("target") == "/data/dsh"
+)
+if Path(session_volume["source"]).resolve() != (project / "data" / "dsh").resolve():
+    raise SystemExit(f"Harness sessions are not backed by the durable host data directory: {session_volume!r}")
 
 for name, config in (("default", default), ("remote", remote)):
     network = config["networks"]["ollama_net"]

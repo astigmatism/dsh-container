@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 const DSH_ROOT = process.argv[2] ?? "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules";
 const PI_ROOT = DSH_ROOT + "/@earendil-works/pi-ai/dist";
 const ADAPTER_PATH = DSH_ROOT + "/@deepseek-ai/dsh-llm-pi-ai/lib/index.js";
+const LLM_PATH = DSH_ROOT + "/@deepseek-ai/dsh-llm/lib/index.js";
 
 function requireMarkers(label, source, markers) {
   for (const marker of markers) {
@@ -15,6 +16,7 @@ function requireMarkers(label, source, markers) {
 }
 
 const adapter = await readFile(ADAPTER_PATH, "utf8");
+const llm = await readFile(LLM_PATH, "utf8");
 const estimate = await readFile(PI_ROOT + "/utils/estimate.js", "utf8");
 const responses = await readFile(PI_ROOT + "/api/openai-responses.js", "utf8");
 const responsesShared = await readFile(PI_ROOT + "/api/openai-responses-shared.js", "utf8");
@@ -29,6 +31,11 @@ requireMarkers("dsh-llm-pi-ai", adapter, [
   "thinking: block.text",
   "thinkingSignature: replay.thinkingSignature",
   "maxRetries: 0",
+]);
+requireMarkers("dsh-llm shared overflow classifier", llm, [
+  "dsh-router-context-overflow-v1",
+  "isRouterContextOverflowDetail(detail)",
+  "token[\\s_-]+slot",
 ]);
 requireMarkers("pi-ai context estimator", estimate, [
   "const CHARS_PER_TOKEN = 4",

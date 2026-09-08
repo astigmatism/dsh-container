@@ -3,9 +3,14 @@ import test from "node:test";
 
 import {
   EndpointConcurrencyGate,
+  isContextWindowOverflowDetail,
+  patchContextClassifierSource,
   patchSource,
   renderStructuredError,
 } from "../scripts/patch-dsh-llm-pi-ai.mjs";
+
+const observedContextError =
+  'OpenAI API error (400): {"message":"Formatted input (101165) plus requested output (32768) and safety reserve (1024) exceeds the 131072-token slot.","type":"invalid_request_error","param":"messages","code":"CONTEXT_LIMIT_EXCEEDED"}';
 
 const fixture = `
 function readListing(body) {
@@ -78,7 +83,7 @@ var PiAiAdapter = class extends LlmAdapter {
 };
 `;
 
-function evaluatePatchedFixture() {
+function evaluatePatchedFixture(classifier = () => false) {
   const patched = patchSource(fixture);
   const start = patched.indexOf("function renderPiAiError");
   const end = patched.indexOf("const afterMapStopReason");
@@ -89,7 +94,7 @@ function evaluatePatchedFixture() {
     "isContextWindowExceededError",
     "CONTEXT_WINDOW_EXCEEDED_CODE",
     `${patched.slice(start, end)}\nreturn { mapStopReason };`,
-  )(() => false, () => false, "CONTEXT_WINDOW_EXCEEDED");
+  )(() => false, classifier, "CONTEXT_WINDOW_EXCEEDED");
 }
 
 test("pinned pi-ai patch consumes router capacities and normalizes stream errors", () => {
@@ -149,6 +154,38 @@ test("structured error fallback is JSON rather than object coercion", () => {
   assert.equal(renderStructuredError({ status: 400, detail: "bad request" }), '{"status":400,"detail":"bad request"}');
 });
 
+test("shared classifier source patch is anchored and idempotent", () => {
+  const fixture = `
+const STRUCTURED_CONTEXT_OVERFLOW = /context_window_exceeded/i;
+function isContextWindowExceededError(detail) {
+\treturn STRUCTURED_CONTEXT_OVERFLOW.test(detail) || /maximum context window/i.test(detail);
+}
+`;
+  const patched = patchContextClassifierSource(fixture);
+  assert.match(patched, /dsh-router-context-overflow-v1/);
+  assert.match(patched, /context\[\\s_-\]limit/);
+  assert.match(patched, /token\[\\s_-\]\+slot/);
+  assert.match(patched, /isRouterContextOverflowDetail\(detail\) \|\| STRUCTURED_CONTEXT_OVERFLOW/);
+  assert.equal(patchContextClassifierSource(patched), patched);
+});
+
+test("router and existing context-overflow forms remain canonical", () => {
+  for (const detail of [
+    "CONTEXT_LIMIT_EXCEEDED",
+    "context-limit-exceeds",
+    "Formatted input (101165) plus requested output (32768) and safety reserve (1024) exceeds the 131072-token slot.",
+    observedContextError,
+    "context_length_exceeded",
+    "context-window-overflow",
+    "maximum supported context window",
+    "input is too large for this model context window",
+    "request exceeds the model context length",
+  ]) {
+    assert.equal(isContextWindowOverflowDetail(detail), true, detail);
+  }
+  assert.equal(isContextWindowOverflowDetail("invalid request: unsupported tool choice"), false);
+});
+
 test("generated adapter classifies a structured router error without losing its message", () => {
   const { mapStopReason } = evaluatePatchedFixture();
   assert.deepEqual(
@@ -164,4 +201,21 @@ test("generated adapter classifies a structured router error without losing its 
       },
     },
   );
+});
+
+test("structured and string router context failures map to canonical overflow", () => {
+  const { mapStopReason } = evaluatePatchedFixture(isContextWindowOverflowDetail);
+  const structured = {
+    error: {
+      code: "CONTEXT_LIMIT_EXCEEDED",
+      message: "Formatted input (101165) plus requested output (32768) and safety reserve (1024) exceeds the 131072-token slot.",
+    },
+  };
+  for (const errorMessage of [structured, observedContextError]) {
+    const result = mapStopReason({ stopReason: "error", errorMessage }, 131072);
+    assert.equal(result.kind, "error");
+    assert.equal(result.failure.code, "CONTEXT_WINDOW_EXCEEDED");
+    assert.match(result.failure.message, /Formatted input \(101165\)/);
+    assert.match(result.failure.message, /CONTEXT_LIMIT_EXCEEDED/);
+  }
 });

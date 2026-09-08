@@ -6,6 +6,8 @@ set -eu
 #   - install-boot-service.sh --dry-run renders a valid unit and is stable
 #     across a second run
 #   - a real install without a user bus is idempotent and drift-repairing
+#   - start-after-network.sh reads .env beside itself and covers both its
+#     healthy no-op and missing-port repair paths with mocked host commands
 #   - the tracked scripts are LF-only
 # The user bus is forced unreachable with a PATH that has no systemctl.
 
@@ -41,6 +43,7 @@ for directive in \
   'Type=oneshot' \
   'RemainAfterExit=yes' \
   'Restart=on-failure' \
+  'RestartPreventExitStatus=78' \
   'RestartSec=10' \
   'TimeoutStartSec=infinity' \
   'WantedBy=default.target' \
@@ -87,6 +90,7 @@ for directive in \
   'Type=oneshot' \
   'RemainAfterExit=yes' \
   'Restart=on-failure' \
+  'RestartPreventExitStatus=78' \
   'RestartSec=10' \
   'TimeoutStartSec=infinity' \
   'WantedBy=default.target'
@@ -158,4 +162,142 @@ grep -Fq 'Unit file update' "$drift_log" \
 grep -Fqx 'boot_service=warning:bus-unreachable' "$drift_log" \
   || fail "drift-repair install did not report a warning result"
 
-echo "ok - boot service template, dry-run rendering, and idempotent install are safe"
+# 8. Execute the real recovery script from an isolated repository root. The
+#    fixture's parent intentionally has no .env: deriving project_dir as ..
+#    would fail before reaching any mocked host command.
+runtime_project=$temporary_root/runtime-project
+runtime_bin=$temporary_root/runtime-bin
+runtime_state=$temporary_root/runtime-state
+mkdir "$runtime_project" "$runtime_bin" "$runtime_state"
+cp "$boot_script" "$runtime_project/start-after-network.sh"
+chmod +x "$runtime_project/start-after-network.sh"
+touch "$runtime_project/compose.yaml" "$runtime_project/compose.external-ollama.yaml"
+cat >"$runtime_project/.env" <<'EOF'
+DSH_DEPLOYMENT_MODE=external
+HARNESS_BIND_ADDRESS=192.0.2.21
+HARNESS_HTTPS_PORT=3443
+HARNESS_CA_PORT=3081
+OLLAMA_NETWORK=test-ollama
+EOF
+
+cat >"$runtime_bin/ip" <<'EOF'
+#!/bin/sh
+echo '2: eth0 inet 192.0.2.21/24 brd 192.0.2.255 scope global eth0'
+EOF
+cat >"$runtime_bin/systemctl" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *'--user show local-ai-apply-default-after-network.service -p LoadState') echo 'LoadState=loaded' ;;
+  *'--user show local-ai-apply-default-after-network.service -p ActiveState') echo 'ActiveState=inactive' ;;
+  *'--user show local-ai-apply-default-after-network.service -p Result') echo 'Result=success' ;;
+  *'--user show local-ai-apply-default-after-network.service -p NInvocations') echo 'NInvocations=0' ;;
+  *'--user show local-ai-apply-default-after-network.service -p UnitFileState') echo 'UnitFileState=disabled' ;;
+  *'-p LoadState') echo 'LoadState=not-found' ;;
+  *'-p ActiveState') echo 'ActiveState=inactive' ;;
+  *'-p Result') echo 'Result=success' ;;
+  *'-p NInvocations') echo 'NInvocations=0' ;;
+esac
+EOF
+cat >"$runtime_bin/sleep" <<'EOF'
+#!/bin/sh
+echo "unexpected retry wait: sleep $*" >&2
+exit 99
+EOF
+cat >"$runtime_bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$MOCK_DOCKER_LOG"
+case "${1:-}" in
+  compose)
+    if [ "${2:-}" = version ]; then
+      exit 0
+    fi
+    case "$*" in
+      *' up -d --force-recreate --no-deps harness')
+        touch "$MOCK_RUNTIME_STATE/harness-recreated"
+        ;;
+    esac
+    ;;
+  info) ;;
+  network) ;;
+  port)
+    if [ "$MOCK_SCENARIO" = healthy ] \
+      || [ -f "$MOCK_RUNTIME_STATE/harness-recreated" ]; then
+      echo '3443/tcp -> 192.0.2.21:3443'
+      echo '3081/tcp -> 192.0.2.21:3081'
+    fi
+    ;;
+  inspect)
+    case "$*" in
+      *'{{if .State.Health}}'*) echo healthy ;;
+      *'{{.State.Status}}'*) echo running ;;
+      *'{{json .NetworkSettings.Networks}}'*) echo '{"test-ollama":{}}' ;;
+    esac
+    ;;
+esac
+EOF
+chmod +x "$runtime_bin/ip" "$runtime_bin/systemctl" "$runtime_bin/sleep" "$runtime_bin/docker"
+
+run_boot_script() {
+  scenario=$1
+  output=$2
+  docker_log=$3
+  rm -f "$runtime_state/harness-recreated" "$docker_log"
+  MOCK_SCENARIO=$scenario \
+    MOCK_RUNTIME_STATE=$runtime_state \
+    MOCK_DOCKER_LOG=$docker_log \
+    PATH="$runtime_bin:$PATH" \
+    sh "$runtime_project/start-after-network.sh" >"$output" 2>&1
+}
+
+healthy_output=$temporary_root/healthy-output.log
+healthy_docker_log=$temporary_root/healthy-docker.log
+run_boot_script healthy "$healthy_output" "$healthy_docker_log" \
+  || fail "healthy boot-service no-op path failed"
+grep -Fqx 'Harness binding and network attachment are already correct; nothing to do.' "$healthy_output" \
+  || fail "healthy boot-service path did not report a no-op"
+grep -Fq "compose --env-file $runtime_project/.env -f $runtime_project/compose.yaml -f $runtime_project/compose.external-ollama.yaml config --quiet" "$healthy_docker_log" \
+  || fail "boot service did not read .env and Compose files from its own repository root"
+if grep -Fq ' up -d --force-recreate ' "$healthy_docker_log"; then
+  fail "healthy boot-service path unexpectedly recreated a container"
+fi
+
+repair_output=$temporary_root/repair-output.log
+repair_docker_log=$temporary_root/repair-docker.log
+run_boot_script missing-ports "$repair_output" "$repair_docker_log" \
+  || fail "missing-port boot-service repair path failed"
+grep -Fqx 'The harness is not bound to 192.0.2.21:3443 and 192.0.2.21:3081; a recreate is required.' "$repair_output" \
+  || fail "missing-port path did not diagnose the absent live binding"
+for service in harness gateway; do
+  grep -Fqx "compose --env-file $runtime_project/.env -f $runtime_project/compose.yaml -f $runtime_project/compose.external-ollama.yaml up -d --force-recreate --no-deps $service" "$repair_docker_log" \
+    || fail "missing-port path did not force-recreate $service with the external Compose overlay"
+done
+grep -Fqx 'Boot check complete: harness bound to 192.0.2.21, attached to test-ollama, gateway healthy.' "$repair_output" \
+  || fail "missing-port repair path did not complete verification"
+
+# Permanent configuration failures use EX_CONFIG so systemd can suppress the
+# restart loop while ordinary runtime failures remain retryable.
+mv "$runtime_project/.env" "$runtime_project/.env.valid"
+set +e
+MOCK_SCENARIO=healthy MOCK_RUNTIME_STATE=$runtime_state MOCK_DOCKER_LOG=$temporary_root/missing-env-docker.log \
+  PATH="$runtime_bin:$PATH" sh "$runtime_project/start-after-network.sh" >"$temporary_root/missing-env-output.log" 2>&1
+missing_env_status=$?
+set -e
+[ "$missing_env_status" -eq 78 ] \
+  || fail "missing .env exited $missing_env_status instead of permanent-configuration status 78"
+mv "$runtime_project/.env.valid" "$runtime_project/.env"
+
+sed 's/^DSH_DEPLOYMENT_MODE=.*/DSH_DEPLOYMENT_MODE=invalid/' \
+  "$runtime_project/.env" >"$runtime_project/.env.invalid"
+mv "$runtime_project/.env" "$runtime_project/.env.valid"
+mv "$runtime_project/.env.invalid" "$runtime_project/.env"
+set +e
+MOCK_SCENARIO=healthy MOCK_RUNTIME_STATE=$runtime_state MOCK_DOCKER_LOG=$temporary_root/invalid-env-docker.log \
+  PATH="$runtime_bin:$PATH" sh "$runtime_project/start-after-network.sh" >"$temporary_root/invalid-env-output.log" 2>&1
+invalid_env_status=$?
+set -e
+[ "$invalid_env_status" -eq 78 ] \
+  || fail "invalid .env exited $invalid_env_status instead of permanent-configuration status 78"
+mv "$runtime_project/.env.valid" "$runtime_project/.env"
+
+echo "ok - boot service rendering, install, root resolution, no-op, and repair paths are safe"

@@ -198,7 +198,39 @@ a real model capability rather than the meaning of an omitted user choice.
 Selecting off sends the router's `none` wire value, and the compatibility
 choice max sends the native `xhigh` value.
 
-The pinned pi-ai layer dynamically clamps every request's output allowance:
+The Web profile explicitly re-enables DSH's base `compaction-basic`,
+`command-compact`, and replay-safe tool-result-pruner rows (the Web bundle
+disables all three by default). Automatic compaction is active with one bounded
+overflow recovery attempt. Both local provider IDs have the same exact-target
+policy:
+
+```text
+router admissible formatted input = 131,072 - 32,768 - 1,024 = 97,280
+proactive token-meter trigger      = floor(131,072 × 0.70) = 91,750
+admission uncertainty margin       = 97,280 - 91,750 = 5,530
+retained recent surface            = floor(131,072 × 0.16) = 20,971
+```
+
+At `agent/pre-step`, DSH's token meter prices the last canonical request
+envelope and current durable surface. It reuses provider input/output/cache
+usage only when that envelope still matches, then adds estimated surface
+movement since that successful response. Otherwise it estimates the complete
+system prompt, tool schemas, user/assistant messages, tool calls/results, and
+preserved reasoning. Crossing 91,750 first prunes eligible oversized tool
+results to their configured head/marker/tail representation. If the remeasured
+surface is still at pressure, `compaction-basic` summarizes a balanced older
+region while retaining the recent tail. Raw shadowed events remain in the
+append-only session log.
+
+The 0.70 route policy is intentionally lower than DSH's general 0.80 default:
+reserving 32,768 output tokens already consumes 25% of the window, and the
+remaining 5,530-token gap covers request serialization/tokenization uncertainty
+in addition to the router's explicit 1,024-token reserve. The deprecated
+`local-ollama-256k/local-active` ID targets the same endpoint and therefore has
+the identical policy.
+
+The pinned pi-ai layer still dynamically clamps every request's output
+allowance as a final admission safeguard:
 
 ```text
 max_output_tokens =
@@ -214,12 +246,28 @@ The estimate includes the system prompt, tool schemas, messages, tool calls,
 tool results, retained reasoning, and image allowance. The router exposes no
 tokenization endpoint, so the estimator uses prior provider usage when
 available and otherwise a four-characters-per-token heuristic. Harness durable
-replay currently clears pi-ai usage values, so continued Harness turns usually
-take the heuristic path. The 4,096-token reserve accounts for template and
-tokenizer uncertainty. There is no fixed 98K input limit. An already oversized
-estimate collapses the output request to the transport minimum; a true router
-overflow is classified separately, excluded from ordinary retries, and handed
-to Harness's existing compaction path.
+replay clears pi-ai usage values, so continued Harness turns usually take the
+heuristic path. The 4,096-token estimator allowance is not treated as a reason
+to let context consume the route's generation budget: proactive compaction is
+the primary protection, and output reduction happens only when the later pi-ai
+estimate still cannot admit the requested cap.
+
+The shared DSH overflow classifier is patched to recognize the router's
+`CONTEXT_LIMIT_EXCEEDED` code and its “formatted input … exceeds the … token
+slot” wording, while retaining all existing context-length/window forms. The
+adapter preserves the complete human-readable provider detail but emits the
+canonical `CONTEXT_WINDOW_EXCEEDED` failure code. That code is deliberately not
+in ordinary retry policy: `compaction-basic` prunes, compacts a balanced durable
+region, checkpoints it, and retries from the reduced surface at most once. If
+no replacement advances the surface, the original provider failure remains
+explicit.
+
+An already-ended failed turn is never resumed automatically during deployment.
+After the owner opens that task, the safest explicit recovery is to submit
+`/compact`, wait for its successful checkpoint result, and then send
+`Continue from where the failed turn stopped.` A normal continuation also runs
+the proactive `agent/pre-step` policy before dispatch, but `/compact` makes the
+one-time recovery visible and complete while the task is idle.
 
 Both provider entries declare `maxConcurrency: 2`. The patched adapter enforces
 that limit immediately around model generation with a shared FIFO gate keyed by

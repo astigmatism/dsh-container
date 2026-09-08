@@ -19,16 +19,22 @@ set -eu
 # status. The healthy no-op path exits 0 quickly.
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+project_dir=$script_dir
 env_file=$project_dir/.env
 unit_name=deepseek-harness-after-network
 harness_container=deepseek-harness
 gateway_container=deepseek-harness-gateway
 health_timeout=240
+configuration_exit=78
 
 fail() {
   echo "start-after-network: $*" >&2
   exit 1
+}
+
+config_fail() {
+  echo "start-after-network: $*" >&2
+  exit "$configuration_exit"
 }
 
 get_env() {
@@ -87,6 +93,25 @@ bootstrap_unit_done() {
   [ "$result" = success ]
 }
 
+# A disabled, inactive bootstrap unit cannot run and must not block forever.
+# Active work still takes precedence, while an enabled inactive unit may be
+# queued behind another boot dependency and is therefore still expected.
+bootstrap_unit_expected() {
+  scope=$1
+  unit=$2
+  load=$(unit_prop "$scope" "$unit" LoadState)
+  [ "$load" = loaded ] || return 1
+  active=$(unit_prop "$scope" "$unit" ActiveState)
+  case "$active" in
+    active|activating|reloading|deactivating) return 0 ;;
+  esac
+  unit_file_state=$(unit_prop "$scope" "$unit" UnitFileState)
+  case "$unit_file_state" in
+    enabled|enabled-runtime) return 0 ;;
+  esac
+  return 1
+}
+
 harness_running() {
   [ "$(docker inspect "$harness_container" --format '{{.State.Status}}' 2>/dev/null || true)" = running ]
 }
@@ -103,12 +128,12 @@ network_attached() {
     | grep -Fq "\"$expected_network\":"
 }
 
-[ -f "$env_file" ] || fail "missing .env; run ./scripts/configure.sh first"
+[ -f "$env_file" ] || config_fail "missing .env; run ./scripts/configure.sh first"
 
 mode=$(get_env DSH_DEPLOYMENT_MODE)
 case "$mode" in
   external|remote|managed) ;;
-  *) fail "DSH_DEPLOYMENT_MODE in .env must be external, remote, or managed (got '$mode')" ;;
+  *) config_fail "DSH_DEPLOYMENT_MODE in .env must be external, remote, or managed (got '$mode')" ;;
 esac
 
 bind_address=$(get_env HARNESS_BIND_ADDRESS)
@@ -141,10 +166,13 @@ esac
 
 echo "Boot check for $harness_container in $mode mode (bind $bind_address:$https_port/$ca_port, network $expected_network)."
 
-command -v docker >/dev/null 2>&1 || fail "docker is required"
-command -v ip >/dev/null 2>&1 || fail "ip (iproute2) is required"
+command -v docker >/dev/null 2>&1 || config_fail "docker is required"
+command -v ip >/dev/null 2>&1 || config_fail "ip (iproute2) is required"
 if ! docker compose version >/dev/null 2>&1; then
-  fail "the Docker Compose plugin is required"
+  config_fail "the Docker Compose plugin is required"
+fi
+if ! compose config --quiet; then
+  config_fail "invalid .env or Compose configuration for the recorded $mode topology"
 fi
 
 echo "Waiting for the Docker daemon..."
@@ -167,11 +195,10 @@ if [ "$mode" = external ]; then
       || bootstrap_unit_done user local-ai-apply-default-after-network.service; then
       break
     fi
-    system_load=$(unit_prop system local-ai-apply-default.service LoadState)
-    user_load=$(unit_prop user local-ai-apply-default-after-network.service LoadState)
-    if [ "$system_load" != loaded ] && [ "$user_load" != loaded ]; then
-      # Neither bootstrap unit exists on this host; the shared network check
-      # below is the gate.
+    if ! bootstrap_unit_expected system local-ai-apply-default.service \
+      && ! bootstrap_unit_expected user local-ai-apply-default-after-network.service; then
+      # Neither bootstrap unit can still run on this host; the shared network
+      # check below is the gate.
       break
     fi
     sleep 5

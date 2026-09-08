@@ -13,6 +13,42 @@
 - id: session-title-llm
   disabled: true
 
+# Web disables the base compaction stack by default. Re-enable the complete
+# durable path here: proactive step pressure, one bounded canonical-overflow
+# recovery, the idle /compact operator command, and replay-safe tool pruning.
+#
+# The local route can admit at most 97,280 formatted input tokens while keeping
+# its 32,768 output allowance and the router's 1,024-token reserve. A 0.70
+# policy triggers at 91,750, leaving 5,530 tokens for meter/serialization/
+# tokenizer uncertainty. The captured incident measured 99,735 in token-meter
+# before the rejected 101,165-token formatted request, so both provider IDs
+# must share this exact endpoint policy.
+- id: compaction-basic
+  disabled: false
+  config:
+    auto: true
+    retainRatio: 0.16
+    maxTokens: 8192
+    compactionRetries: 1
+    maxOverflowRetries: 1
+    modelPolicies:
+      - provider: local-ollama
+        model: local-active
+        thresholdRatio: 0.70
+      - provider: local-ollama-256k
+        model: local-active
+        thresholdRatio: 0.70
+
+- id: command-compact
+  disabled: false
+
+- id: tool-result-pruner
+  disabled: false
+  config:
+    thresholdChars: 8192
+    headChars: 4096
+    tailChars: 1024
+
 # The browser remains headless inside the container while its CDP screencast is
 # rendered in DSH's Browser Use panel. Private targets are an explicit
 # deployment choice because enabling them also permits private subresources.

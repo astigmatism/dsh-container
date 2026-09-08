@@ -5,6 +5,11 @@ import { pathToFileURL } from "node:url";
 
 const DEFAULT_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js";
 const PATCH_MARKER = "dsh-router-contract-v2";
+const DEFAULT_CONTEXT_CLASSIFIER_TARGETS = [
+  "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/lib/index.js",
+  "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/lib/types/error.js",
+];
+const CONTEXT_CLASSIFIER_PATCH_MARKER = "dsh-router-context-overflow-v1";
 
 function replaceOnce(source, before, after, description) {
   const first = source.indexOf(before);
@@ -38,6 +43,22 @@ export function renderStructuredError(value) {
     } catch {}
   }
   return String(value);
+}
+
+/** Router-specific structured and prose context-overflow forms. */
+export function isRouterContextOverflowDetail(detail) {
+  return /(?:^|[^a-z0-9])context[\s_-]limit[\s_-]exceed(?:ed|s)?(?:$|[^a-z0-9])/i.test(detail) ||
+    /\b(?:formatted\s+)?(?:input|prompt|request|messages?)\b.{0,120}\b(?:exceed(?:s|ed)?|overflows?|is\s+larger\s+than)\b.{0,120}\b\d[\d,]*[\s_-]*token[\s_-]+slot\b/i.test(detail);
+}
+
+/** Complete patched shared-classifier behavior, exposed for source tests. */
+export function isContextWindowOverflowDetail(detail) {
+  return isRouterContextOverflowDetail(detail) ||
+    /(?:^|[^a-z0-9])context[\s_-](?:length|window)[\s_-](?:exceed(?:ed|s)?|overflow(?:ed)?|limit[\s_-]exceeded)(?:$|[^a-z0-9])/i.test(detail) ||
+    /\b(?:maximum|max)(?:\s+(?:allowed|supported))?\s+context\s+(?:length|window)\b/i.test(detail) ||
+    /\b(?:request|prompt|input|messages?)\s+(?:is\s+|are\s+)?too\s+(?:large|long)\s+for\s+(?:(?:this|the)\s+)?(?:model(?:'s)?\s+)?context(?:\s+window)?\b/i.test(detail) ||
+    /\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b/i.test(detail) ||
+    /\b(?:input|prompt|request|messages?)\b.{0,40}\b(?:exceed(?:s|ed)?|overflows?|is\s+larger\s+than)\b.{0,40}\b(?:the\s+)?(?:model(?:'s)?\s+)?context(?:\s+(?:length|window))?\b/i.test(detail);
 }
 
 /**
@@ -205,12 +226,47 @@ export function patchSource(input) {
   return source;
 }
 
+/** Extend DSH's shared conservative overflow classifier for the local router. */
+export function patchContextClassifierSource(input) {
+  if (input.includes(CONTEXT_CLASSIFIER_PATCH_MARKER)) return input;
+  let source = input;
+
+  source = replaceOnce(
+    source,
+    `function isContextWindowExceededError(detail) {\n`,
+    `// ${CONTEXT_CLASSIFIER_PATCH_MARKER}: normalize the local router's code and token-slot wording.\nfunction isRouterContextOverflowDetail(detail) {\n\treturn /(?:^|[^a-z0-9])context[\\s_-]limit[\\s_-]exceed(?:ed|s)?(?:$|[^a-z0-9])/i.test(detail) || /\\b(?:formatted\\s+)?(?:input|prompt|request|messages?)\\b.{0,120}\\b(?:exceed(?:s|ed)?|overflows?|is\\s+larger\\s+than)\\b.{0,120}\\b\\d[\\d,]*[\\s_-]*token[\\s_-]+slot\\b/i.test(detail);\n}\nfunction isContextWindowExceededError(detail) {\n`,
+    "router context-overflow detail classifier",
+  );
+
+  source = replaceOnce(
+    source,
+    `return STRUCTURED_CONTEXT_OVERFLOW.test(detail)`,
+    `return isRouterContextOverflowDetail(detail) || STRUCTURED_CONTEXT_OVERFLOW.test(detail)`,
+    "shared context-overflow classification",
+  );
+
+  return source;
+}
+
 async function main() {
   const target = process.argv[2] ?? DEFAULT_TARGET;
   const before = await readFile(target, "utf8");
   const after = patchSource(before);
   if (after !== before) await writeFile(target, after);
   if (!after.includes(PATCH_MARKER)) throw new Error("dsh router contract patch did not apply");
+
+  // A custom adapter fixture target is useful for local patch debugging. The
+  // no-argument image-build path also patches both public/shared DSH outlets.
+  if (process.argv[2] === undefined) {
+    for (const classifierTarget of DEFAULT_CONTEXT_CLASSIFIER_TARGETS) {
+      const classifierBefore = await readFile(classifierTarget, "utf8");
+      const classifierAfter = patchContextClassifierSource(classifierBefore);
+      if (classifierAfter !== classifierBefore) await writeFile(classifierTarget, classifierAfter);
+      if (!classifierAfter.includes(CONTEXT_CLASSIFIER_PATCH_MARKER)) {
+        throw new Error(`dsh context-overflow classifier patch did not apply: ${classifierTarget}`);
+      }
+    }
+  }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

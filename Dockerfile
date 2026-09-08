@@ -44,10 +44,12 @@ RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}
 # instead of silently dropping behavior.
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
 COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
+COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
+    && node /opt/dsh-build/verify-dsh-context-compaction.mjs \
     && node /opt/dsh-build/patch-dsh-cancellation-presentation.mjs \
     && node /opt/dsh-build/patch-dsh-native-file-opening.mjs
 
@@ -90,6 +92,7 @@ COPY seed/plugins/ /opt/dsh-seed/.dsh-plugins/
 RUN cd /opt/dsh-seed/profiles/web \
     && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store \
     && dsh --profile web --dump-config >/dev/null \
+    && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-context-compaction.mjs --effective-config \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-context@0.37.0' /opt/dsh-seed/plugin-inventory.txt \

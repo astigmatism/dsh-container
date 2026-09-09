@@ -173,6 +173,18 @@ fi
 
 if ! compose exec -T harness node --input-type=module -e '
   import { readFile } from "node:fs/promises";
+  const path = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js";
+  const source = await readFile(path, "utf8");
+  if (!source.includes("dsh-container-web-launch-token-v1")) {
+    throw new Error("deployed Harness is missing colocated-gateway authentication");
+  }
+'; then
+  echo "The deployed Harness cannot share its launch-token contract with the gateway." >&2
+  exit "$configuration_exit"
+fi
+
+if ! compose exec -T harness node --input-type=module -e '
+  import { readFile } from "node:fs/promises";
   const path = "/data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js";
   const source = await readFile(path, "utf8");
   if (!source.includes("dsh-playwright-webserver-scope-v1")) {
@@ -349,6 +361,34 @@ fi
 # container's network namespace. It exits 20 (Docker unavailable) or 23
 # (verification failed); set -e propagates that classification here.
 "$script_dir/verify-gateway-tls.sh"
+
+# Prove that an externally authenticated request is also authenticated to the
+# new upstream Harness browser/RPC layer. /healthz terminates at the gateway
+# and cannot catch a missing backend cookie exchange.
+if ! compose exec -T gateway node --input-type=module -e '
+  import { readFileSync } from "node:fs";
+  import { get } from "node:https";
+  const authorization = `Basic ${Buffer.from(`${process.env.HARNESS_AUTH_USERNAME}:${process.env.HARNESS_AUTH_PASSWORD}`).toString("base64")}`;
+  const request = get({
+    hostname: "127.0.0.1",
+    port: Number(process.env.HARNESS_HTTPS_PORT || 3443),
+    path: "/",
+    ca: readFileSync("/data/gateway/tls/ca.crt"),
+    headers: { authorization, host: `127.0.0.1:${process.env.HARNESS_PUBLIC_HTTPS_PORT || 3443}` },
+  }, (response) => {
+    const chunks = [];
+    response.on("data", chunk => chunks.push(chunk));
+    response.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      process.exit(response.statusCode === 200 && body.includes("DeepSeek Harness") ? 0 : 1);
+    });
+  });
+  request.on("error", () => process.exit(1));
+'; then
+  echo "The authenticated gateway could not establish its private Harness backend session." >&2
+  exit "$application_health_exit"
+fi
+echo "Verified authenticated gateway-to-Harness browser proxying."
 
 if [ "$mode" = --managed-ollama ]; then
   if ! compose exec -T ollama ollama show qwen3.8:27b-mtp-q8_0 >/dev/null; then

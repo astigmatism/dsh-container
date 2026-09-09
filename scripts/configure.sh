@@ -127,12 +127,14 @@ else
 fi
 
 mkdir -p \
+  "$project_dir/data/backend-auth" \
   "$project_dir/data/dsh" \
   "$project_dir/data/gateway" \
   "$project_dir/data/ollama" \
   "$project_dir/data/router" \
   "$project_dir/data/router-runtime" \
   "$project_dir/secrets"
+chmod 0700 "$project_dir/data/backend-auth"
 
 "$script_dir/initialize-persisted-settings.sh" --preserve-divergent
 

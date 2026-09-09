@@ -31,6 +31,7 @@ services:
       DSH_HOME: /data/dsh
       DSH_TELEMETRY_DISABLED: "1"
       DSH_PERMISSION_MODE: danger-full-access
+      DSH_WEB_LAUNCH_TOKEN_FILE: /run/dsh-backend-auth/launch-token
       HOME: "${HARNESS_WORKSPACE_ROOT:-/host}"
       USER: "${HOST_USERNAME:-harness}"
       LOGNAME: "${HOST_USERNAME:-harness}"
@@ -44,6 +45,7 @@ services:
       DSH_BROWSER_ALLOW_PRIVATE_HOSTS: "${DSH_BROWSER_ALLOW_PRIVATE_HOSTS:-false}"
     volumes:
       - ./data/dsh:/data/dsh
+      - ./data/backend-auth:/run/dsh-backend-auth
       - type: bind
         # Native Windows Compose exposes SystemDrive (normally C:). With no
         # Windows drive, the fallback is Unix root. The stable container path
@@ -61,7 +63,7 @@ services:
     extra_hosts:
       - "ai-router:${REMOTE_OLLAMA_HOST:-192.168.1.21}"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3080/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD-SHELL", "test -s /run/dsh-backend-auth/launch-token && curl --fail --silent --output /dev/null \"http://127.0.0.1:3080/?token=$$(cat /run/dsh-backend-auth/launch-token)\""]
       interval: 15s
       timeout: 5s
       retries: 12
@@ -87,6 +89,7 @@ services:
       HARNESS_TLS_IP: "${HARNESS_TLS_IP:-127.0.0.1}"
       HARNESS_TLS_DNS: "${HARNESS_TLS_DNS:-deepseek-harness.local}"
       HARNESS_BACKEND_URL: http://127.0.0.1:3080
+      HARNESS_BACKEND_TOKEN_FILE: /run/dsh-backend-auth/launch-token
       HARNESS_HTTPS_PORT: "3443"
       HARNESS_PUBLIC_HTTPS_PORT: "${HARNESS_HTTPS_PORT:-3443}"
       HARNESS_HTTP_PORT: "3081"
@@ -105,6 +108,7 @@ services:
       TTS_API_KEY_FILE: /run/secrets/tts_api_key
     volumes:
       - ./data/gateway:/data/gateway
+      - ./data/backend-auth:/run/dsh-backend-auth:ro
     secrets:
       - stt_api_key
       - tts_api_key

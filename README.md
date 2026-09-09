@@ -369,6 +369,17 @@ session cookie after the stored gateway credentials are accepted. HTTP Basic
 Auth remains available for non-browser clients. Sessions last up to 12 hours
 and are invalidated when the gateway restarts.
 
+Harness `0.1.5-alpha.1` also authenticates its own browser and RPC carrier.
+The container entrypoint generates a fresh 32-byte launch token on every
+start, stores it as `data/backend-auth/launch-token` with mode `0600`, and supplies
+the same value to Harness. The gateway sees that file through a read-only
+mount, exchanges it over the shared loopback namespace for Harness's
+authority-bound cookie, and adds that cookie only after the existing external
+gateway authentication succeeds. The private token and upstream cookie are
+never sent to the browser. Deployment verification requires a real HTTPS page
+request to pass through both authentication layers, not merely the gateway's
+own health endpoint.
+
 HTTPS remains available at `https://HOST:3443/` when browser microphone access
 is needed. That optional path requires downloading `http://HOST:3081/ca.crt`
 and trusting the local CA on the browser device; ordinary Harness use does not.

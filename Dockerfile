@@ -54,13 +54,16 @@ COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
+COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
 COPY scripts/patch-dsh-playwright-webserver.mjs /opt/dsh-build/patch-dsh-playwright-webserver.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
     && node /opt/dsh-build/verify-dsh-context-compaction.mjs \
     && node /opt/dsh-build/patch-dsh-cancellation-presentation.mjs \
-    && node /opt/dsh-build/patch-dsh-native-file-opening.mjs
+    && node /opt/dsh-build/patch-dsh-native-file-opening.mjs \
+    && node /opt/dsh-build/patch-dsh-web-auth.mjs \
+    && grep -Fq 'dsh-container-web-launch-token-v1' /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
@@ -152,7 +155,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs /opt/dsh-gateway/
+COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs /opt/dsh-gateway/
 
 USER node
 ENTRYPOINT ["node", "/opt/dsh-gateway/server.mjs"]

@@ -47,6 +47,8 @@ harness = default["services"]["harness"]
 healthcheck = " ".join(harness["healthcheck"]["test"])
 if "127.0.0.1:3080" not in healthcheck:
     raise SystemExit("harness readiness does not check the actual backend")
+if "/run/dsh-backend-auth/launch-token" not in healthcheck:
+    raise SystemExit("harness readiness does not authenticate to the upstream web server")
 depends_on = default["services"]["gateway"]["depends_on"]
 if depends_on.get("harness", {}).get("condition") != "service_healthy":
     raise SystemExit("gateway can start before the harness backend is ready")
@@ -97,6 +99,14 @@ for name, config in (("default", default), ("remote", remote), ("external", exte
         raise SystemExit(f"{name}: source-managed gateway username changed")
     if environment.get("HARNESS_AUTH_PASSWORD") != "ICar12..":
         raise SystemExit(f"{name}: source-managed gateway password changed")
+    if environment.get("HARNESS_BACKEND_TOKEN_FILE") != "/run/dsh-backend-auth/launch-token":
+        raise SystemExit(f"{name}: gateway does not consume the private Harness launch token")
+    gateway_token_volume = next(
+        (volume for volume in config["services"]["gateway"]["volumes"] if volume.get("target") == "/run/dsh-backend-auth"),
+        None,
+    )
+    if gateway_token_volume is None or not gateway_token_volume.get("read_only", False):
+        raise SystemExit(f"{name}: gateway launch-token mount is missing or writable")
 
 external_network = external["networks"]["ollama_net"]
 if not external_network.get("external", False):

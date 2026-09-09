@@ -74,6 +74,12 @@ case "$mode" in
     ;;
 esac
 
+# The upstream browser/RPC layer and the public gateway share only this
+# deployment-local launch-token directory. Keep it separate from sessions and
+# TLS material, and create it before Compose evaluates the bind mount.
+mkdir -p "$project_dir/data/backend-auth"
+chmod 0700 "$project_dir/data/backend-auth"
+
 # Paths are controlled by this script and contain no whitespace in the normal
 # clone layout. Splitting compose_files and build_flag is intentional.
 # shellcheck disable=SC2086
@@ -83,6 +89,17 @@ if ! docker compose --env-file "$project_dir/.env" $compose_files up -d $build_f
 fi
 
 "$script_dir/verify.sh" "--$mode-ollama"
+
+# Remove the one-release compatibility location only when it still contains
+# the exact 32-byte base64url launch-token shape. Current deployments use the
+# isolated backend-auth directory above.
+legacy_web_token=$project_dir/data/dsh/web-launch-token
+if [ -f "$legacy_web_token" ] \
+  && [ "$(wc -c <"$legacy_web_token" | tr -d '[:space:]')" = 43 ] \
+  && LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' "$legacy_web_token"; then
+  rm -f "$legacy_web_token"
+  echo "Removed the superseded Harness launch-token file from the session directory."
+fi
 
 if [ "$mode" = remote ]; then
   legacy_router=deepseek-harness-ollama-router

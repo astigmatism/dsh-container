@@ -5,6 +5,7 @@ import { connect as netConnect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { authorityTrusted, externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
+import { appendBackendCookie, createBackendAuthenticator } from './backend-auth.mjs'
 import {
   createSessionAuthenticator,
   credentialsValid,
@@ -16,6 +17,8 @@ const dataDir = '/data/gateway'
 const tlsDir = join(dataDir, 'tls')
 const authPath = join(dataDir, 'auth.json')
 const backend = new URL(process.env.HARNESS_BACKEND_URL || 'http://127.0.0.1:3080')
+const backendTokenFile = process.env.HARNESS_BACKEND_TOKEN_FILE || '/run/dsh-backend-auth/launch-token'
+const backendAuthentication = createBackendAuthenticator(backend, backendTokenFile)
 const httpsPort = integer('HARNESS_HTTPS_PORT', 3443)
 const publicHttpsPort = integer('HARNESS_PUBLIC_HTTPS_PORT', httpsPort)
 const httpPort = integer('HARNESS_HTTP_PORT', 3081)
@@ -325,14 +328,13 @@ async function synthesize(req, res) {
   }
 }
 
-function proxy(req, res, forwardedProtocol) {
+function proxy(req, res, forwardedProtocol, backendCookie) {
   const headers = { ...req.headers }
   delete headers.connection
   delete headers.authorization
   delete headers['proxy-authorization']
   const forwardedCookie = withoutSessionCookie(headers.cookie)
-  if (forwardedCookie === null) delete headers.cookie
-  else headers.cookie = forwardedCookie
+  headers.cookie = appendBackendCookie(forwardedCookie, backendCookie)
   headers.host = backend.host
   if (headers.origin !== undefined) headers.origin = backend.origin
   headers['x-forwarded-proto'] = forwardedProtocol
@@ -355,15 +357,14 @@ function proxy(req, res, forwardedProtocol) {
   req.pipe(upstream)
 }
 
-function proxyUpgrade(req, socket, head, forwardedProtocol) {
+function proxyUpgrade(req, socket, head, forwardedProtocol, backendCookie) {
   const upstream = netConnect(Number.parseInt(backend.port || '80', 10), backend.hostname, () => {
     const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
     const headers = { ...req.headers }
     delete headers.authorization
     delete headers['proxy-authorization']
     const forwardedCookie = withoutSessionCookie(headers.cookie)
-    if (forwardedCookie === null) delete headers.cookie
-    else headers.cookie = forwardedCookie
+    headers.cookie = appendBackendCookie(forwardedCookie, backendCookie)
     headers.host = backend.host
     if (headers.origin !== undefined) headers.origin = backend.origin
     headers['x-forwarded-proto'] = forwardedProtocol
@@ -450,10 +451,15 @@ async function handleGateway(req, res, options) {
     await synthesize(req, res)
     return
   }
-  proxy(req, res, options.protocol.slice(0, -1))
+  try {
+    const backendCookie = await backendAuthentication.cookie()
+    proxy(req, res, options.protocol.slice(0, -1), backendCookie)
+  } catch (error) {
+    json(res, 502, { error: { message: error instanceof Error ? error.message : String(error) } })
+  }
 }
 
-function handleUpgrade(req, socket, head, options) {
+async function handleUpgrade(req, socket, head, options) {
   if (!externallyTrusted(req, options.authorities, options.protocol)) {
     socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
     return
@@ -462,7 +468,12 @@ function handleUpgrade(req, socket, head, options) {
     socket.end('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="DeepSeek Harness"\r\nConnection: close\r\n\r\n')
     return
   }
-  proxyUpgrade(req, socket, head, options.protocol.slice(0, -1))
+  try {
+    const backendCookie = await backendAuthentication.cookie()
+    proxyUpgrade(req, socket, head, options.protocol.slice(0, -1), backendCookie)
+  } catch {
+    socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n')
+  }
 }
 
 const httpOptions = {
@@ -485,10 +496,10 @@ const httpsServer = createHttpsServer({
 }, (req, res) => handleGateway(req, res, httpsOptions))
 
 httpsServer.on('upgrade', (req, socket, head) => {
-  handleUpgrade(req, socket, head, httpsOptions)
+  void handleUpgrade(req, socket, head, httpsOptions)
 })
 httpServer.on('upgrade', (req, socket, head) => {
-  handleUpgrade(req, socket, head, httpOptions)
+  void handleUpgrade(req, socket, head, httpOptions)
 })
 
 httpServer.listen(httpPort, '0.0.0.0', () => {

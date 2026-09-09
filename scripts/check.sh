@@ -102,6 +102,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/qualify-dsh-read-schema.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
+    node --check scripts/patch-dsh-web-auth.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
     node --check scripts/patch-dsh-playwright-webserver.mjs
     node --check ollama-router/src/server.js
@@ -156,10 +157,12 @@ if [ "$build" -eq 1 ]; then
     const deliverablesPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
     const tokenPath = "/opt/dsh-seed/profiles/web/node_modules/@zoytown/dsh-token/lib/index.js";
     const playwrightPath = "/opt/dsh-seed/profiles/web/node_modules/dsh-playwright/lib/index.js";
+    const connectionPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js";
     const conversation = await readFile(conversationPath, "utf8");
     const deliverables = await readFile(deliverablesPath, "utf8");
     const token = await readFile(tokenPath, "utf8");
     const playwright = await readFile(playwrightPath, "utf8");
+    const connection = await readFile(connectionPath, "utf8");
     Function(conversation);
     Function(deliverables);
     for (const [name, source, markers] of [
@@ -188,6 +191,9 @@ if [ "$build" -eq 1 ]; then
     }
     if (!playwright.includes("dsh-playwright-webserver-scope-v1")) {
       throw new Error("dsh-playwright is missing scoped webServer compatibility");
+    }
+    if (!connection.includes("dsh-container-web-launch-token-v1")) {
+      throw new Error("Harness connection is missing colocated-gateway authentication");
     }
   '
 

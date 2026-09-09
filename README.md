@@ -517,7 +517,9 @@ deployment once the network is actually up:
   unreachable (for example from a maintenance container without the host user
   session) it still installs the files, prints the exact commands to run on
   the host, and exits 0. `--dry-run` previews the rendered unit and the
-  planned actions without changing anything.
+  planned actions without changing anything. `--defer-activation` converges
+  only the on-disk files and enablement; deployment and maintenance use it as
+  a preflight before any Compose mutation.
   The installer also removes the exact obsolete
   `10-project-path.conf` shell-wrapper drop-in from early installations. It
   preserves other user drop-ins and refuses an unrecognized `ExecStart`
@@ -525,10 +527,17 @@ deployment once the network is actually up:
   It also reloads once if unchanged files leave the user manager exposing a
   stale effective `ExecStart` from an earlier bus-unreachable migration.
 
-`scripts/deploy.sh` and `scripts/update-and-restart.sh` invoke the installer
-after a successful deployment, best-effort: the outcome is logged and, for
-maintenance, recorded as `boot_service=...` in `data/maintenance-status`, but
-a boot-service problem never fails the deployment or the maintenance run.
+`scripts/deploy.sh` and `scripts/update-and-restart.sh` treat this on-disk boot
+integration as a required deployment invariant. They converge it before
+building or changing services and activate it after successful deployment.
+Maintenance performs this preflight before fetch. If the host home cannot be
+resolved, mounted, inspected, or written, maintenance stops and records
+`state=failed`, `failure_type=boot-service`, and the `boot_service` reason in
+`data/maintenance-status`; it cannot report `state=ok`. An unavailable user
+systemd bus is intentionally different: the canonical unit, recognized legacy
+drop-in migration, and `default.target` link are still converged on disk, so
+maintenance may succeed with `boot_service=warning:bus-unreachable` while
+activation is deferred.
 
 Check the service on the host as the deploying user:
 
@@ -568,7 +577,8 @@ mode before fetching. It does not require byte equality with repository
 defaults, so DSH serialization changes and intentional per-machine settings
 survive updates. Missing, empty, wrongly owned, or insecurely permissioned
 settings stop maintenance before any Compose interruption. After
-fast-forwarding, the original process transfers
+settings validation, the updater also requires boot-service files to converge
+before fetch. After fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
 before it can change services. During this handoff, exact legacy
@@ -605,7 +615,25 @@ A single atomically replaced status file is kept at
 `data/maintenance-status`. In addition to the mode, commits, and exit status,
 it records `failure_type`, `failure_stage`, and recovery outcome. Failure types
 distinguish Git state, deployment-mode inference, Docker/Compose, configuration
-verification, model-provider or credential access, and application health.
+verification, boot-service convergence, model-provider or credential access,
+and application health. `state=ok` requires successful on-disk boot-service
+convergence; only activation may remain deferred when the user bus is
+unreachable.
+
+For an existing checkout, the supported redeployment is one normal update as
+the deploying user:
+
+```sh
+./scripts/update-and-restart.sh
+```
+
+That run preserves `.env`, credentials, sessions, workspaces, gateway identity,
+and other persistent data while migrating the narrowly recognized legacy
+drop-in. If maintenance reports `boot_service=warning:bus-unreachable`, run the
+three host-side `systemctl --user` commands shown by the installer; no file
+edits are required. A fresh or deliberately selected-mode deployment continues
+to use `./scripts/deploy.sh --external-ollama`, `--remote-ollama`, or
+`--managed-ollama` as appropriate.
 
 Preview the operation or select a mode explicitly:
 

@@ -89,6 +89,16 @@ assert_remote_env() {
     || fail ".env suffix changed"
 }
 
+write_boot_installer() {
+  fixture_path=$1
+  installer_status=${2:-0}
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf 'exit %s\n' "$installer_status"
+  } >"$fixture_path/scripts/install-boot-service.sh"
+  chmod +x "$fixture_path/scripts/install-boot-service.sh"
+}
+
 make_env missing-mode missing
 run_recorder "$fixture" remote
 [ "$recorder_status" -eq 0 ] || fail "missing deployment mode was not recorded"
@@ -143,6 +153,7 @@ mkdir -p "$fixture/scripts" "$fixture/fake-bin"
 cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
 cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
 cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+write_boot_installer "$fixture"
 : >"$fixture/docker.log"
 set +e
 PATH="$fixture/fake-bin:$PATH" \
@@ -161,6 +172,7 @@ mkdir -p "$fixture/scripts" "$fixture/fake-bin"
 cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
 cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
 cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+write_boot_installer "$fixture"
 : >"$fixture/docker.log"
 set +e
 PATH="$fixture/fake-bin:$PATH" \
@@ -179,6 +191,7 @@ mkdir -p "$fixture/scripts" "$fixture/fake-bin"
 cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
 cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
 cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+write_boot_installer "$fixture"
 : >"$fixture/docker.log"
 set +e
 PATH="$fixture/fake-bin:$PATH" \
@@ -200,11 +213,8 @@ cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
   printf '%s\n' '#!/bin/sh'
   printf '%s\n' 'printf "verify %s\\n" "$*" >>"${FAKE_DOCKER_LOG:?}"'
 } >"$fixture/scripts/verify.sh"
-{
-  printf '%s\n' '#!/bin/sh'
-  printf '%s\n' 'exit 0'
-} >"$fixture/scripts/install-boot-service.sh"
-chmod +x "$fixture/scripts/verify.sh" "$fixture/scripts/install-boot-service.sh"
+write_boot_installer "$fixture"
+chmod +x "$fixture/scripts/verify.sh"
 : >"$fixture/docker.log"
 PATH="$fixture/fake-bin:$PATH" \
   FAKE_DOCKER_LOG="$fixture/docker.log" \
@@ -235,5 +245,23 @@ set -e
 if grep -Fq 'container rm' "$fixture/docker.log"; then
   fail "direct remote cleanup removed an unrelated same-name container"
 fi
+
+make_env boot-convergence-failure remote
+mkdir -p "$fixture/scripts" "$fixture/fake-bin"
+cp "$source_root/scripts/deploy.sh" "$fixture/scripts/"
+cp "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
+cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+write_boot_installer "$fixture" 1
+: >"$fixture/docker.log"
+set +e
+PATH="$fixture/fake-bin:$PATH" \
+  FAKE_DOCKER_LOG="$fixture/docker.log" \
+  sh "$fixture/scripts/deploy.sh" --remote-ollama >"$fixture/deploy.log" 2>&1
+boot_failure_status=$?
+set -e
+[ "$boot_failure_status" -eq 24 ] \
+  || fail "standalone deployment did not classify boot convergence failure"
+[ ! -s "$fixture/docker.log" ] \
+  || fail "standalone deployment changed services after boot convergence failed"
 
 echo "ok - deployment mode recording is atomic and remote mode safely cuts over to the direct production router"

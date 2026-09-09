@@ -9,8 +9,9 @@ set -eu
 # reloaded and started (or restarted if it was already active). When the bus
 # is not reachable (for example from a maintenance container that has no host
 # user session) the files are still installed, the exact commands the
-# operator must run on the host are printed, and the script exits 0: an
-# install problem must never fail a deployment.
+# operator must run on the host are printed, and the script exits 0. A missing
+# host-home mount is different: on-disk convergence is impossible and the
+# installer exits nonzero after reporting that condition.
 #
 # The last line of the output is a machine-readable summary of the form
 # boot_service=<installed|updated|unchanged|started|warning:<reason>>.
@@ -20,10 +21,11 @@ project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 unit_name=deepseek-harness-after-network.service
 template=$project_dir/deploy/$unit_name
 dry_run=0
+defer_activation=0
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/install-boot-service.sh [--dry-run]
+usage: ./scripts/install-boot-service.sh [--dry-run] [--defer-activation]
 
 Render deploy/deepseek-harness-after-network.service for this checkout and
 install it under ~/.config/systemd/user/ with a default.target.wants symlink.
@@ -31,12 +33,15 @@ With a reachable user systemd bus the unit is daemon-reloaded and started
 (or restarted if already active). Without one, the files are installed and
 the commands to run on the host are printed. Identical installs are a no-op
 unless the user manager still has a stale effective ExecStart to reload.
+With --defer-activation, converge only the on-disk unit, drop-ins, and wants
+link. This is used by maintenance preflight before any service changes.
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
+    --defer-activation) defer_activation=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -60,15 +65,28 @@ rendered=$(sed "s|@PROJECT_DIR@|$project_dir|g" "$template")
 # Installation home: the deploying user's $HOME on the host. In the delegated
 # maintenance container the host home is mounted at its real path and named
 # by DSH_BOOT_SERVICE_HOME; the container's own HOME is ephemeral.
-install_home=$HOME
+install_home=${HOME:-}
 if [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ]; then
   if [ -z "${DSH_BOOT_SERVICE_HOME:-}" ] || [ ! -d "${DSH_BOOT_SERVICE_HOME:-}" ]; then
-    echo "Warning: delegated maintenance has no host home mount (DSH_BOOT_SERVICE_HOME); the unit files were not installed." >&2
+    echo "Error: delegated maintenance has no host home mount (DSH_BOOT_SERVICE_HOME); the unit files cannot be inspected or converged." >&2
     echo "boot_service=warning:host-home-unavailable"
-    exit 0
+    exit 1
   fi
   install_home=$DSH_BOOT_SERVICE_HOME
 fi
+case "$install_home" in
+  /|"")
+    echo "Error: the deploying user's host home is unavailable; the unit files cannot be inspected or converged." >&2
+    echo "boot_service=warning:host-home-unavailable"
+    exit 1
+    ;;
+  /*) ;;
+  *)
+    echo "Error: the boot-service installation home must be absolute: $install_home" >&2
+    echo "boot_service=warning:host-home-unavailable"
+    exit 1
+    ;;
+esac
 
 user_unit_dir=$install_home/.config/systemd/user
 unit_path=$user_unit_dir/$unit_name
@@ -203,7 +221,7 @@ existing_state=$(file_state)
 wants_state=$(link_state)
 
 was_active=0
-if bus_reachable && unit_active; then
+if [ "$defer_activation" -eq 0 ] && bus_reachable && unit_active; then
   was_active=1
 fi
 
@@ -215,7 +233,9 @@ if [ "$dry_run" -eq 1 ]; then
   if [ "$legacy_drop_in_state" = remove ]; then
     echo "dry-run: remove recognized legacy drop-in $legacy_drop_in"
   fi
-  if bus_reachable; then
+  if [ "$defer_activation" -eq 1 ]; then
+    echo "dry-run: activation deferred; no systemctl command would run"
+  elif bus_reachable; then
     if [ "$existing_state" != unchanged ] \
       || [ "$wants_state" != unchanged ] \
       || [ "$legacy_drop_in_state" = remove ]; then
@@ -271,6 +291,12 @@ elif [ "$existing_state" = install ] && [ "$wants_state" = install ]; then
   result=installed
 else
   result=updated
+fi
+
+if [ "$defer_activation" -eq 1 ]; then
+  echo "Boot service files $result; activation deferred by maintenance preflight."
+  echo "boot_service=$result"
+  exit 0
 fi
 
 if ! bus_reachable; then

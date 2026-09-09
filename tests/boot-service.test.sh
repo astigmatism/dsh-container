@@ -7,7 +7,8 @@ set -eu
 #     across a second run
 #   - exact legacy migration removes only the stale ExecStart wrapper, reloads
 #     systemd, preserves unrelated drop-ins, and follows checkout renames
-#   - a real install without a user bus is idempotent and drift-repairing
+#   - a real install without a user bus is idempotent and drift-repairing,
+#     while a missing delegated host home is a blocking failure
 #   - start-after-network.sh reads .env beside itself and covers both its
 #     healthy no-op and missing-port repair paths with mocked host commands
 #   - the tracked scripts are LF-only
@@ -128,6 +129,23 @@ grep -Fxq "systemctl --user start $unit_name" "$install_log" \
   || fail "bus-unreachable install did not print the start command"
 grep -Fqx 'boot_service=warning:bus-unreachable' "$install_log" \
   || fail "bus-unreachable install did not report a warning result"
+
+# Delegated execution without its host-home mount cannot inspect or converge
+# the unit and must fail rather than leaving a successful maintenance result.
+set +e
+HOME=$temporary_root/ephemeral-home \
+  DSH_UPDATE_DELEGATED=1 \
+  DSH_BOOT_SERVICE_HOME= \
+  PATH=$no_bus_bin \
+  sh "$installer" --defer-activation >"$temporary_root/missing-host-home.log" 2>&1
+missing_host_home_status=$?
+set -e
+[ "$missing_host_home_status" -ne 0 ] \
+  || fail "missing delegated host home was accepted"
+grep -Fqx 'boot_service=warning:host-home-unavailable' "$temporary_root/missing-host-home.log" \
+  || fail "missing delegated host home did not report its distinct status"
+[ ! -e "$temporary_root/ephemeral-home/.config/systemd/user/$unit_name" ] \
+  || fail "missing delegated host home wrote into the ephemeral HOME"
 
 # 6. A second install is a content-driven no-op: no writes, no reload, exit 0.
 unit_before=$(cksum "$unit_file")
@@ -344,6 +362,9 @@ EOF
 
 cat >"$runtime_bin/ip" <<'EOF'
 #!/bin/sh
+if [ "$MOCK_SCENARIO" = delayed-bind ] && [ ! -f "$MOCK_RUNTIME_STATE/address-ready" ]; then
+  exit 0
+fi
 echo '2: eth0 inet 192.0.2.21/24 brd 192.0.2.255 scope global eth0'
 EOF
 cat >"$runtime_bin/systemctl" <<'EOF'
@@ -362,6 +383,11 @@ esac
 EOF
 cat >"$runtime_bin/sleep" <<'EOF'
 #!/bin/sh
+if [ "$MOCK_SCENARIO" = delayed-bind ]; then
+  printf 'sleep %s\n' "$*" >>"$MOCK_DOCKER_LOG"
+  touch "$MOCK_RUNTIME_STATE/address-ready"
+  exit 0
+fi
 echo "unexpected retry wait: sleep $*" >&2
 exit 99
 EOF
@@ -392,7 +418,14 @@ case "${1:-}" in
   inspect)
     case "$*" in
       *'{{if .State.Health}}'*) echo healthy ;;
-      *'{{.State.Status}}'*) echo running ;;
+      *'{{.State.Status}}'*)
+        if [ "$MOCK_SCENARIO" = delayed-bind ] \
+          && [ ! -f "$MOCK_RUNTIME_STATE/harness-recreated" ]; then
+          echo exited
+        else
+          echo running
+        fi
+        ;;
       *'{{json .NetworkSettings.Networks}}'*) echo '{"test-ollama":{}}' ;;
     esac
     ;;
@@ -404,7 +437,7 @@ run_boot_script() {
   scenario=$1
   output=$2
   docker_log=$3
-  rm -f "$runtime_state/harness-recreated" "$docker_log"
+  rm -f "$runtime_state/harness-recreated" "$runtime_state/address-ready" "$docker_log"
   MOCK_SCENARIO=$scenario \
     MOCK_RUNTIME_STATE=$runtime_state \
     MOCK_DOCKER_LOG=$docker_log \
@@ -436,6 +469,22 @@ for service in harness gateway; do
 done
 grep -Fqx 'Boot check complete: harness bound to 192.0.2.21, attached to test-ollama, gateway healthy.' "$repair_output" \
   || fail "missing-port repair path did not complete verification"
+
+# Model the reboot race: Docker's automatic start failed while the configured
+# address was absent, then the address appeared and this unit repaired both
+# project services.
+delayed_output=$temporary_root/delayed-bind-output.log
+delayed_docker_log=$temporary_root/delayed-bind-docker.log
+run_boot_script delayed-bind "$delayed_output" "$delayed_docker_log" \
+  || fail "delayed bind-address recovery path failed"
+grep -Fxq 'sleep 5' "$delayed_docker_log" \
+  || fail "boot recovery did not wait for the configured address"
+grep -Fxq 'The harness container is not running; a recreate is required.' "$delayed_output" \
+  || fail "boot recovery did not detect Docker's initial bind failure"
+for service in harness gateway; do
+  grep -Fxq "compose --env-file $runtime_project/.env -f $runtime_project/compose.yaml -f $runtime_project/compose.external-ollama.yaml up -d --force-recreate --no-deps $service" "$delayed_docker_log" \
+    || fail "delayed bind-address recovery did not recreate $service"
+done
 
 # Permanent configuration failures use EX_CONFIG so systemd can suppress the
 # restart loop while ordinary runtime failures remain retryable.

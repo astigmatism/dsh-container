@@ -117,17 +117,23 @@ available.
 >
 > Read `data/maintenance-status` without editing it. Require exactly one value
 > for each of `state`, `updated_at`, `mode`, `branch`, `from_commit`,
-> `target_commit`, `exit_code`, `failure_type`, `failure_stage`, and `recovery`.
+> `target_commit`, `exit_code`, `failure_type`, `failure_stage`, `recovery`, and
+> `boot_service`.
 > The recorded `exit_code` must equal `updater_status`. Success requires
 > `state=ok`, `exit_code=0`,
-> `failure_type=none`, the preserved mode, and a target commit equal to the
-> checkout's `HEAD`. A failure must use `state=failed` and one of these precise
+> `failure_type=none`, the preserved mode, a target commit equal to the
+> checkout's `HEAD`, and a `boot_service` value proving on-disk convergence
+> (`installed`, `updated`, `unchanged`, `started`, or
+> `warning:bus-unreachable`). `warning:bus-unreachable` means only activation
+> is deferred; `warning:host-home-unavailable` must never accompany
+> `state=ok`. A failure must use `state=failed` and one of these precise
 > `failure_type` values:
 >
 > - `git-state`
 > - `deployment-mode-inference`
 > - `docker-compose`
 > - `configuration-verification`
+> - `boot-service`
 > - `model-provider-or-credential`
 > - `application-health`
 >

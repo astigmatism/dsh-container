@@ -55,6 +55,8 @@ the obsolete deepseek-harness/ai-router container after direct-route
 verification and retains its image and data. The updater removes only
 superseded images captured from this project and creates no backup, archive,
 stash, rollback tag, or rollback directory.
+Required boot-service files are converged before fetch; an unavailable host
+home is blocking, while an unavailable user systemd bus defers only activation.
 EOF
 }
 
@@ -66,6 +68,81 @@ done
 get_env() {
   [ -f "$env_file" ] || return 0
   awk -F= -v wanted="$1" '$1 == wanted { print substr($0, index($0, "=") + 1); exit }' "$env_file"
+}
+
+converge_boot_service() {
+  convergence_phase=$1
+  failure_type=boot-service
+  failure_stage=boot-service-$convergence_phase
+
+  if [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ]; then
+    install_home=${DSH_BOOT_SERVICE_HOME:-}
+  else
+    install_home=${HOME:-}
+  fi
+  case "$install_home" in
+    /|"")
+      boot_service=warning:host-home-unavailable
+      echo "Boot-service convergence requires the deploying user's host home; no safe installation home is available." >&2
+      return 1
+      ;;
+    /*) ;;
+    *)
+      boot_service=warning:host-home-unavailable
+      echo "Boot-service convergence requires an absolute host-home path; got: $install_home" >&2
+      return 1
+      ;;
+  esac
+  if [ ! -d "$install_home" ]; then
+    boot_service=warning:host-home-unavailable
+    echo "Boot-service convergence cannot inspect the unavailable host home: $install_home" >&2
+    return 1
+  fi
+  if [ ! -x "$script_dir/install-boot-service.sh" ]; then
+    boot_service=warning:installer-missing
+    echo "Required boot-service installer is missing or not executable: $script_dir/install-boot-service.sh" >&2
+    return 1
+  fi
+
+  installer_argument=
+  if [ "$convergence_phase" = preflight ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      installer_argument=--dry-run
+    else
+      installer_argument=--defer-activation
+    fi
+  fi
+  if [ -n "$installer_argument" ]; then
+    if boot_output=$(HOME="$install_home" "$script_dir/install-boot-service.sh" "$installer_argument" 2>&1); then
+      installer_status=0
+    else
+      installer_status=$?
+    fi
+  elif boot_output=$(HOME="$install_home" "$script_dir/install-boot-service.sh" 2>&1); then
+    installer_status=0
+  else
+    installer_status=$?
+  fi
+  if [ -n "$boot_output" ]; then
+    printf '%s\n' "$boot_output"
+  fi
+  recorded_boot_service=$(printf '%s\n' "$boot_output" | grep '^boot_service=' | tail -n 1 || true)
+  if [ -n "$recorded_boot_service" ]; then
+    boot_service=${recorded_boot_service#boot_service=}
+  else
+    boot_service=warning:installer-failed
+  fi
+
+  if [ "$installer_status" -ne 0 ]; then
+    return "$installer_status"
+  fi
+  case "$boot_service" in
+    installed|updated|unchanged|started|dry-run|warning:bus-unreachable) return 0 ;;
+    warning:host-home-unavailable|*)
+      echo "Boot-service installer did not report successful on-disk convergence: $boot_service" >&2
+      return 1
+      ;;
+  esac
 }
 
 migrate_upstream_pins() {
@@ -144,15 +221,28 @@ delegate_from_harness() {
   # printing the activation commands.
   host_home=
   host_uid=$(get_env HOST_UID)
-  [ -n "$host_uid" ] || host_uid=1000
-  if command -v getent >/dev/null 2>&1; then
-    host_home=$(getent passwd "$host_uid" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')
-  fi
+  case "$host_uid" in
+    ''|*[!0-9]*) ;;
+    *)
+      if command -v getent >/dev/null 2>&1; then
+        host_home=$(getent passwd "$host_uid" 2>/dev/null \
+          | awk -F: -v wanted="$host_uid" '$3 == wanted { print $6; exit }')
+      fi
+      ;;
+  esac
   workspace_root=${HARNESS_WORKSPACE_ROOT:-/host}
   host_workspace=$(get_env HOST_FILESYSTEM_SOURCE)
   [ -n "$host_workspace" ] || host_workspace=/
   [ "$workspace_root" = / ] || workspace_root=${workspace_root%/}
   [ "$host_workspace" = / ] || host_workspace=${host_workspace%/}
+
+  case "$workspace_root:$host_workspace" in
+    /*:/*) ;;
+    *)
+      echo "Cannot delegate maintenance: host filesystem source and container target must both be absolute paths." >&2
+      return 1
+      ;;
+  esac
 
   if [ "$workspace_root" = / ]; then
     project_relative=$project_dir
@@ -172,6 +262,37 @@ delegate_from_harness() {
     host_project_dir=$host_workspace$project_relative
   fi
 
+  # A bind source passed with --volume may be silently created by Docker when
+  # it does not exist. Verify that passwd supplied an absolute, non-root home
+  # inside the configured host-filesystem view, then use --mount so Docker
+  # itself also refuses a missing source.
+  visible_host_home=
+  case "$host_home" in
+    /|*','*) host_home= ;;
+    /*)
+      if [ "$host_workspace" = / ]; then
+        home_relative=$host_home
+      else
+        case "$host_home" in
+          "$host_workspace") home_relative= ;;
+          "$host_workspace"/*) home_relative=${host_home#"$host_workspace"} ;;
+          *) host_home= ;;
+        esac
+      fi
+      if [ -n "$host_home" ]; then
+        if [ "$workspace_root" = / ]; then
+          visible_host_home=${home_relative:-/}
+        else
+          visible_host_home=$workspace_root$home_relative
+        fi
+        if [ ! -d "$visible_host_home" ]; then
+          host_home=
+        fi
+      fi
+      ;;
+    *) host_home= ;;
+  esac
+
   case "$host_home" in
     /*)
     # Both bind sources are host-native paths. Docker resolves them in the
@@ -185,7 +306,7 @@ delegate_from_harness() {
       --env DSH_UPDATE_DELEGATED=1 \
       --env DSH_UPDATE_CONTAINER_NAME="$maintenance_name" \
       --env HOME=/tmp \
-      --volume "$host_home:$host_home" \
+      --mount "type=bind,source=$host_home,target=$host_home" \
       --env "DSH_BOOT_SERVICE_HOME=$host_home" \
       --volume /var/run/docker.sock:/var/run/docker.sock \
       --volume "$host_project_dir:$host_project_dir" \
@@ -195,6 +316,7 @@ delegate_from_harness() {
       ./scripts/update-and-restart.sh "$@")
       ;;
     *)
+    echo "Warning: delegated maintenance could not safely resolve the configured host user's home; the helper will record a blocking boot-service failure before fetch." >&2
     maintenance_id=$(docker run --detach --rm --init \
       --name "$maintenance_name" \
       --pull=never \
@@ -485,6 +607,15 @@ if ! "$script_dir/verify-persisted-settings.sh"; then
   exit 1
 fi
 
+if ! converge_boot_service preflight; then
+  if [ "$resume" -eq 1 ]; then
+    echo "Required boot-service convergence failed after fast-forward and before rebuild or service changes." >&2
+  else
+    echo "Required boot-service convergence failed before fetch, rebuild, or service changes." >&2
+  fi
+  exit 1
+fi
+
 if [ "$dry_run" -eq 1 ] || [ "$resume" -eq 1 ]; then
   failure_type=configuration-verification
   failure_stage=upstream-pin-migration
@@ -572,7 +703,7 @@ echo "Deploying and verifying commit $(git_repo rev-parse --short HEAD)..."
 failure_stage=compose-deploy
 deployment_started=1
 set +e
-"$script_dir/deploy.sh" "$mode_flag" --no-build
+DSH_BOOT_SERVICE_MANAGED_BY_UPDATER=1 "$script_dir/deploy.sh" "$mode_flag" --no-build
 deploy_status=$?
 set -e
 if [ "$deploy_status" -ne 0 ]; then
@@ -593,6 +724,10 @@ if [ "$deploy_status" -ne 0 ]; then
       failure_type=application-health
       failure_stage=application-health-verification
       ;;
+    24)
+      failure_type=boot-service
+      failure_stage=boot-service-deployment
+      ;;
     *)
       failure_type=docker-compose
       failure_stage=compose-deploy
@@ -600,36 +735,12 @@ if [ "$deploy_status" -ne 0 ]; then
   esac
   exit "$deploy_status"
 fi
-deployment_started=0
 
-# Post-deployment, best effort: install or refresh the after-network boot
-# service on the host. In the delegated maintenance container the host home
-# is mounted at its real path (DSH_BOOT_SERVICE_HOME); on the host this is
-# the operator's own $HOME. The outcome is logged and recorded in
-# maintenance-status, but it never changes maintenance state or exit_code.
-if [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ] \
-  && { [ -z "${DSH_BOOT_SERVICE_HOME:-}" ] || [ ! -d "${DSH_BOOT_SERVICE_HOME:-}" ]; }; then
-  boot_service=warning:host-home-unavailable
-  echo "Warning: the host home is not available in this maintenance context; the boot service was not refreshed." >&2
-else
-  installer_home=${DSH_BOOT_SERVICE_HOME:-$HOME}
-  if [ -x "$script_dir/install-boot-service.sh" ]; then
-    boot_output=$(HOME="$installer_home" "$script_dir/install-boot-service.sh" 2>&1) \
-      || boot_service=warning:installer-failed
-    if [ -n "$boot_output" ]; then
-      printf '%s\n' "$boot_output"
-    fi
-    if [ "$boot_service" = not-run ]; then
-      recorded_boot_service=$(printf '%s\n' "$boot_output" | grep '^boot_service=' | tail -n 1 || true)
-      if [ -n "$recorded_boot_service" ]; then
-        boot_service=${recorded_boot_service#boot_service=}
-      fi
-    fi
-  else
-    boot_service=warning:installer-missing
-    echo "Warning: scripts/install-boot-service.sh is missing; the boot service was not refreshed." >&2
-  fi
+if ! converge_boot_service activation; then
+  echo "Deployment succeeded, but required boot-service activation/convergence failed." >&2
+  exit 24
 fi
+deployment_started=0
 
 failure_type=docker-compose
 failure_stage=image-inventory

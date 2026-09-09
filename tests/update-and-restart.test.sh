@@ -46,7 +46,7 @@ make_fixture() {
   fixture_name=$1
   runtime_kind=$2
   fixture=$temporary_root/$fixture_name
-  mkdir -p "$fixture/scripts" "$fixture/config" "$fixture/data/dsh" "$fixture/fake-bin"
+  mkdir -p "$fixture/scripts" "$fixture/config" "$fixture/data/dsh" "$fixture/fake-bin" "$fixture/home"
   cp "$source_root/scripts/update-and-restart.sh" "$fixture/scripts/"
   cp "$source_root/scripts/configure.sh" "$fixture/scripts/"
   cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/scripts/"
@@ -249,8 +249,9 @@ run_update "$fixture" --external-ollama
 [ "$update_status" -eq 0 ] || fail "updater resume path failed"
 assert_status "$fixture" 'state=ok'
 assert_status "$fixture" 'exit_code=0'
-# The post-deployment boot-service step ran against the fixture HOME with the
-# bus unreachable; it must be recorded without affecting state or exit_code.
+# Preflight converged the boot-service files in the fixture HOME and the
+# post-deployment activation found the bus unreachable; only activation is
+# deferred, so state and exit_code remain successful.
 assert_status "$fixture" 'boot_service=warning:bus-unreachable'
 [ -f "$fixture/home/.config/systemd/user/deepseek-harness-after-network.service" ] \
   || fail "post-deployment step did not install the boot unit into the fixture home"
@@ -312,8 +313,8 @@ grep -Fq 'exact legacy Harness pins will migrate' "$fixture/output.log" \
 # the helper, not its ephemeral HOME. The initial handoff maps the checkout
 # from HARNESS_WORKSPACE_ROOT to HOST_FILESYSTEM_SOURCE, while both Docker bind
 # sources remain host-native paths.
-grep -Fq -- '--volume "$host_home:$host_home"' "$source_root/scripts/update-and-restart.sh" \
-  || fail "delegation does not pass the real host-home bind source to Docker"
+grep -Fq -- '--mount "type=bind,source=$host_home,target=$host_home"' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation does not safely bind the real host-home source into Docker"
 if grep -Fq -- '--volume "${workspace_root}${host_home}:' "$source_root/scripts/update-and-restart.sh"; then
   fail "delegation passes the harness /host view as a Docker bind source"
 fi
@@ -331,6 +332,20 @@ if grep -Fq -- '--volume "$project_dir:$project_dir"' "$source_root/scripts/upda
   fail "delegation passes the harness checkout view as a Docker bind source"
 fi
 
+make_fixture delegated-without-host-home matching
+TEST_UPDATE_DELEGATED=1
+run_update "$fixture" --external-ollama
+unset TEST_UPDATE_DELEGATED
+[ "$update_status" -ne 0 ] || fail "delegated maintenance without a host home reported success"
+assert_status "$fixture" 'state=failed'
+assert_status "$fixture" 'exit_code=1'
+assert_status "$fixture" 'failure_type=boot-service'
+assert_status "$fixture" 'failure_stage=boot-service-preflight'
+assert_status "$fixture" 'boot_service=warning:host-home-unavailable'
+assert_no_fetch_or_mutation "$fixture"
+[ ! -e "$fixture/home/.config/systemd/user/deepseek-harness-after-network.service" ] \
+  || fail "host-home failure installed the boot unit into the helper's ephemeral HOME"
+
 make_fixture delegated-host-home matching
 delegated_home=$fixture/mounted-host-home
 delegated_legacy=$delegated_home/.config/systemd/user/deepseek-harness-after-network.service.d/10-project-path.conf
@@ -345,6 +360,8 @@ TEST_BOOT_SERVICE_HOME=$delegated_home
 run_update "$fixture" --external-ollama
 unset TEST_UPDATE_DELEGATED TEST_BOOT_SERVICE_HOME
 [ "$update_status" -eq 0 ] || fail "delegated host-home update failed"
+assert_status "$fixture" 'state=ok'
+assert_status "$fixture" 'exit_code=0'
 assert_status "$fixture" 'boot_service=warning:bus-unreachable'
 delegated_unit=$delegated_home/.config/systemd/user/deepseek-harness-after-network.service
 [ -f "$delegated_unit" ] \
@@ -353,8 +370,33 @@ delegated_unit=$delegated_home/.config/systemd/user/deepseek-harness-after-netwo
   || fail "delegated host-home install did not migrate the exact legacy drop-in"
 grep -Fxq "ExecStart=$fixture/start-after-network.sh" "$delegated_unit" \
   || fail "delegated update installed a non-direct or incorrect ExecStart"
+[ "$(readlink "$delegated_home/.config/systemd/user/default.target.wants/deepseek-harness-after-network.service")" = ../deepseek-harness-after-network.service ] \
+  || fail "delegated update did not preserve default.target enablement"
+grep -Fq 'Removed recognized legacy drop-in' "$fixture/output.log" \
+  || fail "delegated update did not report the legacy migration"
 [ ! -e "$fixture/home/.config/systemd/user/deepseek-harness-after-network.service" ] \
   || fail "delegated update installed the unit into its ephemeral HOME"
+
+make_fixture boot-activation-failure matching
+{
+  echo '#!/bin/sh'
+  echo 'if [ "${1:-}" = --defer-activation ]; then'
+  echo '  echo boot_service=unchanged'
+  echo '  exit 0'
+  echo 'fi'
+  echo 'echo boot_service=warning:installer-failed'
+  echo 'exit 1'
+} >"$fixture/scripts/install-boot-service.sh"
+chmod +x "$fixture/scripts/install-boot-service.sh"
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 24 ] \
+  || fail "required boot-service activation failure exited $update_status instead of 24"
+assert_status "$fixture" 'state=failed'
+assert_status "$fixture" 'exit_code=24'
+assert_status "$fixture" 'failure_type=boot-service'
+assert_status "$fixture" 'failure_stage=boot-service-activation'
+assert_status "$fixture" 'boot_service=warning:installer-failed'
+assert_status "$fixture" 'recovery=succeeded'
 
 external_prefix="compose --env-file $fixture/.env -f $fixture/compose.yaml -f $fixture/compose.external-ollama.yaml"
 config_line=$(line_number "$external_prefix config --quiet" "$fixture/docker.log")
@@ -645,7 +687,8 @@ for mapping in \
   '20 docker-compose' \
   '21 configuration-verification' \
   '22 model-provider-or-credential' \
-  '23 application-health'
+  '23 application-health' \
+  '24 boot-service'
 do
   exit_code=${mapping%% *}
   expected_type=${mapping#* }

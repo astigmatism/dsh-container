@@ -36,6 +36,17 @@ if [ ! -f "$project_dir/.env" ]; then
   "$script_dir/configure.sh"
 fi
 
+# Boot integration is a deployment invariant. Converge its on-disk unit and
+# enablement before Compose can build or change services. The updater performs
+# this same preflight itself so it can record the result in maintenance-status.
+if [ "${DSH_BOOT_SERVICE_MANAGED_BY_UPDATER:-0}" != 1 ]; then
+  if [ ! -x "$script_dir/install-boot-service.sh" ] \
+    || ! "$script_dir/install-boot-service.sh" --defer-activation; then
+    echo "Required boot-service files could not be converged; services were not changed." >&2
+    exit 24
+  fi
+fi
+
 if [ -z "$mode" ]; then
   recorded_mode=$(awk -F= '$1 == "DSH_DEPLOYMENT_MODE" { print substr($0, index($0, "=") + 1); exit }' "$project_dir/.env")
   case "$recorded_mode" in
@@ -121,9 +132,11 @@ if [ "$mode" = remote ]; then
   fi
 fi
 
-# Post-deployment, best effort: install or refresh the after-network boot
-# service on the host. A problem here is logged but never fails an otherwise
-# successful deployment.
-if ! "$script_dir/install-boot-service.sh"; then
-  echo "Warning: the boot service installer reported a problem; the deployment is unaffected." >&2
+# Activate the already-converged unit after a successful standalone deploy.
+# An unreachable user bus is reported by the installer but remains success
+# because the on-disk unit and default.target enablement are complete.
+if [ "${DSH_BOOT_SERVICE_MANAGED_BY_UPDATER:-0}" != 1 ] \
+  && ! "$script_dir/install-boot-service.sh"; then
+  echo "Deployment succeeded, but required boot-service activation/convergence failed." >&2
+  exit 24
 fi

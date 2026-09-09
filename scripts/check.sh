@@ -102,6 +102,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node scripts/verify-local-model-profiles.mjs config/settings.yaml
     node --check scripts/verify-dsh-context-compaction.mjs
     node --check scripts/verify-dsh-semantic-progress.mjs
+    node --check scripts/verify-dsh-token-policy.mjs
     node --check scripts/qualify-dsh-read-schema.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
@@ -199,6 +200,14 @@ if [ "$build" -eq 1 ]; then
     if (!connection.includes("dsh-container-web-launch-token-v1")) {
       throw new Error("Harness connection is missing colocated-gateway authentication");
     }
+  '
+
+  docker run --rm --network none --env DSH_HOME=/opt/dsh-seed \
+    --entrypoint /bin/sh "$harness_image" -eu -c '
+    dsh --profile web --dump-config \
+      | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled
+    DSH_TOKEN_ENABLED=true dsh --profile web --dump-config \
+      | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config enabled
   '
 
   docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '

@@ -21,6 +21,7 @@ owner_file=$lock_dir/owner
 resume=${DSH_UPDATE_RESUME:-0}
 resume_temporary=
 pin_temporary=
+token_policy_temporary=
 unset DSH_UPDATE_RESUME
 export GIT_TERMINAL_PROMPT=0
 
@@ -56,6 +57,9 @@ the obsolete deepseek-harness/ai-router container after direct-route
 verification and retains its image and data. The updater removes only
 superseded images captured from this project and creates no backup, archive,
 stash, rollback tag, or rollback directory.
+The fetched updater records DSH_TOKEN_ENABLED=false when the setting is absent,
+preserves exact true/false values, and rejects ambiguous values before Compose
+is interrupted.
 Required boot-service files are converged before fetch; an unavailable host
 home is blocking, while an unavailable user systemd bus defers only activation.
 EOF
@@ -186,6 +190,39 @@ converge_boot_service() {
       return 1
       ;;
   esac
+}
+
+migrate_token_policy() {
+  policy_count=$(awk -F= '$1 == "DSH_TOKEN_ENABLED" { count++ } END { print count + 0 }' "$env_file")
+  if [ "$policy_count" -gt 1 ]; then
+    echo "DSH_TOKEN_ENABLED must occur at most once in .env; found $policy_count entries." >&2
+    return 1
+  fi
+  if [ "$policy_count" -eq 1 ]; then
+    configured_policy=$(get_env DSH_TOKEN_ENABLED)
+    case "$configured_policy" in
+      true|false) return 0 ;;
+      *)
+        echo "DSH_TOKEN_ENABLED must be exactly true or false; found '$configured_policy'." >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    echo "Token UI:   would record the safe default DSH_TOKEN_ENABLED=false"
+    return 0
+  fi
+
+  token_policy_temporary=$(mktemp "$project_dir/.env.token-policy.XXXXXX")
+  {
+    cat "$env_file"
+    echo "DSH_TOKEN_ENABLED=false"
+  } >"$token_policy_temporary"
+  chmod 0600 "$token_policy_temporary"
+  mv "$token_policy_temporary" "$env_file"
+  token_policy_temporary=
+  echo "Recorded DSH_TOKEN_ENABLED=false; token statistics remain available only by explicit opt-in."
 }
 
 migrate_upstream_pins() {
@@ -593,6 +630,9 @@ finish() {
   if [ -n "$pin_temporary" ]; then
     rm -f "$pin_temporary"
   fi
+  if [ -n "$token_policy_temporary" ]; then
+    rm -f "$token_policy_temporary"
+  fi
   rm -f "$lock_dir/pid" "$resume_file" "$owner_file"
   rmdir "$lock_dir" 2>/dev/null || true
   exit "$status"
@@ -834,6 +874,8 @@ fi
 
 if [ "$dry_run" -eq 1 ] || [ "$resume" -eq 1 ]; then
   failure_type=configuration-verification
+  failure_stage=safe-default-migration
+  migrate_token_policy
   failure_stage=upstream-pin-migration
   migrate_upstream_pins
 fi
@@ -845,7 +887,7 @@ if [ "$dry_run" -eq 1 ]; then
   echo "Mode:       $mode"
   echo "Worktree:   clean"
   echo "Settings:   non-empty runtime configuration with service ownership and secure mode"
-  echo "Plan:       fetch/fast-forward, revalidate with fetched updater, migrate exact legacy Harness pins, pull/build, deploy, verify, remove superseded project images"
+  echo "Plan:       fetch/fast-forward, revalidate with fetched updater, record the safe token-plugin default, migrate exact legacy Harness pins, pull/build, deploy, verify, remove superseded project images"
   echo "Rollback:   no backups or rollback artifacts will be created"
   exit 0
 fi

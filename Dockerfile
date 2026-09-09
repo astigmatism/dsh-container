@@ -52,6 +52,7 @@ COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inferen
 COPY scripts/verify-local-model-profiles.mjs /opt/dsh-build/verify-local-model-profiles.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
+COPY scripts/verify-dsh-token-policy.mjs /opt/dsh-build/verify-dsh-token-policy.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
 COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
@@ -111,6 +112,8 @@ RUN cd /opt/dsh-seed/profiles/web \
     && node /opt/dsh-build/patch-dsh-playwright-webserver.mjs \
     && dsh --profile web --dump-config >/dev/null \
     && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-context-compaction.mjs --effective-config \
+    && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled \
+    && DSH_TOKEN_ENABLED=true dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config enabled \
     && node /opt/dsh-build/verify-dsh-semantic-progress.mjs \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \

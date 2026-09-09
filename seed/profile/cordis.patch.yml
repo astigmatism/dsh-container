@@ -13,6 +13,15 @@
 - id: session-title-llm
   disabled: true
 
+# @zoytown/dsh-token 0.1.3 can retain gigabytes of native memory while
+# refolding concatenated Zstandard session frames. It also invalidates its
+# durable cache when bind-mounted device/inode identities change during a
+# container recreation. There is no fixed upstream release, so token
+# statistics are fail-closed by default. Operators accepting that risk can
+# opt in explicitly; the package remains installed for a reversible rollout.
+- id: dsh-token
+  disabled: !!js "(process.env.DSH_TOKEN_ENABLED ?? 'false').toLowerCase() !== 'true'"
+
 # Web disables the base compaction stack by default. Re-enable the complete
 # durable path here: proactive step pressure, one bounded canonical-overflow
 # recovery, the idle /compact operator command, and replay-safe tool pruning.

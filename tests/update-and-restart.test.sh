@@ -72,6 +72,7 @@ make_fixture() {
     printf 'HOST_UID=%s\n' "$(id -u)"
     printf 'HOST_GID=%s\n' "$(id -g)"
     printf 'HOST_HOME=%s\n' "$fixture/home"
+    printf '%s\n' 'DSH_TOKEN_ENABLED=false'
   } >"$fixture/.env"
   : >"$fixture/git.log"
   : >"$fixture/docker.log"
@@ -292,6 +293,33 @@ grep -Fq 'Restarting maintenance under the fetched updater before service interr
   || fail "resumed updater fetched more than once"
 [ ! -e "$fixture/data/update-and-restart.lock" ] \
   || fail "successful updater left its transferred lock behind"
+
+make_fixture missing-token-policy matching
+awk -F= '$1 != "DSH_TOKEN_ENABLED"' "$fixture/.env" >"$fixture/.env.without-token-policy"
+mv "$fixture/.env.without-token-policy" "$fixture/.env"
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "missing token-plugin policy blocked maintenance"
+grep -Fxq 'DSH_TOKEN_ENABLED=false' "$fixture/.env" \
+  || fail "updater did not persist the safe token-plugin default"
+grep -Fq 'token statistics remain available only by explicit opt-in' "$fixture/output.log" \
+  || fail "token-plugin safety migration was not reported"
+
+make_fixture opted-in-token-policy matching
+sed 's/^DSH_TOKEN_ENABLED=false$/DSH_TOKEN_ENABLED=true/' "$fixture/.env" >"$fixture/.env.opted-in"
+mv "$fixture/.env.opted-in" "$fixture/.env"
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "explicit token-plugin opt-in blocked maintenance"
+grep -Fxq 'DSH_TOKEN_ENABLED=true' "$fixture/.env" \
+  || fail "updater did not preserve the explicit token-plugin opt-in"
+
+make_fixture invalid-token-policy matching
+sed 's/^DSH_TOKEN_ENABLED=false$/DSH_TOKEN_ENABLED=surprise/' "$fixture/.env" >"$fixture/.env.invalid-token-policy"
+mv "$fixture/.env.invalid-token-policy" "$fixture/.env"
+run_update "$fixture" --external-ollama
+[ "$update_status" -ne 0 ] || fail "invalid token-plugin policy unexpectedly passed"
+assert_no_interruption "$fixture"
+grep -Fq 'must be exactly true or false' "$fixture/output.log" \
+  || fail "invalid token-plugin policy diagnostic was not reported"
 
 make_fixture legacy-harness-pins matching
 {

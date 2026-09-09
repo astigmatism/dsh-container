@@ -250,6 +250,23 @@ if ! compose exec -T harness dsh --profile web --dump-config \
   exit "$configuration_exit"
 fi
 
+token_enabled=$(get_env DSH_TOKEN_ENABLED)
+[ -n "$token_enabled" ] || token_enabled=false
+case "$token_enabled" in
+  true) expected_token_policy=enabled ;;
+  false) expected_token_policy=disabled ;;
+  *)
+    echo "DSH_TOKEN_ENABLED must be exactly true or false." >&2
+    exit "$configuration_exit"
+    ;;
+esac
+if ! compose exec -T harness dsh --profile web --dump-config \
+  | compose exec -T harness node /opt/dsh-build/verify-dsh-token-policy.mjs \
+      --effective-config "$expected_token_policy"; then
+  echo "The effective token-plugin policy does not match the explicit deployment setting." >&2
+  exit "$configuration_exit"
+fi
+
 # The browser module is generated from the pinned DSH package during the image
 # build. Compile the exact deployed files and require the cancellation and
 # in-app workspace-file behavior markers.

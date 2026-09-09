@@ -13,6 +13,13 @@
     "dsh-session-pin": "0.7.7",
     "dsh-ui-appearance": "0.1.8"
   },
+  "policies": {
+    "@zoytown/dsh-token": {
+      "enabledByDefault": false,
+      "optIn": "DSH_TOKEN_ENABLED=true",
+      "reason": "0.1.3 performs inode/device-sensitive full refolds with per-frame synchronous Zstandard decompression and has caused repeatable multi-gigabyte Harness RSS growth"
+    }
+  },
   "localProviders": {
     "web-search": "dsh-web-search-free v2 (DuckDuckGo with Bing fallback)"
   }

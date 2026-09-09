@@ -47,7 +47,9 @@ needs the NVIDIA Container Toolkit.
 The locked web profile contains these nine plugins:
 
 1. `@zoytown/dsh-token` 0.1.3 with a narrowly anchored session-format-v3
-   compatibility patch (the upstream plugin has no newer release)
+   compatibility patch, installed but disabled by default because its
+   inode/device-sensitive refold path and per-frame synchronous Zstandard
+   decompression have caused repeatable multi-gigabyte Harness RSS growth
 2. `dsh-context` 0.47.0
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
@@ -63,6 +65,20 @@ The locked web profile contains these nine plugins:
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 `seed/` for the exact manifest, lockfile, provider, and patch.
+
+Token statistics are the only deliberately unavailable default feature. There
+is no fixed `@zoytown/dsh-token` release whose memory behavior can be proven
+bounded. To accept the known refold/OOM risk for a controlled experiment, set
+`DSH_TOKEN_ENABLED=true` in `.env` and rebuild/restart. Omitting the variable
+or setting it to `false` keeps both the host scanner and token-statistics UI
+unloaded; package installation alone does not enable them.
+
+After deploying a host with the incident data, run
+`./scripts/verify-dsh-token-memory.sh --require-incident-fixture`. It requires
+the 52-artifact fixture, samples the Harness Node RSS at startup and across
+three 35-second boundaries (longer than the plugin's 30-second refresh), and
+fails on monotonic growth, excessive RSS/growth, an OOM flag, a restart or
+recreation, or any write to the disabled plugin's durable index.
 
 ## Shared browser and visual validation
 
@@ -593,7 +609,10 @@ before it can change services. During this handoff, exact legacy
 `0.1.1-rc.2` package/image pins are atomically migrated to the qualified
 `0.1.5-alpha.1` tag and its recorded upstream commit; deliberately customized
 pins are left unchanged, and dry-run reports the migration without editing
-`.env`. This lets the same updater carry the release across existing home-network
+`.env`. The fetched updater also records `DSH_TOKEN_ENABLED=false` when an
+older `.env` has no token-plugin policy, while preserving an existing exact
+`true` opt-in or `false` setting. Any other or duplicated value is rejected
+before Compose is interrupted. This lets the same updater carry the release across existing home-network
 deployments without replacing their model, router, credentials, or other
 machine-local settings. The updater pulls non-buildable images and builds
 the selected topology while the current deployment remains available, then uses

@@ -68,6 +68,8 @@ if Path(unix_workspace["source"]).resolve() != Path("/").resolve():
     raise SystemExit(f"Unix root is not the default workspace source: {unix_workspace!r}")
 if harness["working_dir"] != "/host" or harness["environment"].get("HOME") != "/host":
     raise SystemExit("Harness does not default its workspace picker to /host")
+if harness["environment"].get("DSH_TOKEN_ENABLED") != "false":
+    raise SystemExit("Harness does not fail closed when the unsafe token plugin is not explicitly enabled")
 
 session_volume = next(
     volume for volume in harness["volumes"]

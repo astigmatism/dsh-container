@@ -44,6 +44,10 @@ services:
       # in trusted application-validation deployments that need LAN/container
       # targets; dsh-playwright otherwise blocks private hosts and subresources.
       DSH_BROWSER_ALLOW_PRIVATE_HOSTS: "${DSH_BROWSER_ALLOW_PRIVATE_HOSTS:-false}"
+      # The newest dsh-token release has a repeatable multi-gigabyte native
+      # memory failure while refolding session artifacts. Keep it fail-closed
+      # unless an operator deliberately accepts that risk.
+      DSH_TOKEN_ENABLED: "${DSH_TOKEN_ENABLED:-false}"
     volumes:
       - ./data/dsh:/data/dsh
       - ./data/backend-auth:/run/dsh-backend-auth

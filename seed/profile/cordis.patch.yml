@@ -61,6 +61,8 @@
 # rendered in DSH's Browser Use panel. Private targets are an explicit
 # deployment choice because enabling them also permits private subresources.
 - id: dsh-playwright
+  inject:
+    - webServer
   config:
     browserExecutablePath: /usr/bin/chromium
     viewportWidth: 1440

@@ -155,6 +155,12 @@ if [ "$ok" -ge "$stable" ] && probe_browser_client; then
   browser_ok=1
 fi
 
+stream_ok=0
+if [ "$ok" -ge "$stable" ] \
+  && DSH_WEB_PORT=$port node /opt/dsh-build/verify-dsh-playwright-stream.mjs; then
+  stream_ok=1
+fi
+
 kill "$boot_pid" 2>/dev/null || true
 wait "$boot_pid" 2>/dev/null || true
 
@@ -173,4 +179,11 @@ if [ "$browser_ok" -ne 1 ]; then
   exit 1
 fi
 
-echo "Plugin boot check passed: the authenticated web profile and composed browser client loaded cleanly."
+if [ "$stream_ok" -ne 1 ]; then
+  echo "Plugin boot check failed: the Browser Use WebSocket route was not mounted." >&2
+  echo "Last Harness startup output:" >&2
+  print_boot_log || true
+  exit 1
+fi
+
+echo "Plugin boot check passed: the authenticated web profile, composed browser client, and Browser Use stream route loaded cleanly."

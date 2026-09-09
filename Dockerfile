@@ -53,6 +53,7 @@ COPY scripts/verify-local-model-profiles.mjs /opt/dsh-build/verify-local-model-p
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/verify-dsh-token-policy.mjs /opt/dsh-build/verify-dsh-token-policy.mjs
+COPY scripts/verify-dsh-playwright-stream.mjs /opt/dsh-build/verify-dsh-playwright-stream.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
 COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
@@ -123,7 +124,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-playwright-webserver-scope-v1' node_modules/dsh-playwright/lib/index.js \
+    && grep -Fq 'dsh-playwright-web-transport-scope-v5' node_modules/dsh-playwright/lib/index.js \
     && grep -Fq 'dsh-session-pin@0.7.7' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ui-appearance@0.1.8' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \

@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-08",
+  "capturedAt": "2026-09-09",
   "dsh": "0.1.5-alpha.1 (dsh-v0.1.5-alpha.1; 5dda764ed3aa172535a7967b06ff95d9cbfe536a)",
   "profile": "web",
   "plugins": {
@@ -8,10 +8,14 @@
     "dsh-favicon-status": "0.1.0-rc.5",
     "dsh-local-speech-input": "0.1.0 (local)",
     "dsh-loop-detector": "1.0.0 (local patch)",
-    "dsh-playwright": "0.1.0 (local patch)",
+    "dsh-playwright": "0.1.0 (local panel patch; complete web-transport scopes integration v5)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-session-pin": "0.7.7",
     "dsh-ui-appearance": "0.1.8"
+  },
+  "sourceHeads": {
+    "@zoytown/dsh-token": "https://github.com/zoyluoblue/deepseek-harness-token@8b75452985fc47bdc00b914053cf4c5c1cbe4898",
+    "dsh-playwright": "https://github.com/JeremyGuo/dsh-playwright@9e8faf48cdcd479a777e52f5600899206a77f8af"
   },
   "policies": {
     "@zoytown/dsh-token": {

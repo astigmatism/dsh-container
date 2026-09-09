@@ -54,8 +54,9 @@ The locked web profile contains these nine plugins:
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
 5. `dsh-playwright` 0.1.0 with its existing panel-layout patch and a narrowly
-   anchored web-server-scope compatibility patch, providing the shared Browser
-   Use panel and model-facing Playwright tools
+   anchored web-transport-scope compatibility patch, with the web-server
+   dependency declared at the profile loader boundary; it provides the shared
+   Browser Use panel and model-facing Playwright tools
 6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
 7. `dsh-session-pin` 0.7.7
@@ -65,6 +66,12 @@ The locked web profile contains these nine plugins:
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 `seed/` for the exact manifest, lockfile, provider, and patch.
+
+The upstream repositories were rechecked on 2026-09-09. Their current heads
+still publish `@zoytown/dsh-token` 0.1.3 and `dsh-playwright` 0.1.0; the exact
+observed commits are recorded in `config/plugins.lock.json`. No unpublished
+token-memory repair or newer shared-panel implementation was available to
+adopt.
 
 Token statistics are the only deliberately unavailable default feature. There
 is no fixed `@zoytown/dsh-token` release whose memory behavior can be proven

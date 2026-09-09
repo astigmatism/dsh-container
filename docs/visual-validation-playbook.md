@@ -52,8 +52,9 @@ For an internal target, require the setting explicitly:
 ```
 
 The script verifies the pinned plugin, launches Chromium headlessly as a smoke
-test, and checks that `local-active` advertises complete image, vision, and tool
-support. It does not replace the model-level acceptance prompt below.
+test, proves the live Browser Use WebSocket upgrade route is mounted, and
+checks that `local-active` advertises complete image, vision, and tool support.
+It does not replace the model-level acceptance prompt below.
 
 ## Pipeline acceptance prompt
 

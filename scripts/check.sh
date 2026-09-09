@@ -103,6 +103,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/verify-dsh-context-compaction.mjs
     node --check scripts/verify-dsh-semantic-progress.mjs
     node --check scripts/verify-dsh-token-policy.mjs
+    node --check scripts/verify-dsh-playwright-stream.mjs
     node --check scripts/qualify-dsh-read-schema.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
@@ -194,8 +195,8 @@ if [ "$build" -eq 1 ]; then
     if (!token.includes("dsh-token-session-format-v3-compat-v1")) {
       throw new Error("dsh-token is missing format v3 compatibility");
     }
-    if (!playwright.includes("dsh-playwright-webserver-scope-v1")) {
-      throw new Error("dsh-playwright is missing scoped webServer compatibility");
+    if (!playwright.includes("dsh-playwright-web-transport-scope-v5")) {
+      throw new Error("dsh-playwright is missing scoped web transport compatibility");
     }
     if (!connection.includes("dsh-container-web-launch-token-v1")) {
       throw new Error("Harness connection is missing colocated-gateway authentication");

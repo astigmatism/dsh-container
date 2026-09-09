@@ -200,13 +200,18 @@ if ! compose exec -T harness node --input-type=module -e '
   import { readFile } from "node:fs/promises";
   const path = "/data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js";
   const source = await readFile(path, "utf8");
-  if (!source.includes("dsh-playwright-webserver-scope-v1")) {
-    throw new Error("deployed dsh-playwright is missing scoped webServer compatibility");
+  if (!source.includes("dsh-playwright-web-transport-scope-v5")) {
+    throw new Error("deployed dsh-playwright is missing scoped web transport compatibility");
   }
-  console.log("Verified dsh-playwright scoped webServer compatibility.");
+  console.log("Verified dsh-playwright scoped web transport compatibility.");
 '; then
-  echo "The deployed Browser Use plugin is incompatible with the current web server scope." >&2
+  echo "The deployed Browser Use plugin is incompatible with the current web transport scope." >&2
   exit "$configuration_exit"
+fi
+
+if ! compose exec -T harness node /opt/dsh-build/verify-dsh-playwright-stream.mjs; then
+  echo "The deployed Browser Use WebSocket route is not mounted." >&2
+  exit "$application_health_exit"
 fi
 
 # Exercise the exact installed adapter and pi-ai package, including dynamic

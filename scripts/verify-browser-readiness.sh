@@ -53,6 +53,11 @@ docker exec "$container" sh -eu -c '
   exit 1
 }
 
+docker exec "$container" node /opt/dsh-build/verify-dsh-playwright-stream.mjs || {
+  echo "The Browser Use panel stream route is not mounted." >&2
+  exit 1
+}
+
 docker exec "$container" node --input-type=module -e '
   const response = await fetch("http://ai-router:11434/v1/models");
   if (!response.ok) throw new Error(`model discovery returned HTTP ${response.status}`);
@@ -81,4 +86,4 @@ if [ "$require_private" -eq 1 ]; then
     }
 fi
 
-echo "Browser readiness checks passed. Run the model acceptance prompt from docs/visual-validation-playbook.md to verify screenshot reasoning."
+echo "Browser and panel-stream readiness checks passed. Run the model acceptance prompt from docs/visual-validation-playbook.md to verify screenshot reasoning."

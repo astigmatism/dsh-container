@@ -591,7 +591,9 @@ machine-local settings. The updater pulls non-buildable images and builds
 the selected topology while the current deployment remains available, then uses
 the normal verified deployment command without an explicit `compose down` or
 `compose stop`. It creates no backup or rollback artifacts. After success it
-removes only superseded image IDs captured from this Compose project; it never
+removes only superseded image IDs captured directly from this Compose project's
+containers. This remains reliable when an active container's original image tag
+has been replaced or its old image-store record has been collected. It never
 runs a global Docker prune. Remote-mode deployment additionally removes the
 exact obsolete `deepseek-harness/ai-router` container only after direct-route
 verification, while retaining its image and persistent data.

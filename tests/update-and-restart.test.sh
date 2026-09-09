@@ -119,6 +119,10 @@ run_update() {
     FAKE_LOCK_CONTAINER_RUNNING="${TEST_LOCK_CONTAINER_RUNNING:-true}" \
     FAKE_COMPOSE_VERSION_EXIT="${TEST_COMPOSE_VERSION_EXIT:-0}" \
     FAKE_COMPOSE_CONFIG_EXIT="${TEST_COMPOSE_CONFIG_EXIT:-0}" \
+    FAKE_COMPOSE_CONTAINER_ID="${TEST_COMPOSE_CONTAINER_ID:-}" \
+    FAKE_CONTAINER_IMAGE_ID="${TEST_CONTAINER_IMAGE_ID:-}" \
+    FAKE_CONTAINER_IMAGE_INSPECT_EXIT="${TEST_CONTAINER_IMAGE_INSPECT_EXIT:-0}" \
+    FAKE_COMPOSE_PS_EXIT="${TEST_COMPOSE_PS_EXIT:-0}" \
     FAKE_COMPOSE_PULL_EXIT="${TEST_COMPOSE_PULL_EXIT:-0}" \
     FAKE_COMPOSE_BUILD_EXIT="${TEST_COMPOSE_BUILD_EXIT:-0}" \
     FAKE_COMPOSE_START_EXIT="${TEST_COMPOSE_START_EXIT:-0}" \
@@ -647,6 +651,30 @@ assert_status "$fixture" 'failure_stage=compose-configuration'
 assert_no_interruption "$fixture"
 if grep -Eq '(^| )pull( |$)|(^| )build( |$)|^deploy ' "$fixture/docker.log"; then
   fail "invalid Compose configuration reached image preparation or deployment"
+fi
+
+make_fixture container-image-inventory matching
+TEST_COMPOSE_CONTAINER_ID=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+TEST_CONTAINER_IMAGE_ID=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+run_update "$fixture" --external-ollama
+unset TEST_COMPOSE_CONTAINER_ID TEST_CONTAINER_IMAGE_ID
+[ "$update_status" -eq 0 ] || fail "container-based image inventory blocked maintenance"
+[ "$(grep -Fc "inspect cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc --format {{.Image}}" "$fixture/docker.log")" -eq 2 ] \
+  || fail "updater did not inventory deployed image IDs from containers before and after deployment"
+if grep -Fq ' images -q' "$fixture/docker.log"; then
+  fail "updater still depends on Compose image-store resolution for deployed image inventory"
+fi
+
+make_fixture container-image-inventory-failure matching
+TEST_COMPOSE_CONTAINER_ID=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+TEST_CONTAINER_IMAGE_ID=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+TEST_CONTAINER_IMAGE_INSPECT_EXIT=1
+run_update "$fixture" --external-ollama
+unset TEST_COMPOSE_CONTAINER_ID TEST_CONTAINER_IMAGE_ID TEST_CONTAINER_IMAGE_INSPECT_EXIT
+[ "$update_status" -ne 0 ] || fail "uninspectable deployed container image unexpectedly passed inventory"
+assert_status "$fixture" 'failure_stage=compose-configuration'
+if grep -Eq '(^| )pull( |$)|(^| )build( |$)|^deploy ' "$fixture/docker.log"; then
+  fail "failed container image inventory reached image preparation or deployment"
 fi
 
 make_fixture pull-failure matching

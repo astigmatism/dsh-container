@@ -8,6 +8,11 @@ case "${1:-}" in
     exit "${FAKE_DOCKER_INFO_EXIT:-0}"
     ;;
   inspect)
+    if [ "${2:-}" = "${FAKE_COMPOSE_CONTAINER_ID:-__no_compose_container__}" ]; then
+      [ "${FAKE_CONTAINER_IMAGE_INSPECT_EXIT:-0}" -eq 0 ] || exit "$FAKE_CONTAINER_IMAGE_INSPECT_EXIT"
+      printf '%s\n' "${FAKE_CONTAINER_IMAGE_ID:?}"
+      exit 0
+    fi
     if [ "${2:-}" = "${FAKE_LOCK_CONTAINER_NAME:-__no_lock_container__}" ]; then
       [ "${FAKE_LOCK_CONTAINER_EXISTS:-1}" = 1 ] || exit 1
       case "$*" in
@@ -48,6 +53,10 @@ case "${1:-}" in
       case "$argument" in
         version) exit "${FAKE_COMPOSE_VERSION_EXIT:-0}" ;;
         config) exit "${FAKE_COMPOSE_CONFIG_EXIT:-0}" ;;
+        ps)
+          [ -z "${FAKE_COMPOSE_CONTAINER_ID:-}" ] || printf '%s\n' "$FAKE_COMPOSE_CONTAINER_ID"
+          exit "${FAKE_COMPOSE_PS_EXIT:-0}"
+          ;;
         images)
           if [ -n "${FAKE_COMPOSE_IMAGES:-}" ]; then
             printf '%s\n' "$FAKE_COMPOSE_IMAGES"

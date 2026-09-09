@@ -735,6 +735,27 @@ esac
 # shellcheck disable=SC2086
 compose() { docker compose --env-file "$env_file" $compose_files "$@"; }
 
+# Compose's `images` command resolves every container image through the image
+# store. It can fail when an active container still references a valid image
+# ID whose tag was replaced and whose image-store record has already been
+# collected. Container inspection remains authoritative for the image that
+# actually created each deployed container, so inventory those IDs directly.
+capture_compose_image_ids() {
+  deployed_container_ids=$(compose ps -aq) || return 1
+  for deployed_container_id in $deployed_container_ids; do
+    case "$deployed_container_id" in
+      ''|*[!0-9a-f]*) return 1 ;;
+    esac
+    deployed_image_id=$(docker inspect "$deployed_container_id" \
+      --format '{{.Image}}' 2>/dev/null) || return 1
+    deployed_image_digest=${deployed_image_id#sha256:}
+    case "$deployed_image_id" in sha256:*) ;; *) return 1 ;; esac
+    case "$deployed_image_digest" in ''|*[!0-9a-f]*) return 1 ;; esac
+    [ "${#deployed_image_digest}" -eq 64 ] || return 1
+    printf '%s\n' "$deployed_image_id"
+  done
+}
+
 failure_type=git-state
 failure_stage=git-state
 branch=$(git_repo symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -874,7 +895,7 @@ if ! compose config --quiet; then
   echo "Docker Compose configuration validation failed before service interruption." >&2
   exit 1
 fi
-if ! old_image_ids=$(compose images -q 2>/dev/null); then
+if ! old_image_ids=$(capture_compose_image_ids); then
   echo "Docker Compose could not capture the currently deployed images." >&2
   exit 1
 fi
@@ -939,7 +960,7 @@ deployment_started=0
 
 failure_type=docker-compose
 failure_stage=image-inventory
-if ! new_image_ids=$(compose images -q 2>/dev/null); then
+if ! new_image_ids=$(capture_compose_image_ids); then
   echo "Docker Compose could not capture the newly deployed images." >&2
   exit 1
 fi

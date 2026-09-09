@@ -63,8 +63,10 @@ esac
 rendered=$(sed "s|@PROJECT_DIR@|$project_dir|g" "$template")
 
 # Installation home: the deploying user's $HOME on the host. In the delegated
-# maintenance container the host home is mounted at its real path and named
-# by DSH_BOOT_SERVICE_HOME; the container's own HOME is ephemeral.
+# maintenance container only the host's .config/systemd/user directory is
+# mounted at its real path; DSH_BOOT_SERVICE_HOME still names the host home so
+# the installer resolves that narrow mount. The container's own HOME is
+# ephemeral.
 install_home=${HOME:-}
 if [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ]; then
   if [ -z "${DSH_BOOT_SERVICE_HOME:-}" ] || [ ! -d "${DSH_BOOT_SERVICE_HOME:-}" ]; then

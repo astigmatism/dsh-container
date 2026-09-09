@@ -598,11 +598,13 @@ verification, while retaining its image and persistent data.
 
 Delegated updates use the same pinned Docker CLI, Compose, and Buildx plugins
 inside the maintenance image as direct updates. Service Portal receives the
-explicit `HOST_HOME` deployment label, validates it, and mounts that exact
-native directory with Docker's missing-source-safe mount form. Harness-originated
-maintenance resolves the same home for the configured numeric host UID through
-the host passwd database and verifies that it exists inside the configured
-host-filesystem view. If either path cannot do this, the helper records a
+explicit `HOST_HOME` deployment label and validates it, but exposes only that
+home's `.config/systemd/user` directory with Docker's missing-source-safe mount
+form. Harness-originated maintenance resolves the same home for the configured
+numeric host UID through the host passwd database and verifies that both it and
+its user-unit directory exist inside the configured host-filesystem view. The
+project checkout remains a separate bind; the entire home is never mounted.
+If either path cannot establish this narrow mount, the helper records a
 blocking boot-service failure before any fetch, build, or service change. Each
 maintenance lock records
 whether its owner is a host process or an exact Docker container ID. A later

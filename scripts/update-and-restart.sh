@@ -257,12 +257,16 @@ delegate_from_harness() {
   docker_gid=$(stat -c '%g' /var/run/docker.sock)
   maintenance_name=deepseek-harness-maintenance-$(date -u +%Y%m%d%H%M%S)-$$
 
-  # Mount the host home (at its real path) into the maintenance container so
-  # the post-deployment boot-service step can install the user unit there.
+  # Mount only the host's user-unit directory (at its real path) into the
+  # maintenance container. The installer still receives the real host home,
+  # but every path it reads or writes is beneath .config/systemd/user. Avoid
+  # mounting the entire home: besides granting unnecessary access, overlapping
+  # home/project mounts can deadlock Docker Desktop's VirtioFS event injector.
   # The harness container carries the host /etc/passwd. The user systemd bus
   # stays on the host; the installer degrades to installing the files and
   # printing the activation commands.
   host_home=
+  host_unit_dir=
   host_uid=$(get_env HOST_UID)
   case "$host_uid" in
     ''|*[!0-9]*) ;;
@@ -328,8 +332,11 @@ delegate_from_harness() {
         else
           visible_host_home=$workspace_root$home_relative
         fi
-        if [ ! -d "$visible_host_home" ]; then
+        visible_host_unit_dir=$visible_host_home/.config/systemd/user
+        if [ ! -d "$visible_host_home" ] || [ ! -d "$visible_host_unit_dir" ]; then
           host_home=
+        else
+          host_unit_dir=$host_home/.config/systemd/user
         fi
       fi
       ;;
@@ -349,7 +356,7 @@ delegate_from_harness() {
       --env DSH_UPDATE_DELEGATED=1 \
       --env DSH_UPDATE_CONTAINER_NAME="$maintenance_name" \
       --env HOME=/tmp \
-      --mount "type=bind,source=$host_home,target=$host_home" \
+      --mount "type=bind,source=$host_unit_dir,target=$host_unit_dir" \
       --env "DSH_BOOT_SERVICE_HOME=$host_home" \
       --volume /var/run/docker.sock:/var/run/docker.sock \
       --volume "$host_project_dir:$host_project_dir" \

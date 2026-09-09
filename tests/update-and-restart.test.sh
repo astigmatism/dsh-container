@@ -334,12 +334,15 @@ run_update "$fixture" --external-ollama --dry-run
 grep -Fq 'exact legacy Harness pins will migrate' "$fixture/output.log" \
   || fail "dry-run did not report planned Harness pin migration"
 
-# Delegated maintenance installs through the real host-home path mounted into
-# the helper, not its ephemeral HOME. The initial handoff maps the checkout
-# from HARNESS_WORKSPACE_ROOT to HOST_FILESYSTEM_SOURCE, while both Docker bind
-# sources remain host-native paths.
-grep -Fq -- '--mount "type=bind,source=$host_home,target=$host_home"' "$source_root/scripts/update-and-restart.sh" \
-  || fail "delegation does not safely bind the real host-home source into Docker"
+# Delegated maintenance exposes only the real host user-unit directory to the
+# helper, not the entire home or its ephemeral HOME. The initial handoff maps
+# the checkout from HARNESS_WORKSPACE_ROOT to HOST_FILESYSTEM_SOURCE, while
+# both Docker bind sources remain host-native paths.
+grep -Fq -- '--mount "type=bind,source=$host_unit_dir,target=$host_unit_dir"' "$source_root/scripts/update-and-restart.sh" \
+  || fail "delegation does not safely bind the real host user-unit directory into Docker"
+if grep -Fq -- '--mount "type=bind,source=$host_home,target=$host_home"' "$source_root/scripts/update-and-restart.sh"; then
+  fail "delegation mounts the entire host home instead of only its user-unit directory"
+fi
 if grep -Fq -- '--volume "${workspace_root}${host_home}:' "$source_root/scripts/update-and-restart.sh"; then
   fail "delegation passes the harness /host view as a Docker bind source"
 fi

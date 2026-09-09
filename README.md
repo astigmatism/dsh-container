@@ -21,12 +21,10 @@ needs the NVIDIA Container Toolkit.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
-- One authoritative `local-active` OpenAI Responses route at
-  `http://ai-router:11434/v1`, with 131,072 total tokens per request, a
-  32,768-token output ceiling, and at most two simultaneous generations.
-- A deprecated `local-ollama-256k` provider ID remains only for persisted
-  selections. It names the same endpoint, alias, and 131,072-token request
-  capacity as the canonical `local-ollama` provider.
+- Two selectable `local-active` OpenAI Responses profiles at
+  `http://ai-router:11434/v1`: 131,072 context tokens with two simultaneous
+  generations, or 262,144 context tokens with one simultaneous generation.
+  Both keep the same 32,768-token output ceiling and public model alias.
 - Medium default reasoning; explicit off, low, medium, and xhigh are supported,
   while the existing minimal, high, and max selectors map to low, xhigh, and
   xhigh respectively.
@@ -177,38 +175,42 @@ is supplied explicitly.
 ## Persisted settings lifecycle
 
 `config/settings.yaml` is the reviewed default configuration used to seed a
-new deployment. It selects `local-ollama/local-active`, whose `contextWindow`
-is the complete 131,072-token capacity of one request, not input capacity and
-not the backend's aggregate allocation. The historical
-`local-ollama-256k` ID remains as a deprecated compatibility entry so persisted
-task selections do not break, but it sends the same request to the same public
-alias and advertises the same 131,072-token capacity. It does not reserve or
-name a server slot. No client configuration depends on the replaceable backend
-model or its MTP implementation.
+new deployment. It defaults to `local-ollama/local-active`, displayed as
+`Local Active Model (128K context)`, with a complete 131,072-token request
+window and concurrency two. `local-ollama-256k/local-active` is displayed as
+`Local Active Model (256K context)`, with a complete 262,144-token request
+window and concurrency one. Both select the same public alias and endpoint;
+the operator switches the backend profile to match the DSH selection. No
+client configuration depends on the replaceable backend model name or its MTP
+implementation.
 
-The schema-v2 discovery plugin validates and synchronizes both provider IDs
-from the router's complete metadata: context capacity, output ceiling,
-generation concurrency, input modalities, reasoning default, and effort wire
-values. It also replaces stale 256k labels on the two repository-owned provider
-IDs without changing an existing saved selection. The checked-in settings are
-the fallback when discovery is temporarily unavailable. A fresh configuration
-omits an agent-level reasoning choice and
-sets the provider default to medium; this is necessary because explicit off is
-a real model capability rather than the meaning of an omitted user choice.
-Selecting off sends the router's `none` wire value, and the compatibility
-choice max sends the native `xhigh` value.
+The schema-v2 discovery plugin validates the router and synchronizes capabilities
+shared by both profiles: output ceiling, input modalities, and reasoning effort
+wire values. It deliberately preserves each selection's context window and
+concurrency while the backend is swapped. It also provisions the 256K profile
+into older persisted settings that contain only the 128K route and corrects
+stale names or capacities without changing the established provider IDs. The
+checked-in settings are the fallback when discovery is temporarily unavailable.
+A fresh configuration omits an agent-level reasoning choice and sets both
+provider defaults to medium; explicit off remains a real model capability.
+Selecting off sends the router's `none` wire value, and max sends `xhigh`.
 
 The Web profile explicitly re-enables DSH's base `compaction-basic`,
 `command-compact`, and replay-safe tool-result-pruner rows (the Web bundle
 disables all three by default). Automatic compaction is active with one bounded
-overflow recovery attempt. Both local provider IDs have the same exact-target
-policy:
+overflow recovery attempt. Both local provider IDs use a `0.70` exact-target
+policy, applied to their selected context window:
 
 ```text
 router admissible formatted input = 131,072 - 32,768 - 1,024 = 97,280
 proactive token-meter trigger      = floor(131,072 × 0.70) = 91,750
 admission uncertainty margin       = 97,280 - 91,750 = 5,530
 retained recent surface            = floor(131,072 × 0.16) = 20,971
+
+expanded admissible input          = 262,144 - 32,768 - 1,024 = 228,352
+expanded token-meter trigger       = floor(262,144 × 0.70) = 183,500
+expanded uncertainty margin        = 228,352 - 183,500 = 44,852
+expanded retained surface          = floor(262,144 × 0.16) = 41,943
 ```
 
 At `agent/pre-step`, DSH's token meter prices the last canonical request
@@ -216,18 +218,18 @@ envelope and current durable surface. It reuses provider input/output/cache
 usage only when that envelope still matches, then adds estimated surface
 movement since that successful response. Otherwise it estimates the complete
 system prompt, tool schemas, user/assistant messages, tool calls/results, and
-preserved reasoning. Crossing 91,750 first prunes eligible oversized tool
-results to their configured head/marker/tail representation. If the remeasured
-surface is still at pressure, `compaction-basic` summarizes a balanced older
-region while retaining the recent tail. Raw shadowed events remain in the
-append-only session log.
+preserved reasoning. Crossing 91,750 on the 128K selection or 183,500 on the
+256K selection first prunes eligible oversized tool results to their configured
+head/marker/tail representation. If the remeasured surface is still at pressure,
+`compaction-basic` summarizes a balanced older region while retaining the recent
+tail. Raw shadowed events remain in the append-only session log.
 
-The 0.70 route policy is intentionally lower than DSH's general 0.80 default:
-reserving 32,768 output tokens already consumes 25% of the window, and the
-remaining 5,530-token gap covers request serialization/tokenization uncertainty
-in addition to the router's explicit 1,024-token reserve. The deprecated
-`local-ollama-256k/local-active` ID targets the same endpoint and therefore has
-the identical policy.
+The 0.70 route policy is intentionally lower than DSH's general 0.80 default.
+On the 128K selection, reserving 32,768 output tokens already consumes 25% of
+the window, and the remaining 5,530-token gap covers request serialization and
+tokenization uncertainty in addition to the router's explicit 1,024-token
+reserve. The 256K selection uses the same ratio but derives its threshold and
+retained tail from 262,144.
 
 The pinned pi-ai layer still dynamically clamps every request's output
 allowance as a final admission safeguard:
@@ -236,10 +238,11 @@ allowance as a final admission safeguard:
 max_output_tokens =
   min(requested output cap (normally 32,768),
       max(transport minimum,
-          131,072 - estimated serialized context - 4,096 safety tokens))
+          selected context window - estimated serialized context
+          - 4,096 safety tokens))
 
 estimated serialized context budget for a requested output reservation =
-  131,072 - requested output tokens - 4,096 safety tokens
+  selected context window - requested output tokens - 4,096 safety tokens
 ```
 
 The estimate includes the system prompt, tool schemas, messages, tool calls,
@@ -290,12 +293,13 @@ implementation occurred, while the character-level repetition detector remains
 enabled as an independent secondary defense. None of these policies changes
 the selected model, reasoning effort, context window, sampling, or concurrency.
 
-Both provider entries declare `maxConcurrency: 2`. The patched adapter enforces
-that limit immediately around model generation with a shared FIFO gate keyed by
-normalized endpoint URL, so the compatibility provider cannot create a second
-pool. Context conversion and ordinary local tool execution do not consume a
+The 128K provider declares `maxConcurrency: 2`; the 256K provider declares
+`maxConcurrency: 1`. The patched adapter enforces each limit immediately around
+model generation with a FIFO gate keyed by normalized endpoint URL and provider
+profile. Context conversion and ordinary local tool execution do not consume a
 generation slot, queued calls can be cancelled, and a slot is released before
-any higher-level retry begins.
+any higher-level retry begins. Operators should switch the backend profile and
+the DSH selection together rather than run the two profiles simultaneously.
 
 Busy/rate-limit, server, transport, and empty-response failures retain at most
 two bounded Harness retries; the underlying SDK retry loop is disabled.

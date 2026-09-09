@@ -14,6 +14,7 @@ const { BasicCompactionEngine } = await import(
 );
 
 const CONTEXT_WINDOW = 131072;
+const EXPANDED_CONTEXT_WINDOW = 262144;
 const INCIDENT_MEASUREMENT = 99735;
 
 function config(thresholdRatio = 0.70) {
@@ -61,16 +62,16 @@ function pressureAgent(provider) {
   };
 }
 
-function pressureEngine(provider, thresholdRatio = 0.70) {
+function pressureEngine(provider, thresholdRatio = 0.70, measurement = INCIDENT_MEASUREMENT) {
   const agent = pressureAgent(provider);
   let compactCalls = 0;
   const high = {
-    totalTokens: INCIDENT_MEASUREMENT,
-    surfaceTokens: INCIDENT_MEASUREMENT,
+    totalTokens: measurement,
+    surfaceTokens: measurement,
     nodes: [
-      { seq: 0, tokens: 60000 },
-      { seq: 1, tokens: 20000 },
-      { seq: 2, tokens: 19735 },
+      { seq: 0, tokens: Math.floor(measurement * 0.6) },
+      { seq: 1, tokens: Math.floor(measurement * 0.2) },
+      { seq: 2, tokens: measurement - Math.floor(measurement * 0.8) },
     ],
   };
   const low = { ...high, totalTokens: 30000 };
@@ -80,7 +81,13 @@ function pressureEngine(provider, thresholdRatio = 0.70) {
     ctx: {
       llm: {
         async resolveModelInfo() {
-          return { context: { contextWindow: CONTEXT_WINDOW } };
+          return {
+            context: {
+              contextWindow: provider === "local-ollama-256k"
+                ? EXPANDED_CONTEXT_WINDOW
+                : CONTEXT_WINDOW,
+            },
+          };
         },
       },
       tokenMeter: {
@@ -104,16 +111,41 @@ function pressureEngine(provider, thresholdRatio = 0.70) {
   return { agent, engine, compactCalls: () => compactCalls };
 }
 
-for (const provider of ["local-ollama", "local-ollama-256k"]) {
-  const fixture = pressureEngine(provider);
-  const result = await fixture.engine.compactIfNeeded(
-    fixture.agent,
+const canonicalPressure = pressureEngine("local-ollama");
+assert.notEqual(
+  await canonicalPressure.engine.compactIfNeeded(
+    canonicalPressure.agent,
     "pressure",
     new AbortController().signal,
-  );
-  assert.notEqual(result, null, `${provider} must compact the incident-sized pre-step surface`);
-  assert.equal(fixture.compactCalls(), 1);
-}
+  ),
+  null,
+  "the 128K profile must compact the incident-sized pre-step surface",
+);
+assert.equal(canonicalPressure.compactCalls(), 1);
+
+const expandedBelowPressure = pressureEngine("local-ollama-256k");
+assert.equal(
+  await expandedBelowPressure.engine.compactIfNeeded(
+    expandedBelowPressure.agent,
+    "pressure",
+    new AbortController().signal,
+  ),
+  null,
+  "the same incident-sized surface remains below pressure in the 256K profile",
+);
+assert.equal(expandedBelowPressure.compactCalls(), 0);
+
+const expandedPressure = pressureEngine("local-ollama-256k", 0.70, 190000);
+assert.notEqual(
+  await expandedPressure.engine.compactIfNeeded(
+    expandedPressure.agent,
+    "pressure",
+    new AbortController().signal,
+  ),
+  null,
+  "the 256K profile must compact once its own threshold is crossed",
+);
+assert.equal(expandedPressure.compactCalls(), 1);
 
 const oldDefault = pressureEngine("local-ollama", 0.8);
 assert.equal(

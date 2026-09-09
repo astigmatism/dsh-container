@@ -1,9 +1,10 @@
 /**
  * Keep DSH's local-active model capabilities aligned with the router marker.
  *
- * Complete schema-v2 metadata is authoritative for every request-capacity fact
- * DSH can represent: total context, output ceiling, endpoint concurrency,
- * input modalities, reasoning default, and effort wire values.
+ * The two repository-owned providers are operator-selectable backend profiles,
+ * so their context and concurrency stay fixed while the replaceable backend is
+ * switched. Complete schema-v2 metadata remains authoritative for shared
+ * capabilities: output ceiling, input modalities, and effort wire values.
  */
 
 export const name = "router-model-discovery";
@@ -13,12 +14,18 @@ const DSH_INPUT_MODALITIES = new Set(["text", "image"]);
 const DEFAULT_PROVIDERS = ["local-ollama", "local-ollama-256k"];
 const PROVIDER_PRESENTATION = new Map([
   ["local-ollama", {
-    displayName: "Local router (128k total)",
-    modelName: "Local active model (128k total)",
+    displayName: "Local Router (128K context)",
+    modelName: "Local Active Model (128K context)",
+    contextWindow: 131072,
+    maxConcurrency: 2,
+    reasoning: "medium",
   }],
   ["local-ollama-256k", {
-    displayName: "Local router (legacy ID; 128k total)",
-    modelName: "Local active model (legacy route; 128k total)",
+    displayName: "Local Router (256K context)",
+    modelName: "Local Active Model (256K context)",
+    contextWindow: 262144,
+    maxConcurrency: 1,
+    reasoning: "medium",
   }],
 ]);
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -127,7 +134,45 @@ export function dshReasoningEfforts(reasoning) {
   return mapped;
 }
 
-/** Converge one configured compatibility route on the complete router contract. */
+/** Seed a newly introduced repository profile from the working local route. */
+export function provisionProviderOps(settings, providerName, modelId, storedSettings = settings) {
+  const providers = settings?.providers;
+  if (!plainObject(providers) || providers[providerName] !== undefined) return [];
+  const presentation = PROVIDER_PRESENTATION.get(providerName);
+  if (presentation === undefined || providerName === "local-ollama") return [];
+  const resolvedSource = providers["local-ollama"];
+  const storedSource = storedSettings?.providers?.["local-ollama"];
+  const source = plainObject(storedSource) && Array.isArray(storedSource.models)
+    ? storedSource
+    : resolvedSource;
+  if (!plainObject(source) || !Array.isArray(source.models)) {
+    throw new Error(`cannot provision DSH provider "${providerName}" without local-ollama`);
+  }
+  const modelIndex = source.models.findIndex((model) => model?.id === modelId);
+  if (modelIndex < 0) {
+    throw new Error(`cannot provision DSH provider "${providerName}" without model "${modelId}"`);
+  }
+  const models = source.models.map((model, index) => index === modelIndex
+    ? {
+        ...model,
+        name: presentation.modelName,
+        contextWindow: presentation.contextWindow,
+      }
+    : model);
+  return [{
+    op: "set",
+    path: ["providers", providerName],
+    value: {
+      ...source,
+      displayName: presentation.displayName,
+      maxConcurrency: presentation.maxConcurrency,
+      reasoning: presentation.reasoning,
+      models,
+    },
+  }];
+}
+
+/** Converge one configured route on its profile and the shared router contract. */
 export function capabilityOps(settings, providerName, modelId, metadata, storedSettings = settings) {
   const provider = settings?.providers?.[providerName];
   const models = provider?.models;
@@ -140,6 +185,9 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
   if (input.length === 0) throw new Error("router advertises no input modality DSH can represent");
   const reasoningEfforts = dshReasoningEfforts(metadata.reasoning);
   const presentation = PROVIDER_PRESENTATION.get(providerName);
+  const contextWindow = presentation?.contextWindow ?? metadata.context_window;
+  const maxConcurrency = presentation?.maxConcurrency ?? metadata.active_request_limit;
+  const reasoningDefault = presentation?.reasoning ?? metadata.reasoning.default;
   const operations = [];
   if (presentation !== undefined && provider.displayName !== presentation.displayName) {
     operations.push({
@@ -148,18 +196,18 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
       value: presentation.displayName,
     });
   }
-  if (provider.maxConcurrency !== metadata.active_request_limit) {
+  if (provider.maxConcurrency !== maxConcurrency) {
     operations.push({
       op: "set",
       path: ["providers", providerName, "maxConcurrency"],
-      value: metadata.active_request_limit,
+      value: maxConcurrency,
     });
   }
-  if (metadata.reasoning.supported === true && provider.reasoning !== metadata.reasoning.default) {
+  if (metadata.reasoning.supported === true && provider.reasoning !== reasoningDefault) {
     operations.push({
       op: "set",
       path: ["providers", providerName, "reasoning"],
-      value: metadata.reasoning.default,
+      value: reasoningDefault,
     });
   } else if (
     metadata.reasoning.supported === false &&
@@ -173,7 +221,7 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
 
   const modelCurrent =
     (presentation === undefined || model.name === presentation.modelName) &&
-    model.contextWindow === metadata.context_window &&
+    model.contextWindow === contextWindow &&
     model.maxTokens === metadata.max_output_tokens &&
     sameJson(model.input, input) &&
     sameJson(model.reasoningEfforts, reasoningEfforts);
@@ -192,7 +240,7 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
       ? {
           ...candidate,
           ...(presentation === undefined ? {} : { name: presentation.modelName }),
-          contextWindow: metadata.context_window,
+          contextWindow,
           maxTokens: metadata.max_output_tokens,
           input,
           reasoningEfforts,
@@ -260,7 +308,15 @@ export function apply(ctx, config = {}) {
         const byEndpoint = new Map();
         for (const providerName of providers) {
           try {
-            const baseURL = settings.providers?.[providerName]?.baseURL;
+            let latest = settingsService.get("llm-pi-ai");
+            let descriptor = settingsService.describe().find((candidate) => candidate.ns === "llm-pi-ai");
+            const provisionOps = provisionProviderOps(latest, providerName, modelId, descriptor?.user);
+            if (provisionOps.length > 0) {
+              await settingsService.mutate("llm-pi-ai", provisionOps);
+              sctx.logger.info(`router-model-discovery: provisioned ${providerName}/${modelId} profile`);
+              latest = settingsService.get("llm-pi-ai");
+            }
+            const baseURL = latest.providers?.[providerName]?.baseURL;
             if (!nonEmptyString(baseURL)) throw new Error("provider has no baseURL");
             const cacheKey = `${baseURL}\n${modelId}`;
             let pending = byEndpoint.get(cacheKey);
@@ -269,8 +325,8 @@ export function apply(ctx, config = {}) {
               byEndpoint.set(cacheKey, pending);
             }
             const metadata = routerMetadataOf(await pending);
-            const latest = settingsService.get("llm-pi-ai");
-            const descriptor = settingsService.describe().find((candidate) => candidate.ns === "llm-pi-ai");
+            latest = settingsService.get("llm-pi-ai");
+            descriptor = settingsService.describe().find((candidate) => candidate.ns === "llm-pi-ai");
             const ops = capabilityOps(latest, providerName, modelId, metadata, descriptor?.user);
             if (ops.length > 0) {
               await settingsService.mutate("llm-pi-ai", ops);

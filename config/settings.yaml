@@ -14,7 +14,7 @@ ui-onboarding:
 llm-pi-ai:
   providers:
     local-ollama:
-      displayName: Local router (128k total)
+      displayName: Local Router (128K context)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
@@ -32,7 +32,7 @@ llm-pi-ai:
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
-          name: Local active model (128k total)
+          name: Local Active Model (128K context)
           contextWindow: 131072
           maxTokens: 32768
           input: [text, image]
@@ -44,8 +44,8 @@ llm-pi-ai:
             high: xhigh
             xhigh: xhigh
             max: xhigh
-    local-ollama-256:
-      displayName: Local router (256k total)
+    local-ollama-256k:
+      displayName: Local Router (256K context)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
@@ -63,7 +63,7 @@ llm-pi-ai:
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
-          name: Local active model (256k total)
+          name: Local Active Model (256K context)
           contextWindow: 262144
           maxTokens: 32768
           input: [text, image]

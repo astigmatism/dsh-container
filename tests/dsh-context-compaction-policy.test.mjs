@@ -6,6 +6,7 @@ const profile = await readFile(new URL("../seed/profile/cordis.patch.yml", impor
 const settings = await readFile(new URL("../config/settings.yaml", import.meta.url), "utf8");
 
 const CONTEXT_WINDOW = 131072;
+const EXPANDED_CONTEXT_WINDOW = 262144;
 const REQUESTED_OUTPUT = 32768;
 const ROUTER_RESERVE = 1024;
 const INCIDENT_ROUTER_INPUT = 101165;
@@ -34,7 +35,7 @@ test("Web mounts automatic compaction, manual recovery, and replay-safe pruning"
   assert.match(pruner, /thresholdChars: 8192/);
 });
 
-test("canonical and legacy provider IDs share the 70 percent request budget policy", () => {
+test("both selectable context profiles use the 70 percent request budget policy", () => {
   const compact = block("compaction-basic", "command-compact");
   for (const provider of ["local-ollama", "local-ollama-256k"]) {
     assert.match(
@@ -43,6 +44,14 @@ test("canonical and legacy provider IDs share the 70 percent request budget poli
     );
   }
   assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 2);
+});
+
+test("the 256K profile derives its pressure boundary from the larger selected window", () => {
+  const policyThreshold = Math.floor(EXPANDED_CONTEXT_WINDOW * 0.70);
+  const admissibleInput = EXPANDED_CONTEXT_WINDOW - REQUESTED_OUTPUT - ROUTER_RESERVE;
+  assert.equal(policyThreshold, 183500);
+  assert.equal(admissibleInput, 228352);
+  assert.equal(admissibleInput - policyThreshold, 44852);
 });
 
 test("incident pre-step pressure compacts before the inadmissible dispatch", () => {

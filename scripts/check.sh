@@ -95,6 +95,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
     node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check scripts/verify-dsh-inference-contract.mjs
+    node --check scripts/verify-local-model-profiles.mjs
+    node scripts/verify-local-model-profiles.mjs config/settings.yaml
     node --check scripts/verify-dsh-context-compaction.mjs
     node --check scripts/verify-dsh-semantic-progress.mjs
     node --check scripts/qualify-dsh-read-schema.mjs

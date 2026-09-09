@@ -7,6 +7,7 @@ const {
   apply,
   capabilityOps,
   dshReasoningEfforts,
+  provisionProviderOps,
   routerMetadataOf,
 } = await import(`data:text/javascript;base64,${Buffer.from(pluginSource).toString("base64")}`);
 
@@ -150,35 +151,113 @@ test("capability synchronization is a no-op once metadata is current", () => {
   assert.deepEqual(capabilityOps(settings, "local", "local-active", routerMetadataOf(entry())), []);
 });
 
-test("legacy provider migration corrects stale 256k labels without changing its ID", () => {
+test("new 256K profile is provisioned from an existing 128K runtime provider", () => {
   const settings = {
     providers: {
-      "local-ollama-256k": {
-        displayName: "Local Ollama (256k)",
+      "local-ollama": {
+        displayName: "Local Router (128K context)",
+        api: "openai-responses",
+        baseURL: "http://ai-router:11434/v1",
         maxConcurrency: 2,
         reasoning: "medium",
         models: [{
           id: "local-active",
-          name: "Local active model (256k)",
+          name: "Local Active Model (128K context)",
+          contextWindow: 131072,
+          maxTokens: 32768,
+          input: ["text", "image"],
+        }],
+      },
+    },
+  };
+  const ops = provisionProviderOps(settings, "local-ollama-256k", "local-active");
+  assert.equal(ops.length, 1);
+  assert.deepEqual(ops[0].path, ["providers", "local-ollama-256k"]);
+  assert.equal(ops[0].value.displayName, "Local Router (256K context)");
+  assert.equal(ops[0].value.baseURL, "http://ai-router:11434/v1");
+  assert.equal(ops[0].value.maxConcurrency, 1);
+  assert.equal(ops[0].value.reasoning, "medium");
+  assert.equal(ops[0].value.models[0].name, "Local Active Model (256K context)");
+  assert.equal(ops[0].value.models[0].contextWindow, 262144);
+  assert.equal(settings.providers["local-ollama-256k"], undefined);
+});
+
+test("profile provisioning avoids materializing resolved schema defaults", () => {
+  const stored = {
+    providers: {
+      "local-ollama": {
+        api: "openai-responses",
+        baseURL: "http://ai-router:11434/v1",
+        models: [{ id: "local-active", contextWindow: 131072, maxTokens: 32768 }],
+      },
+    },
+  };
+  const resolved = structuredClone(stored);
+  Object.assign(resolved.providers["local-ollama"], {
+    modelOverrides: {},
+    headers: {},
+    defaultContextWindow: 262144,
+    maxRequestImageBytes: 20971520,
+  });
+  const [operation] = provisionProviderOps(
+    resolved,
+    "local-ollama-256k",
+    "local-active",
+    stored,
+  );
+  assert.equal(operation.value.contextWindow, undefined);
+  assert.equal(operation.value.modelOverrides, undefined);
+  assert.equal(operation.value.headers, undefined);
+  assert.equal(operation.value.maxRequestImageBytes, undefined);
+  assert.equal(operation.value.models[0].contextWindow, 262144);
+});
+
+test("repository profiles retain their selected context and concurrency while shared capabilities synchronize", () => {
+  const settings = {
+    providers: {
+      "local-ollama": {
+        displayName: "stale 128K label",
+        maxConcurrency: 1,
+        reasoning: "off",
+        models: [{
+          id: "local-active",
+          name: "stale 128K model label",
           contextWindow: 262144,
           maxTokens: 32768,
-          input: ["text"],
+          input: ["image"],
+          reasoningEfforts: { off: "none", max: "max" },
+        }],
+      },
+      "local-ollama-256k": {
+        displayName: "stale 256K label",
+        maxConcurrency: 2,
+        reasoning: "off",
+        models: [{
+          id: "local-active",
+          name: "stale 256K model label",
+          contextWindow: 131072,
+          maxTokens: 32768,
+          input: ["image"],
           reasoningEfforts: { off: "none", max: "max" },
         }],
       },
     },
   };
-  const ops = capabilityOps(
-    settings,
-    "local-ollama-256k",
-    "local-active",
-    routerMetadataOf(entry()),
-  );
-  assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "models"]);
-  assert.equal(ops[0].value, "Local router (legacy ID; 128k total)");
-  assert.equal(ops[1].value[0].id, "local-active");
-  assert.equal(ops[1].value[0].name, "Local active model (legacy route; 128k total)");
-  assert.equal(ops[1].value[0].contextWindow, 131072);
+  for (const [provider, contextWindow, maxConcurrency, label] of [
+    ["local-ollama", 131072, 2, "128K"],
+    ["local-ollama-256k", 262144, 1, "256K"],
+  ]) {
+    const ops = capabilityOps(settings, provider, "local-active", routerMetadataOf(entry()));
+    assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "reasoning", "models"]);
+    assert.equal(ops[0].value, `Local Router (${label} context)`);
+    assert.equal(ops[1].value, maxConcurrency);
+    assert.equal(ops[2].value, "medium");
+    assert.equal(ops[3].value[0].id, "local-active");
+    assert.equal(ops[3].value[0].name, `Local Active Model (${label} context)`);
+    assert.equal(ops[3].value[0].contextWindow, contextWindow);
+    assert.equal(ops[3].value[0].maxTokens, 16384);
+    assert.deepEqual(ops[3].value[0].input, ["text"]);
+  }
 });
 
 test("plugin activates without a hard settings injection and synchronizes immediately", async () => {
@@ -235,10 +314,10 @@ test("plugin activates without a hard settings injection and synchronizes immedi
     });
     const ops = await mutation;
     assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "reasoning", "models"]);
-    assert.equal(ops[0].value, "Local router (128k total)");
+    assert.equal(ops[0].value, "Local Router (128K context)");
     assert.equal(ops[1].value, 2);
     assert.equal(ops[2].value, "medium");
-    assert.equal(ops[3].value[0].name, "Local active model (128k total)");
+    assert.equal(ops[3].value[0].name, "Local Active Model (128K context)");
     assert.equal(ops[3].value[0].maxTokens, 16384);
   } finally {
     dispose?.();

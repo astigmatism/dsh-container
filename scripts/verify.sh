@@ -161,6 +161,21 @@ if ! compose exec -T harness node /opt/dsh-build/verify-dsh-inference-contract.m
   exit "$configuration_exit"
 fi
 
+# The discovery plugin upgrades persisted settings in place when the second
+# profile is absent and restores each profile's static capacity after backend
+# swaps. Wait briefly for its immediate synchronization before validating the
+# user-visible model-selection contract.
+profile_deadline=$(( $(date +%s) + 30 ))
+while ! profile_output=$(compose exec -T harness node /opt/dsh-build/verify-local-model-profiles.mjs 2>&1); do
+  if [ "$(date +%s)" -ge "$profile_deadline" ]; then
+    printf '%s\n' "$profile_output" >&2
+    echo "The deployed Harness did not expose both local model profiles." >&2
+    exit "$configuration_exit"
+  fi
+  sleep 1
+done
+printf '%s\n' "$profile_output"
+
 # Exercise the installed compaction policy and shared context classifier with
 # bounded in-memory fixtures, then resolve the live Web composition from its
 # bundle layers and require the route-specific automatic policy to be active.
@@ -244,14 +259,14 @@ if [ "$mode" = --remote-ollama ]; then
     if (metadata?.schema_version !== 2 || !metadata?.complete || metadata?.warnings?.length) {
       throw new Error(`local-active discovery is not complete schema-v2: ${JSON.stringify(metadata)}`);
     }
-    for (const [field, expected] of Object.entries({
-      context_window: 131072,
-      active_request_limit: 2,
-      max_output_tokens: 32768,
-    })) {
-      if (metadata[field] !== expected) {
-        throw new Error(field + " is " + metadata[field] + "; expected " + expected);
-      }
+    const backendProfile = `${metadata.context_window}:${metadata.active_request_limit}`;
+    if (!new Set(["131072:2", "262144:1"]).has(backendProfile)) {
+      throw new Error(
+        `backend capacity is ${backendProfile}; expected 128K/2 or 256K/1`,
+      );
+    }
+    if (metadata.max_output_tokens !== 32768) {
+      throw new Error("max_output_tokens is " + metadata.max_output_tokens + "; expected 32768");
     }
     for (const modality of ["text", "image"]) {
       if (!metadata.input_modalities?.includes(modality)) throw new Error(`missing ${modality} input modality`);

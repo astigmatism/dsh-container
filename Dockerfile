@@ -44,6 +44,7 @@ RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}
 # instead of silently dropping behavior.
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
 COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
+COPY scripts/verify-local-model-profiles.mjs /opt/dsh-build/verify-local-model-profiles.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
@@ -66,6 +67,8 @@ COPY scripts/sync-runtime-profile.sh /usr/local/bin/dsh-sync-runtime-profile
 COPY scripts/initialize-persisted-settings.sh /usr/local/bin/dsh-initialize-persisted-settings
 COPY scripts/verify-plugin-boot.sh /usr/local/bin/dsh-verify-plugin-boot
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
+
+RUN node /opt/dsh-build/verify-local-model-profiles.mjs /opt/dsh-defaults/settings.yaml
 
 # Defend existing Windows checkouts that predate .gitattributes. A CRLF
 # shebang makes Linux report an existing script as "no such file or directory."

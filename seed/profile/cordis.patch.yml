@@ -17,12 +17,11 @@
 # durable path here: proactive step pressure, one bounded canonical-overflow
 # recovery, the idle /compact operator command, and replay-safe tool pruning.
 #
-# The local route can admit at most 97,280 formatted input tokens while keeping
+# The 128K route can admit at most 97,280 formatted input tokens while keeping
 # its 32,768 output allowance and the router's 1,024-token reserve. A 0.70
 # policy triggers at 91,750, leaving 5,530 tokens for meter/serialization/
-# tokenizer uncertainty. The captured incident measured 99,735 in token-meter
-# before the rejected 101,165-token formatted request, so both provider IDs
-# must share this exact endpoint policy.
+# tokenizer uncertainty. The 256K profile uses the same conservative ratio
+# against its larger declared window.
 - id: compaction-basic
   disabled: false
   config:
@@ -88,7 +87,7 @@
 
 - insert:
     - id: router-model-discovery
-      name: '../../.dsh-plugins/dsh-router-model-discovery.js?v=8'
+      name: '../../.dsh-plugins/dsh-router-model-discovery.js?v=9'
       config:
         providers: [ local-ollama, local-ollama-256k ]
         model: local-active

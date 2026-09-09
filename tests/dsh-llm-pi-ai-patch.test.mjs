@@ -109,12 +109,12 @@ test("pinned pi-ai patch consumes router capacities and normalizes stream errors
   assert.equal(patchSource(patched), patched, "patch is idempotent");
 });
 
-test("endpoint concurrency gate shares two generation slots across provider aliases", async () => {
+test("concurrency gate keeps distinct limits for the 128K and 256K backend profiles", async () => {
   const gate = new EndpointConcurrencyGate();
   const canonical = { provider: "local-ollama", baseURL: "http://ai-router:11434/v1", maxConcurrency: 2 };
-  const legacy = { provider: "local-ollama-256k", baseURL: "http://ai-router:11434/v1/", maxConcurrency: 2 };
+  const expanded = { provider: "local-ollama-256k", baseURL: "http://ai-router:11434/v1/", maxConcurrency: 1 };
   const releaseFirst = await gate.acquire(canonical);
-  const releaseSecond = await gate.acquire(legacy);
+  const releaseSecond = await gate.acquire(canonical);
   let thirdStarted = false;
   const third = gate.acquire(canonical).then((release) => {
     thirdStarted = true;
@@ -122,11 +122,25 @@ test("endpoint concurrency gate shares two generation slots across provider alia
   });
   await Promise.resolve();
   assert.equal(thirdStarted, false);
+
+  const releaseExpanded = await gate.acquire(expanded);
+  let secondExpandedStarted = false;
+  const secondExpanded = gate.acquire(expanded).then((release) => {
+    secondExpandedStarted = true;
+    return release;
+  });
+  await Promise.resolve();
+  assert.equal(secondExpandedStarted, false);
+
   releaseFirst();
   const releaseThird = await third;
   assert.equal(thirdStarted, true);
   releaseSecond();
   releaseThird();
+  releaseExpanded();
+  const releaseSecondExpanded = await secondExpanded;
+  assert.equal(secondExpandedStarted, true);
+  releaseSecondExpanded();
 });
 
 test("queued generation can be cancelled without consuming a slot", async () => {

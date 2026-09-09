@@ -62,8 +62,9 @@ export function isContextWindowOverflowDetail(detail) {
 }
 
 /**
- * Fair endpoint-level generation gate used by the patched adapter. Provider
- * compatibility aliases sharing one base URL therefore share one pool.
+ * Fair generation gate used by the patched adapter. The endpoint and provider
+ * together identify an operator-selected backend profile, allowing the 128K
+ * and 256K routes to enforce their distinct capacities on the same URL.
  */
 export class EndpointConcurrencyGate {
   constructor() {
@@ -73,15 +74,15 @@ export class EndpointConcurrencyGate {
   acquire(profile, signal) {
     const limit = profile.maxConcurrency;
     if (limit === undefined) return Promise.resolve(() => {});
-    const key = (profile.baseURL ?? profile.provider).replace(/\/+$/, "");
+    const endpoint = (profile.baseURL ?? profile.provider).replace(/\/+$/, "");
+    const key = `${endpoint}\n${profile.provider}`;
     let entry = this.entries.get(key);
     if (entry === undefined) {
       entry = { active: 0, limit, queue: [] };
       this.entries.set(key, entry);
-    } else {
-      // Multiple compatibility provider IDs can name one endpoint. The most
-      // conservative declared limit wins for the lifetime of this adapter.
-      entry.limit = Math.min(entry.limit, limit);
+    } else if (entry.limit !== limit) {
+      entry.limit = limit;
+      this.drain(entry);
     }
     if (signal?.aborted) {
       return Promise.reject(signal.reason ?? new Error("model request cancelled while waiting for provider capacity"));

@@ -12,9 +12,9 @@
  * Local deployment plugin (NOT part of the published DSH distribution).
  * Loaded from the profile cordis.patch.yml via a relative specifier resolved
  * against the profile directory; the file lives in $DSH_HOME so it persists
- * across container restarts (the node_modules tree does not). The `?v=` query
- * on the specifier in the patch is an ESM import-cache buster: bump it when
- * replacing this file so live sessions pick up new code without a restart.
+ * across container restarts (the node_modules tree does not). The loader owns
+ * cache invalidation; a literal `?v=` suffix is incompatible with newer DSH
+ * file-specifier handling.
  *
  * Error policy: plain `Error` with an actionable message. The web seam passes
  * provider errors through to `dsh-tool-web`, which renders `Error: <message>`.

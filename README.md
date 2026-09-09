@@ -17,7 +17,11 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-- DeepSeek Harness `0.1.1-rc.2`, pnpm `11.7.0`, Docker CLI `29.6.0`.
+- DeepSeek Harness `0.1.5-alpha.1`, the official package built from GitHub tag
+  `dsh-v0.1.5-alpha.1` at commit
+  `5dda764ed3aa172535a7967b06ff95d9cbfe536a`; pnpm `11.7.0`; Docker CLI
+  `29.6.0`. The release and commit are immutable build inputs rather than a
+  moving `master` reference.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
@@ -42,16 +46,18 @@ needs the NVIDIA Container Toolkit.
 
 The locked web profile contains these nine plugins:
 
-1. `@zoytown/dsh-token` 0.1.3
-2. `dsh-context` 0.37.0
+1. `@zoytown/dsh-token` 0.1.3 with a narrowly anchored session-format-v3
+   compatibility patch (the upstream plugin has no newer release)
+2. `dsh-context` 0.47.0
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
-5. `dsh-playwright` 0.1.0, providing the shared Browser Use panel and
-   model-facing Playwright tools
+5. `dsh-playwright` 0.1.0 with its existing panel-layout patch and a narrowly
+   anchored web-server-scope compatibility patch, providing the shared Browser
+   Use panel and model-facing Playwright tools
 6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
-7. `dsh-session-pin` 0.6.1
-8. `dsh-ui-appearance` 0.1.6
+7. `dsh-session-pin` 0.7.7
+8. `dsh-ui-appearance` 0.1.8
 9. `dsh-favicon-status` 0.1.0-rc.5
 
 The profile also disables DeepSeek's keyed web search and installs the captured
@@ -281,12 +287,15 @@ duplicate reads are suppressed once and cancel the turn if immediately retried;
 a successful mutation or a new relevant test result advances the progress
 epoch and permits a changed file to be read again.
 
-Distinct repository reads are not capped by a raw action count, so broad
-discovery can inspect as many unique files or ranges as the work requires.
-Exact duplicate reads are still suppressed. For implementation requests with
-write-capable tools, the overall no-progress continuation thresholds are 12 and
-24. Normalized reasoning prefixes of at least 128 characters direct on their
-second occurrence and stop on their third. These values are centralized under
+Distinct repository reads and model continuations are not capped by raw action
+counts, so broad discovery can inspect as many unique files, ranges, or related
+implementation questions as the work requires. Exact duplicate reads are still
+suppressed. For implementation requests with write-capable tools, a nonblocking
+checkpoint at continuation 12 asks the model to begin implementation when its
+discovery is complete, but never cancels a turn merely because it is still
+gathering distinct evidence. Normalized reasoning prefixes of at least 128
+characters direct on their second occurrence and stop on their third. These
+values are centralized under
 `dsh-loop-detector` in `seed/profile/cordis.patch.yml`. Diagnosis and review
 tasks remain read-only; duplicate-read and reasoning-cycle protection still
 applies. Semantic guard cancellations use distinct reason codes and accurately
@@ -435,14 +444,13 @@ container proxy. `host-exec` is intentionally more powerful on a native Linux
 host: it launches a short-lived privileged helper, enters the host namespaces,
 and executes as host root.
 
-The Harness process itself runs in headless Linux, so its Host description
-reports `canOpenPath: false`. Assistant-produced workspace paths remain visible
-and copyable in conversation output, but the browser does not offer a native
-open action that would run `xdg-open` inside the container. Open those paths
-with a host application after copying them. Native file actions remain enabled
-for DSH hosts that explicitly report the capability (macOS, Windows, WSL, or
-desktop Linux with a display). This DSH release has no authenticated arbitrary
-workspace-file viewer or download route to use as a container-side fallback.
+The Harness process itself runs in headless Linux, so it must not dispatch
+assistant-produced paths through `xdg-open` inside the container. The current
+upstream release instead maps workspace paths to `dsh-resource://file/`
+addresses and opens them in Harness's in-app workspace resource viewer. The
+image build verifies that contract against the exact pinned browser bundles;
+an upstream layout or behavior change fails the build rather than silently
+restoring native host dispatch.
 
 Docker Desktop's Linux VM is not the Windows kernel. On Windows, Harness can
 manage the mounted Windows files and Docker resources, but `host-exec` cannot
@@ -552,7 +560,13 @@ settings stop maintenance before any Compose interruption. After
 fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
-before it can change services. The updater pulls non-buildable images and builds
+before it can change services. During this handoff, exact legacy
+`0.1.1-rc.2` package/image pins are atomically migrated to the qualified
+`0.1.5-alpha.1` tag and its recorded upstream commit; deliberately customized
+pins are left unchanged, and dry-run reports the migration without editing
+`.env`. This lets the same updater carry the release across existing home-network
+deployments without replacing their model, router, credentials, or other
+machine-local settings. The updater pulls non-buildable images and builds
 the selected topology while the current deployment remains available, then uses
 the normal verified deployment command without an explicit `compose down` or
 `compose stop`. It creates no backup or rollback artifacts. After success it

@@ -446,7 +446,7 @@ test("distinct discovery reads remain permitted across compaction", async () => 
   assert.deepEqual(harness.cancels, []);
 });
 
-test("alternating reads, searches, and harmless shell actions cannot bypass continuation bound", async () => {
+test("long distinct discovery is never cancelled by a continuation count", async () => {
   const { apply } = await loadGeneratedPlugin();
   const harness = contractHarness(apply, { minLen: 10000 });
   harness.begin("Implement the missing behavior and run tests.");
@@ -458,17 +458,14 @@ test("alternating reads, searches, and harmless shell actions cannot bypass cont
     (index) => ["grep", { pattern: `unique_${index}`, path: "src" }],
     () => ["bash", { command: "pwd" }, { isError: false, value: "/workspace", content: [] }],
   ];
-  for (let index = 1; index <= 24; index += 1) {
+  for (let index = 1; index <= 48; index += 1) {
     harness.continuation(`Unique reasoning prefix ${index} ${fixedBlock(`continuation-${index}`, 180)}`);
-    if (index === 24) break;
     const [name, args, result] = tools[(index - 1) % tools.length](index);
     await harness.tool(name, args, result);
     await harness.preStep();
   }
 
-  assert.equal(harness.cancels.length, 1);
-  assert.match(harness.cancels[0].reason, /guard=continuation_hard_limit/);
-  assert.match(harness.cancels[0].reason, /24 model continuations/);
+  assert.deepEqual(harness.cancels, []);
   assert.ok(harness.warnings.some((entry) => /injected semantic progress correction/.test(entry)));
 });
 
@@ -480,14 +477,18 @@ test("todo updates and stderr suppression do not fabricate implementation progre
 
   assert.equal((await harness.tool("todo_write", { todos: [{ content: "Inspect code", status: "in_progress" }] })).dispatched, true);
   assert.equal((await harness.tool("bash", { command: "git status --short 2>/dev/null" })).dispatched, true);
-  for (let index = 1; index <= 24; index += 1) {
+  for (let index = 1; index <= 12; index += 1) {
+    harness.continuation(`Still investigating ${index} ${fixedBlock(`false-mutation-${index}`, 180)}`);
+  }
+  const checkpoint = await harness.preStep();
+  assert.equal(checkpoint.messages.length, 1);
+  assert.match(checkpoint.messages[0].content[0].text, /^\[implementation-checkpoint\]/);
+  assert.match(checkpoint.messages[0].content[0].text, /categories=other=2/);
+  for (let index = 13; index <= 48; index += 1) {
     harness.continuation(`Still investigating ${index} ${fixedBlock(`false-mutation-${index}`, 180)}`);
   }
 
-  assert.equal(harness.cancels.length, 1);
-  assert.match(harness.cancels[0].reason, /guard=continuation_hard_limit/);
-  assert.match(harness.cancels[0].reason, /No implementation occurred during this human turn/);
-  assert.match(harness.cancels[0].reason, /categories=other=2/);
+  assert.deepEqual(harness.cancels, []);
 });
 
 test("a real shell output redirect advances the implementation epoch", async () => {
@@ -580,7 +581,6 @@ test("production profile exposes the centrally configured semantic thresholds an
   const profile = await readFile(path.join(projectRoot, "seed/profile/cordis.patch.yml"), "utf8");
   for (const marker of [
     "continuationDirective: 12",
-    "continuationHard: 24",
     "reasoningPrefixChars: 128",
     "reasoningDirectiveOccurrence: 2",
     "reasoningHardOccurrence: 3",
@@ -589,5 +589,6 @@ test("production profile exposes the centrally configured semantic thresholds an
   ]) {
     assert.match(profile, new RegExp(marker));
   }
+  assert.doesNotMatch(profile, /continuationHard:/);
   assert.doesNotMatch(profile, /readOnly(?:Directive|Hard):/);
 });

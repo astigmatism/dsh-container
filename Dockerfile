@@ -9,11 +9,15 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 FROM ${NODE_IMAGE} AS harness
 
-ARG DSH_VERSION=0.1.1-rc.2
+ARG DSH_VERSION=0.1.5-alpha.1
+ARG DSH_UPSTREAM_COMMIT=5dda764ed3aa172535a7967b06ff95d9cbfe536a
 ARG PNPM_VERSION=11.7.0
 
 LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-container" \
-      org.opencontainers.image.description="Portable DeepSeek Harness maintenance agent"
+      org.opencontainers.image.description="Portable DeepSeek Harness maintenance agent" \
+      org.opencontainers.image.version="${DSH_VERSION}" \
+      io.astigmatism.deepseek-harness.upstream.repository="https://github.com/deepseek-ai/deepseek-harness" \
+      io.astigmatism.deepseek-harness.upstream.commit="${DSH_UPSTREAM_COMMIT}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -36,7 +40,8 @@ RUN apt-get update \
       util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}"
+RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}" \
+    && test "$(node -p "require('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json').version")" = "${DSH_VERSION}"
 
 # DSH is pinned above. Apply the router discovery/error/concurrency boundary,
 # visible cancellation provenance, and native-file capability contracts with
@@ -49,6 +54,8 @@ COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
+COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
+COPY scripts/patch-dsh-playwright-webserver.mjs /opt/dsh-build/patch-dsh-playwright-webserver.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
     && node /opt/dsh-build/verify-dsh-context-compaction.mjs \
@@ -95,18 +102,22 @@ COPY seed/plugins/ /opt/dsh-seed/.dsh-plugins/
 # base image's `node` user. pnpm opens its store index even for read operations.
 RUN cd /opt/dsh-seed/profiles/web \
     && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store \
+    && node /opt/dsh-build/patch-dsh-token-session-format.mjs \
+    && node /opt/dsh-build/patch-dsh-playwright-webserver.mjs \
     && dsh --profile web --dump-config >/dev/null \
     && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-context-compaction.mjs --effective-config \
     && node /opt/dsh-build/verify-dsh-semantic-progress.mjs \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-context@0.37.0' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
+    && grep -Fq 'dsh-context@0.47.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.5' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-session-pin@0.6.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ui-appearance@0.1.6' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-playwright-webserver-scope-v1' node_modules/dsh-playwright/lib/index.js \
+    && grep -Fq 'dsh-session-pin@0.7.7' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ui-appearance@0.1.8' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
@@ -114,7 +125,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && chmod -R a+rwX /opt/dsh-pnpm-store
 
 # Boot smoke check: start the web profile in a throwaway DSH_HOME and require
-# a stable HTTP 200. Booting imports the full plugin tree (every bundle's
+# a stable authenticated HTTP 200. Booting imports the full plugin tree (every bundle's
 # loader entry, including dsh-playwright's server-side entry that imports
 # playwright-core, pngjs, and ws), so this fails the build when the seed
 # lockfile's patched-dependency state drops a plugin's dependency graph -

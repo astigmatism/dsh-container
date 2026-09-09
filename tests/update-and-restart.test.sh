@@ -263,6 +263,51 @@ grep -Fq 'Restarting maintenance under the fetched updater before service interr
 [ ! -e "$fixture/data/update-and-restart.lock" ] \
   || fail "successful updater left its transferred lock behind"
 
+make_fixture legacy-harness-pins matching
+{
+  printf '%s\n' 'DSH_VERSION=0.1.1-rc.2'
+  printf '%s\n' 'HARNESS_IMAGE=local/deepseek-harness:0.1.1-rc.2-portable'
+} >>"$fixture/.env"
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "exact legacy Harness pins blocked maintenance"
+grep -Fxq 'DSH_VERSION=0.1.5-alpha.1' "$fixture/.env" \
+  || fail "legacy DSH version was not migrated"
+grep -Fxq 'DSH_UPSTREAM_COMMIT=5dda764ed3aa172535a7967b06ff95d9cbfe536a' "$fixture/.env" \
+  || fail "upstream commit provenance was not added"
+grep -Fxq 'HARNESS_IMAGE=local/deepseek-harness:0.1.5-alpha.1-portable' "$fixture/.env" \
+  || fail "legacy Harness image was not migrated"
+if grep -Fq '0.1.1-rc.2' "$fixture/.env"; then
+  fail "legacy Harness pin remained after migration"
+fi
+grep -Fq 'Migrated exact legacy Harness pins' "$fixture/output.log" \
+  || fail "legacy Harness pin migration was not reported"
+
+make_fixture custom-harness-pins matching
+{
+  printf '%s\n' 'DSH_VERSION=local-development'
+  printf '%s\n' 'HARNESS_IMAGE=local/deepseek-harness:0.1.1-rc.2-portable'
+} >>"$fixture/.env"
+custom_pins_before=$(cksum "$fixture/.env")
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "custom Harness pins blocked maintenance"
+[ "$custom_pins_before" = "$(cksum "$fixture/.env")" ] \
+  || fail "custom Harness pins were partially rewritten"
+grep -Fq 'Preserving custom DSH_VERSION/HARNESS_IMAGE pins' "$fixture/output.log" \
+  || fail "custom Harness pin preservation was not reported"
+
+make_fixture legacy-harness-pins-dry-run matching
+{
+  printf '%s\n' 'DSH_VERSION=0.1.1-rc.2'
+  printf '%s\n' 'HARNESS_IMAGE=local/deepseek-harness:0.1.1-rc.2-portable'
+} >>"$fixture/.env"
+dry_run_pins_before=$(cksum "$fixture/.env")
+run_update "$fixture" --external-ollama --dry-run
+[ "$update_status" -eq 0 ] || fail "legacy Harness pin dry-run failed"
+[ "$dry_run_pins_before" = "$(cksum "$fixture/.env")" ] \
+  || fail "dry-run modified legacy Harness pins"
+grep -Fq 'exact legacy Harness pins will migrate' "$fixture/output.log" \
+  || fail "dry-run did not report planned Harness pin migration"
+
 # Delegated maintenance installs through the real host-home path mounted into
 # the helper, not its ephemeral HOME. The initial handoff maps the checkout
 # from HARNESS_WORKSPACE_ROOT to HOST_FILESYSTEM_SOURCE, while both Docker bind

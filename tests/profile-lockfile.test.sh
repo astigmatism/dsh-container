@@ -102,12 +102,12 @@ done
 playwright_hash=$(lock_patch_hash 'dsh-playwright@0.1.0') || fail "no patched dsh-playwright entry in lockfile"
 if awk '/^snapshots:/ { in_block = 1; next }
         in_block && /^[^ ]/ { in_block = 0 }
-        in_block && /^  dsh-playwright@0.1.0\(patch_hash=[0-9a-f]+\): \{\}$/ { found = 1 }
+        in_block && /^  dsh-playwright@0.1.0\(patch_hash=[0-9a-f]+\).*: \{\}$/ { found = 1 }
         END { exit found ? 0 : 1 }' "$lock"; then
   fail "patched dsh-playwright snapshot is empty (dependency graph lost)"
 fi
-awk -v wanted="  dsh-playwright@0.1.0(patch_hash=$playwright_hash):" '
-  $0 == wanted { in_snap = 1; next }
+awk -v wanted="  dsh-playwright@0.1.0(patch_hash=$playwright_hash)" '
+  index($0, wanted) == 1 { in_snap = 1; next }
   in_snap && /^[^ ]/ { in_snap = 0 }
   in_snap && /^  [^ ]/ { in_snap = 0 }
   in_snap && $0 ~ /^      playwright-core: / { print "DEP_PLAYWRIGHT" }

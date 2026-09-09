@@ -84,6 +84,25 @@ while :; do
   sleep 2
 done
 
+expected_dsh_version=$(get_env DSH_VERSION)
+[ -n "$expected_dsh_version" ] || expected_dsh_version=0.1.5-alpha.1
+expected_upstream_commit=$(get_env DSH_UPSTREAM_COMMIT)
+[ -n "$expected_upstream_commit" ] || expected_upstream_commit=5dda764ed3aa172535a7967b06ff95d9cbfe536a
+deployed_dsh_version=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' deepseek-harness 2>/dev/null || true)
+deployed_upstream_commit=$(docker inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' deepseek-harness 2>/dev/null || true)
+if [ "$deployed_dsh_version" != "$expected_dsh_version" ] \
+  || [ "$deployed_upstream_commit" != "$expected_upstream_commit" ]; then
+  echo "The deployed Harness image provenance does not match .env." >&2
+  exit "$configuration_exit"
+fi
+if ! compose exec -T harness node -e \
+  'const expected = process.argv[1]; const actual = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (actual !== expected) { console.error(`expected ${expected}, found ${actual}`); process.exit(1); }' \
+  "$expected_dsh_version"; then
+  echo "The deployed Harness package version does not match its image provenance." >&2
+  exit "$configuration_exit"
+fi
+echo "Verified DeepSeek Harness $expected_dsh_version from upstream commit $expected_upstream_commit."
+
 if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
   if ! docker info >/dev/null 2>&1; then
     echo "Docker Engine became unavailable while reading the plugin inventory." >&2
@@ -94,14 +113,14 @@ if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
 fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-context@0.37.0' \
+  'dsh-context@0.47.0' \
   'dsh-favicon-status@0.1.0-rc.5' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
   'dsh-playwright@0.1.0' \
-  'dsh-session-pin@0.6.1' \
-  'dsh-ui-appearance@0.1.6'
+  'dsh-session-pin@0.7.7' \
+  'dsh-ui-appearance@0.1.8'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
     echo "Missing captured plugin: $expected" >&2
@@ -140,7 +159,7 @@ if ! compose exec -T harness node --input-type=module -e '
     "primitivePeriod",
     "if (!hasSemanticSignal(segment)) continue",
     "DUPLICATE_READ_SUPPRESSED",
-    "continuation_hard_limit",
+    "implementation-checkpoint",
     "reasoning_prefix_cycle",
     "Compaction preserved the progress guard state",
   ]) {
@@ -149,6 +168,19 @@ if ! compose exec -T harness node --input-type=module -e '
   console.log("Verified corrected deployed dsh-loop-detector import and source markers.");
 '; then
   echo "The deployed loop detector is stale or failed its runtime import probe." >&2
+  exit "$configuration_exit"
+fi
+
+if ! compose exec -T harness node --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const path = "/data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js";
+  const source = await readFile(path, "utf8");
+  if (!source.includes("dsh-playwright-webserver-scope-v1")) {
+    throw new Error("deployed dsh-playwright is missing scoped webServer compatibility");
+  }
+  console.log("Verified dsh-playwright scoped webServer compatibility.");
+'; then
+  echo "The deployed Browser Use plugin is incompatible with the current web server scope." >&2
   exit "$configuration_exit"
 fi
 
@@ -195,22 +227,23 @@ fi
 
 # The browser module is generated from the pinned DSH package during the image
 # build. Compile the exact deployed files and require the cancellation and
-# native-file capability markers.
+# in-app workspace-file behavior markers.
 if ! compose exec -T harness node --input-type=module -e '
   import { readFile } from "node:fs/promises";
-  const path = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
+  const path = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
   const source = await readFile(path, "utf8");
   Function(source);
   for (const marker of [
     "dsh-cancellation-presentation-v1",
-    "turn-cancellation",
+    "event.data.reason.kind === \"error\" || event.data.reason.kind === \"aborted\"",
+    "failure.cancellation === void 0 ? {} : { cancellation: failure.cancellation }",
     "Stopped by user",
     "The session or transport lifecycle ended before this turn completed.",
     "hasInterruptionEvidence(blocks)",
     "dsh-native-file-opening-v1",
-    "openFile: availableOpenFile",
-    "owner.openFile === void 0 ? void 0",
-    "guardedWorkspaceFileOpener(connection.hostDescription",
+    "const FILE_ADDRESS_PREFIX = \"dsh-resource://file/\";",
+    "const url = fileAddressFor(sessionId, cwd, path);",
+    "ctx.sidebarRight.openResource(url)",
   ]) {
     if (!source.includes(marker)) throw new Error(`deployed conversation browser module is missing ${marker}`);
   }
@@ -219,14 +252,27 @@ if ! compose exec -T harness node --input-type=module -e '
   Function(deliverables);
   for (const marker of [
     "dsh-native-file-opening-v1",
-    "shown.map((path) => canOpenPath ?",
-    "hidden > 0 && isLoopback && canOpenPath",
+    "function ProducedFiles({ matched: paths, openFile, t })",
+    "producedFileMentions(paths, owner.openFile",
   ]) {
     if (!deliverables.includes(marker)) throw new Error(`deployed deliverables browser module is missing ${marker}`);
   }
-  console.log("Verified visible cancellation provenance and fail-closed native file actions in the deployed browser modules.");
+  console.log("Verified visible cancellation provenance and in-app workspace resource opening in the deployed browser modules.");
 '; then
-  echo "The deployed browser modules are missing cancellation or native-file capability behavior." >&2
+  echo "The deployed browser modules are missing cancellation or workspace-resource behavior." >&2
+  exit "$configuration_exit"
+fi
+
+if ! compose exec -T harness node --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const path = "/data/dsh/profiles/web/node_modules/@zoytown/dsh-token/lib/index.js";
+  const source = await readFile(path, "utf8");
+  if (!source.includes("dsh-token-session-format-v3-compat-v1")) {
+    throw new Error("deployed dsh-token is missing format v3 compatibility");
+  }
+  console.log("Verified dsh-token format v3 session compatibility.");
+'; then
+  echo "The deployed token plugin is incompatible with the current session format." >&2
   exit "$configuration_exit"
 fi
 
@@ -328,4 +374,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.1.1-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.1.5-alpha.1, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

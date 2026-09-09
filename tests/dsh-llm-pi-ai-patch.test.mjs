@@ -16,9 +16,10 @@ const fixture = `
 function readListing(body) {
 \tfor (const raw of body.data) {
 \t\tconst entry = raw;
-\t\tconst name = label(entry?.name, entry?.display_name);
-\t\tconst contextWindow = capacity(entry?.context_window, entry?.context_length);
-\t\tconst maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens);
+\t\tconst id = label(entry?.id);
+\t\tconst name = label(entry?.name, entry?.display_name, entry?.displayName) ?? id;
+\t\tconst contextWindow = capacity(entry?.contextWindow, entry?.context_window, entry?.context_length, entry?.max_input_tokens, entry?.limit?.context);
+\t\tconst maxTokens = capacity(entry?.maxOutputTokens, entry?.max_output_tokens, entry?.maxTokens, entry?.max_tokens, entry?.limit?.output, entry?.top_provider?.max_completion_tokens);
 \t}
 }
 const profile = z.object({

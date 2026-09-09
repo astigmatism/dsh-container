@@ -135,8 +135,8 @@ export function patchSource(input) {
 
   source = replaceOnce(
     source,
-    `\t\tconst name = label(entry?.name, entry?.display_name);\n\t\tconst contextWindow = capacity(entry?.context_window, entry?.context_length);\n\t\tconst maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens);`,
-    `\t\t// ${PATCH_MARKER}: prefer the router's complete public schema over legacy listing fields.\n\t\tconst router = entry?.x_ollama_router?.schema_version === 2 && entry.x_ollama_router.complete === true\n\t\t\t? entry.x_ollama_router\n\t\t\t: void 0;\n\t\tconst name = label(entry?.name, entry?.display_name);\n\t\tconst contextWindow = capacity(router?.context_window, entry?.context_window, entry?.context_length);\n\t\tconst maxTokens = capacity(router?.reasoning?.absolute_max_output_tokens, router?.max_output_tokens, entry?.max_output_tokens, entry?.max_tokens);`,
+    `\t\tconst name = label(entry?.name, entry?.display_name, entry?.displayName) ?? id;\n\t\tconst contextWindow = capacity(entry?.contextWindow, entry?.context_window, entry?.context_length, entry?.max_input_tokens, entry?.limit?.context);\n\t\tconst maxTokens = capacity(entry?.maxOutputTokens, entry?.max_output_tokens, entry?.maxTokens, entry?.max_tokens, entry?.limit?.output, entry?.top_provider?.max_completion_tokens);`,
+    `\t\t// ${PATCH_MARKER}: prefer the router's complete public schema over legacy listing fields.\n\t\tconst router = entry?.x_ollama_router?.schema_version === 2 && entry.x_ollama_router.complete === true\n\t\t\t? entry.x_ollama_router\n\t\t\t: void 0;\n\t\tconst name = label(entry?.name, entry?.display_name, entry?.displayName) ?? id;\n\t\tconst contextWindow = capacity(router?.context_window, entry?.contextWindow, entry?.context_window, entry?.context_length, entry?.max_input_tokens, entry?.limit?.context);\n\t\tconst maxTokens = capacity(router?.reasoning?.absolute_max_output_tokens, router?.max_output_tokens, entry?.maxOutputTokens, entry?.max_output_tokens, entry?.maxTokens, entry?.max_tokens, entry?.limit?.output, entry?.top_provider?.max_completion_tokens);`,
     "router discovery capacities",
   );
 

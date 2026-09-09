@@ -60,7 +60,7 @@
 
 - insert:
     - id: web-search-duckduckgo
-      name: '../../.dsh-plugins/dsh-web-search-free.js?v=2'
+      name: '../../.dsh-plugins/dsh-web-search-free.js'
       config:
         baseURL: https://html.duckduckgo.com/html/
 
@@ -71,13 +71,13 @@
         minLen: 512
         maxRetries: 1
         checkReasoning: true
-        # Provider-independent semantic progress containment. These defaults
-        # are explicit here so production bounds and contract tests share one
-        # reviewed configuration surface. Distinct repository reads are never
-        # capped by count. The read defaults only canonicalize duplicate-read
-        # detection and match the pinned @deepseek-ai/dsh-tool-fs runtime.
+        # Provider-independent semantic progress guidance. These defaults are
+        # explicit here so the advisory checkpoint and contract tests share one
+        # reviewed configuration surface. Distinct repository reads and model
+        # continuations are never capped by count. The read defaults only
+        # canonicalize duplicate-read detection and match the pinned
+        # @deepseek-ai/dsh-tool-fs runtime.
         continuationDirective: 12
-        continuationHard: 24
         reasoningPrefixChars: 128
         reasoningDirectiveOccurrence: 2
         reasoningHardOccurrence: 3
@@ -86,7 +86,7 @@
 
 - insert:
     - id: router-model-discovery
-      name: '../../.dsh-plugins/dsh-router-model-discovery.js?v=9'
+      name: '../../.dsh-plugins/dsh-router-model-discovery.js'
       config:
         providers: [ local-ollama, local-ollama-256k ]
         model: local-active

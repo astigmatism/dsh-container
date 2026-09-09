@@ -3,7 +3,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
+const DEFAULT_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
 const PATCH_MARKER = "dsh-cancellation-presentation-v1";
 
 function replaceOnce(source, before, after, description) {
@@ -98,23 +98,37 @@ export function patchSource(input) {
 
   source = replaceOnce(
     source,
-    `\t\tfunction lastStep$1(context) {`,
-    `\t\t// ${PATCH_MARKER}: project structured aborted turn reasons into visible Chat nodes.\n${cancellationPresentation.toString()}\n${cancellationPresentationFromTurnEnd.toString()}\n\t\tfunction lastStep$1(context) {`,
+    `\t\t/** Persistent, turn-positioned feedback for a terminal failure. */\n\t\tfunction TurnErrorItem({ node, t }) {`,
+    `\t\t// ${PATCH_MARKER}: project structured aborted turn reasons through the existing turn-error seat.\n${cancellationPresentation.toString()}\n${cancellationPresentationFromTurnEnd.toString()}\n\t\t/** Persistent, turn-positioned feedback for a terminal failure or cancellation. */\n\t\tfunction TurnErrorItem({ node, t }) {`,
     "cancellation provenance helpers",
   );
 
   source = replaceOnce(
     source,
-    `\t\t/** Persistent, turn-positioned notice for a turn ended at the output-token cap. */\n\t\tfunction TurnMaxTokensItem({ t }) {`,
-    `\t\t/** Persistent provenance for every explicitly aborted turn. */\n\t\tfunction TurnCancellationItem({ node, t }) {\n\t\t\tconst detail = node.detail || (node.detailKey === void 0 ? "" : t(node.detailKey));\n\t\t\tconst dot = node.severity === "benign" ? (0, react_jsx_runtime.jsx)("span", { "aria-hidden": true }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, {\n\t\t\t\tstate: node.severity === "error" ? "error" : "warning",\n\t\t\t\tclassName: MessageItem_module_css_default.turnErrorDot\n\t\t\t});\n\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {\n\t\t\t\tclassName: MessageItem_module_css_default.turnErrorRow,\n\t\t\t\trole: "status",\n\t\t\t\tchildren: [dot, (0, react_jsx_runtime.jsxs)("div", {\n\t\t\t\t\tclassName: MessageItem_module_css_default.turnErrorCopy,\n\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\tclassName: node.severity === "error" ? MessageItem_module_css_default.turnErrorTitle : node.severity === "warning" ? MessageItem_module_css_default.maxTokensTitle : MessageItem_module_css_default.turnErrorMessage,\n\t\t\t\t\t\tchildren: t(node.titleKey)\n\t\t\t\t\t}), detail !== "" && (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\tclassName: MessageItem_module_css_default.turnErrorMessage,\n\t\t\t\t\t\tchildren: detail\n\t\t\t\t\t})]\n\t\t\t\t})]\n\t\t\t});\n\t\t}\n\t\t/** Persistent, turn-positioned notice for a turn ended at the output-token cap. */\n\t\tfunction TurnMaxTokensItem({ t }) {`,
-    "turn cancellation renderer",
+    `\t\tfunction TurnErrorItem({ node, t }) {\n\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {`,
+    `\t\tfunction TurnErrorItem({ node, t }) {\n\t\t\tconst cancellation = node.cancellation;\n\t\t\tconst detail = cancellation === void 0 ? failureMessage(node.message, node.code, t) : cancellation.detail || (cancellation.detailKey === void 0 ? "" : t(cancellation.detailKey));\n\t\t\tconst dot = cancellation?.severity === "benign" ? (0, react_jsx_runtime.jsx)("span", { "aria-hidden": true }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, {\n\t\t\t\tstate: cancellation?.severity === "warning" ? "warning" : "error",\n\t\t\t\tclassName: MessageItem_module_css_default.turnErrorDot\n\t\t\t});\n\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {`,
+    "turn cancellation renderer state",
   );
 
   source = replaceOnce(
     source,
-    `\t\t/** Max-tokens turn-end notice keyed Chat renderer. */\n\t\tconst TurnMaxTokensNodeView =`,
-    `\t\t/** Aborted turn provenance keyed Chat renderer. */\n\t\tconst TurnCancellationNodeView = (0, react.memo)(function TurnCancellationNodeView({ node, t }) {\n\t\t\treturn (0, react_jsx_runtime.jsx)(TurnCancellationItem, {\n\t\t\t\tnode: node.data,\n\t\t\t\tt\n\t\t\t});\n\t\t});\n\t\t/** Max-tokens turn-end notice keyed Chat renderer. */\n\t\tconst TurnMaxTokensNodeView =`,
-    "turn cancellation node view",
+    `\t\t\t\tchildren: [\n\t\t\t\t\t(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, {\n\t\t\t\t\t\tstate: "error",\n\t\t\t\t\t\tclassName: MessageItem_module_css_default.turnErrorDot\n\t\t\t\t\t}),\n\t\t\t\t\t(0, react_jsx_runtime.jsxs)("div", {`,
+    `\t\t\t\tchildren: [\n\t\t\t\t\tdot,\n\t\t\t\t\t(0, react_jsx_runtime.jsxs)("div", {`,
+    "turn cancellation status dot",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: MessageItem_module_css_default.turnErrorTitle,\n\t\t\t\t\t\t\tchildren: t("message.turnError")\n\t\t\t\t\t\t}), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: MessageItem_module_css_default.turnErrorMessage,\n\t\t\t\t\t\t\tchildren: failureMessage(node.message, node.code, t)\n\t\t\t\t\t\t})]`,
+    `\t\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: cancellation?.severity === "warning" ? MessageItem_module_css_default.maxTokensTitle : MessageItem_module_css_default.turnErrorTitle,\n\t\t\t\t\t\t\tchildren: cancellation === void 0 ? t("message.turnError") : t(cancellation.titleKey)\n\t\t\t\t\t\t}), detail !== "" && (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: MessageItem_module_css_default.turnErrorMessage,\n\t\t\t\t\t\t\tchildren: detail\n\t\t\t\t\t\t})]`,
+    "turn cancellation title and detail",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\t\t\t\tnode.code !== void 0 && (0, react_jsx_runtime.jsx)("code", {`,
+    `\t\t\t\t\tcancellation === void 0 && node.code !== void 0 && (0, react_jsx_runtime.jsx)("code", {`,
+    "turn cancellation error code",
   );
 
   source = replaceOnce(
@@ -133,30 +147,23 @@ export function patchSource(input) {
 
   source = replaceOnce(
     source,
-    `\t\t\t\tcase "turn-error":\n\t\t\t\tcase "turn-max-tokens":`,
-    `\t\t\t\tcase "turn-error":\n\t\t\t\tcase "turn-cancellation":\n\t\t\t\tcase "turn-max-tokens":`,
-    "legacy Chat contribution dispatch",
+    `\t\tfunction failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end" || match.event.data.reason.kind !== "error") return void 0;\n\t\t\tconst failure = match.event.data.reason.error;\n\t\t\tconst display = displayFailure(failure);\n\t\t\treturn {\n\t\t\t\tseq: match.event.seq,\n\t\t\t\ttime: match.event.time,\n\t\t\t\tmessage: display.message,\n\t\t\t\t...display.code === void 0 ? {} : { code: display.code }\n\t\t\t};\n\t\t}`,
+    `\t\tfunction failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end") return void 0;\n\t\t\tif (match.event.data.reason.kind === "aborted") {\n\t\t\t\tconst cancellation = cancellationPresentation(match.event.data.reason.reason);\n\t\t\t\treturn {\n\t\t\t\t\tseq: match.event.seq,\n\t\t\t\t\ttime: match.event.time,\n\t\t\t\t\tmessage: cancellation.detail,\n\t\t\t\t\tcancellation\n\t\t\t\t};\n\t\t\t}\n\t\t\tif (match.event.data.reason.kind !== "error") return void 0;\n\t\t\tconst failure = match.event.data.reason.error;\n\t\t\tconst display = displayFailure(failure);\n\t\t\treturn {\n\t\t\t\tseq: match.event.seq,\n\t\t\t\ttime: match.event.time,\n\t\t\t\tmessage: display.message,\n\t\t\t\t...display.code === void 0 ? {} : { code: display.code }\n\t\t\t};\n\t\t}`,
+    "aborted turn projection",
   );
 
   source = replaceOnce(
     source,
-    `\t\t//#endregion\n\t\t//#region lib/types/client/conversation-nodes/turn-max-tokens.js`,
-    `\t\t//#endregion\n\t\t//#region dsh-container/cancellation-provenance.js\n\t\t/** Notice Definition for an aborted turn, including restored persisted events. */\n\t\tconst turnCancellationDefinition = {\n\t\t\tkind: "turn-cancellation",\n\t\t\ttarget: "chat",\n\t\t\tmatch: (event) => {\n\t\t\t\tif (event.type === "turn/end" && event.data.reason.kind === "aborted") return {\n\t\t\t\t\tid: String(event.data.turn),\n\t\t\t\t\trole: "start"\n\t\t\t\t};\n\t\t\t\treturn null;\n\t\t\t},\n\t\t\tstart: (_context, match) => {\n\t\t\t\tconst state = cancellationPresentationFromTurnEnd(match.event);\n\t\t\t\tif (state === void 0) throw new Error("turn-cancellation start requires an aborted turn/end");\n\t\t\t\treturn state;\n\t\t\t},\n\t\t\tupdate: (context) => context.state,\n\t\t\tbuildViewNode: (context) => {\n\t\t\t\tconst state = context.state;\n\t\t\t\tif (state === void 0) return null;\n\t\t\t\treturn chatNode(context, "turn-cancellation", state.seq, state, { visibility: state.visible ? "visible" : "hidden" });\n\t\t\t}\n\t\t};\n\t\tfunction registerTurnCancellationConversationNode(ctx) {\n\t\t\tctx.conversationEvents.register(turnCancellationDefinition);\n\t\t}\n\t\t//#endregion\n\t\t//#region lib/types/client/conversation-nodes/turn-max-tokens.js`,
-    "turn cancellation conversation node",
+    `\t\t\t\tif (event.type === "turn/end" && event.data.reason.kind === "error") return {`,
+    `\t\t\t\tif (event.type === "turn/end" && (event.data.reason.kind === "error" || event.data.reason.kind === "aborted")) return {`,
+    "aborted turn match",
   );
 
   source = replaceOnce(
     source,
-    `\t\t\tregisterTurnErrorConversationNode(ctx);\n\t\t\tregisterTurnMaxTokensConversationNode(ctx);`,
-    `\t\t\tregisterTurnErrorConversationNode(ctx);\n\t\t\tregisterTurnCancellationConversationNode(ctx);\n\t\t\tregisterTurnMaxTokensConversationNode(ctx);`,
-    "turn cancellation definition registration",
-  );
-
-  source = replaceOnce(
-    source,
-    `\t\t\tctx.slots.inject("conversation.chat.node", () => ctx.slots.register({\n\t\t\t\tname: "conversation.chat.node",\n\t\t\t\tkey: "turn-max-tokens",`,
-    `\t\t\tctx.slots.inject("conversation.chat.node", () => ctx.slots.register({\n\t\t\t\tname: "conversation.chat.node",\n\t\t\t\tkey: "turn-cancellation",\n\t\t\t\tlocale: NS\n\t\t\t}, TurnCancellationNodeView));\n\t\t\tctx.slots.inject("conversation.chat.node", () => ctx.slots.register({\n\t\t\t\tname: "conversation.chat.node",\n\t\t\t\tkey: "turn-max-tokens",`,
-    "turn cancellation view registration",
+    `\t\t\t\t\tmessage: failure.message,\n\t\t\t\t\t...failure.code === void 0 ? {} : { code: failure.code }`,
+    `\t\t\t\t\tmessage: failure.message,\n\t\t\t\t\t...failure.code === void 0 ? {} : { code: failure.code },\n\t\t\t\t\t...failure.cancellation === void 0 ? {} : { cancellation: failure.cancellation }`,
+    "cancellation node data",
   );
 
   return source;

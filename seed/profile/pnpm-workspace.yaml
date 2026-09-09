@@ -7,3 +7,13 @@ autoInstallPeers: false
 patchedDependencies:
   dsh-loop-detector@1.0.0: patches/dsh-loop-detector@1.0.0.patch
   dsh-playwright@0.1.0: patches/dsh-playwright@0.1.0.patch
+
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-brand@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-llm@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-timeout@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-typert-protocol@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-util-crypto@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-util-values@0.1.5-alpha.1'
+  - dsh-context@0.47.0
+  - dsh-session-pin@0.7.7

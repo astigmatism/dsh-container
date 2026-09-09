@@ -34,7 +34,7 @@ labels = services["harness"]["labels"]
 expected = {
     prefix + "enabled": "true",
     prefix + "script": "scripts/update-and-restart.sh",
-    prefix + "image": "local/deepseek-harness:0.1.1-rc.2-portable",
+    prefix + "image": "local/deepseek-harness:0.1.5-alpha.1-portable",
     prefix + "user": "1000:1000",
 }
 actual = {key: value for key, value in labels.items() if key.startswith(prefix)}

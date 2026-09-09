@@ -26,7 +26,7 @@ requireMarkers("dsh-llm-pi-ai", adapter, [
   "maxConcurrency: z.number().step(1).min(1)",
   "releaseConcurrency = await this.concurrency.acquire(profile, upstream)",
   "releaseConcurrency?.()",
-  "replayState: toPiReplayState(event.message)",
+  "replayState: toPiReplayState(event.message, requestedModel)",
   'case "reasoning": return {',
   "thinking: block.text",
   "thinkingSignature: replay.thinkingSignature",

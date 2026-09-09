@@ -55,6 +55,9 @@ function pressureAgent(provider) {
     session: {
       events,
       surface: { nodes: [0, 1, 2], replaceGeneration: 0 },
+      eventAt(seq) {
+        return events[seq];
+      },
       requestHeader() {
         return { config: { provider, model: "local-active", maxTokens: 32768 } };
       },

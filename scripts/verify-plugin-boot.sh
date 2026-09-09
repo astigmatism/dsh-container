@@ -2,13 +2,15 @@
 set -eu
 
 # Boot the canonical web profile in a throwaway DSH_HOME and require a stable
-# HTTP 200. Booting imports the full plugin tree (every bundle's loader entry,
+# authenticated HTTP 200. Booting imports the full plugin tree (every bundle's loader entry,
 # including dsh-playwright's server-side entry), so this catches broken
 # dependency graphs - e.g. a pnpm patched-dependency snapshot in the seed
 # lockfile that drops playwright-core/pngjs/ws - that `dsh --dump-config` and
 # `dsh plugin list` pass without noticing.
 #
-# The broken server can answer the first probe before the failed plugin-tree
+# The current Harness release prints a one-time login URL. The probe consumes
+# it into a throwaway cookie jar without printing the token. A broken server
+# can answer the first probe before the failed plugin-tree
 # import kills the process a moment later, so the check requires several
 # consecutive 200s and fails fast when the process dies.
 
@@ -30,6 +32,8 @@ timeout_seconds=90
 
 parent=$(mktemp -d "${TMPDIR:-/tmp}/dsh-plugin-boot.XXXXXX")
 home=$parent/runtime
+boot_log=$parent/dsh-web.log
+cookie_jar=$parent/cookies.txt
 cleanup() {
   rm -rf -- "$parent"
 }
@@ -58,37 +62,72 @@ cd "$parent"
   unset DISPLAY WAYLAND_DISPLAY
   DSH_HOME=$home DSH_TELEMETRY_DISABLED=1 \
     exec dsh web --no-open --port "$port"
-) >/dev/null 2>&1 &
+) >"$boot_log" 2>&1 &
 boot_pid=$!
 
-probe() {
-  node -e "fetch('http://127.0.0.1:${port}/').then(r => { process.exit(r.ok ? 0 : 1); }).catch(() => process.exit(1))" 2>/dev/null
+authenticate() {
+  token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
+  [ -n "$token" ] || return 1
+  curl --fail --silent --show-error \
+    --cookie-jar "$cookie_jar" \
+    --output /dev/null \
+    "http://127.0.0.1:${port}/?token=${token}"
+  token=
 }
 
-probe_headless_capability() {
-  node -e "
-    const request = {
-      type: 'client-request',
-      rpcId: 'dsh-container-headless-capability-probe',
-      method: 'host.describe',
-      payload: {},
-    };
-    fetch('http://127.0.0.1:${port}/api/host.describe', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(request),
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('host.describe returned HTTP ' + response.status);
-      const envelope = await response.json();
-      if (envelope?.result?.ok !== true) throw new Error('host.describe returned an RPC error');
-      if (envelope.result.value?.canOpenPath !== false) {
-        throw new Error('headless Host did not advertise canOpenPath: false');
-      }
-    }).catch((error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
-    });
-  "
+probe() {
+  [ -s "$cookie_jar" ] || authenticate || return 1
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" \
+    --output /dev/null \
+    "http://127.0.0.1:${port}/"
+}
+
+probe_browser_client() {
+  token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
+  [ -n "$token" ] || return 1
+  DSH_BOOT_TOKEN=$token DSH_BOOT_PORT=$port DSH_PROFILE_ROOT=$home/profiles/web \
+    node <<'NODE'
+const { chromium } = require(`${process.env.DSH_PROFILE_ROOT}/node_modules/playwright-core`);
+
+(async () => {
+  const token = process.env.DSH_BOOT_TOKEN;
+  const errors = [];
+  const browser = await chromium.launch({
+    executablePath: "/usr/bin/chromium",
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+  const page = await browser.newPage();
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`console: ${message.text()}`);
+  });
+  const response = await page.goto(
+    `http://127.0.0.1:${process.env.DSH_BOOT_PORT}/?token=${token}`,
+    { waitUntil: "networkidle", timeout: 30000 },
+  );
+  await page.waitForTimeout(2000);
+  const state = await page.evaluate(() => ({
+    bodyChars: (document.body?.innerText ?? "").trim().length,
+    moduleLoader: typeof window.__ModuleLoader__,
+  }));
+  await browser.close();
+  if (!response?.ok()) throw new Error(`final page status ${response?.status()}`);
+  if (state.bodyChars < 20) throw new Error(`client body too small: ${state.bodyChars}`);
+  if (state.moduleLoader !== "object") throw new Error(`module loader unavailable: ${state.moduleLoader}`);
+  if (errors.length > 0) throw new Error(errors.join("\n"));
+})().catch((error) => {
+  const detail = String(error?.stack ?? error).split(process.env.DSH_BOOT_TOKEN).join("<redacted>");
+  console.error(detail);
+  process.exit(1);
+});
+NODE
+  token=
+}
+
+print_boot_log() {
+  tail -n 200 "$boot_log" | sed 's/[?]token=[^ ]*/?token=<redacted>/g' >&2
 }
 
 ok=0
@@ -107,9 +146,9 @@ while [ "$elapsed" -lt "$timeout_seconds" ]; do
   elapsed=$((elapsed + 1))
 done
 
-capability_ok=0
-if [ "$ok" -ge "$stable" ] && probe_headless_capability; then
-  capability_ok=1
+browser_ok=0
+if [ "$ok" -ge "$stable" ] && probe_browser_client; then
+  browser_ok=1
 fi
 
 kill "$boot_pid" 2>/dev/null || true
@@ -118,12 +157,16 @@ wait "$boot_pid" 2>/dev/null || true
 if [ "$ok" -lt "$stable" ]; then
   echo "Plugin boot check failed: dsh web never served $stable consecutive HTTP 200 responses from $seed_home/profiles/web (after ${elapsed}s)." >&2
   echo "The plugin tree likely failed to import; check the seed lockfile's patched-dependency snapshots." >&2
+  echo "Last Harness startup output:" >&2
+  print_boot_log || true
   exit 1
 fi
 
-if [ "$capability_ok" -ne 1 ]; then
-  echo "Plugin boot check failed: the headless Host did not advertise canOpenPath: false." >&2
+if [ "$browser_ok" -ne 1 ]; then
+  echo "Plugin boot check failed: Chromium could not load the composed Harness client without errors." >&2
+  echo "Last Harness startup output:" >&2
+  print_boot_log || true
   exit 1
 fi
 
-echo "Plugin boot check passed: web profile served HTTP 200 and advertised canOpenPath: false when headless."
+echo "Plugin boot check passed: the authenticated web profile and composed browser client loaded cleanly."

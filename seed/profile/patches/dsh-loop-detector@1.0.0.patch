@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191a1658c6d
 --- /dev/null
 +++ b/lib/index.js
-@@ -0,0 +1,705 @@
+@@ -0,0 +1,691 @@
 +import { createHash } from 'node:crypto'
 +import { resolve as resolvePath } from 'node:path'
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -13,7 +13,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +
 +export const DEFAULT_PROGRESS_LIMITS = Object.freeze({
 +  continuationDirective: 12,
-+  continuationHard: 24,
 +  reasoningPrefixChars: 128,
 +  reasoningDirectiveOccurrence: 2,
 +  reasoningHardOccurrence: 3,
@@ -137,15 +136,11 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +function resolveLimits(config) {
 +  const limits = {
 +    continuationDirective: positiveInteger(config.continuationDirective, DEFAULT_PROGRESS_LIMITS.continuationDirective, 'continuationDirective'),
-+    continuationHard: positiveInteger(config.continuationHard, DEFAULT_PROGRESS_LIMITS.continuationHard, 'continuationHard'),
 +    reasoningPrefixChars: positiveInteger(config.reasoningPrefixChars, DEFAULT_PROGRESS_LIMITS.reasoningPrefixChars, 'reasoningPrefixChars'),
 +    reasoningDirectiveOccurrence: positiveInteger(config.reasoningDirectiveOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningDirectiveOccurrence, 'reasoningDirectiveOccurrence'),
 +    reasoningHardOccurrence: positiveInteger(config.reasoningHardOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningHardOccurrence, 'reasoningHardOccurrence'),
 +    readDefaultOffset: positiveInteger(config.readDefaultOffset, DEFAULT_PROGRESS_LIMITS.readDefaultOffset, 'readDefaultOffset'),
 +    readDefaultLimit: positiveInteger(config.readDefaultLimit, DEFAULT_PROGRESS_LIMITS.readDefaultLimit, 'readDefaultLimit'),
-+  }
-+  if (limits.continuationDirective >= limits.continuationHard) {
-+    throw new Error('[loop-detector] continuationDirective must be lower than continuationHard')
 +  }
 +  if (limits.reasoningDirectiveOccurrence >= limits.reasoningHardOccurrence) {
 +    throw new Error('[loop-detector] reasoningDirectiveOccurrence must be lower than reasoningHardOccurrence')
@@ -380,7 +375,7 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  return createUserMessage({
 +    content: [{
 +      type: 'text',
-+      text: `[semantic-progress] No meaningful implementation progress has occurred (${safeCounts(state)}; trigger=${trigger}). The next step must make a concrete edit/write/test, perform a materially different investigation justified by a specific unknown, or state an explicit blocker/final response. Keep the configured reasoning effort unchanged.`,
++      text: `[implementation-checkpoint] No source mutation or new test result has occurred yet (${safeCounts(state)}; trigger=${trigger}). If the required discovery is complete, begin a concrete edit/write/test. Otherwise continue gathering distinct evidence tied to a specific implementation unknown. Do not stop solely because of this checkpoint, and keep the configured reasoning effort unchanged.`,
 +    }],
 +    source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
 +  })
@@ -389,12 +384,12 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +function compactionProgressFact(state) {
 +  const status = state.totalMutations === 0
 +    ? 'no implementation has occurred in this human turn'
-+    : 'implementation occurred earlier, but no meaningful progress occurred in the current progress epoch'
++    : 'implementation occurred earlier, but no successful mutation or new test result occurred in the current progress epoch'
 +  const blocker = state.verifiedBlocker ? 'an explicit blocker was recorded' : 'no verified blocker is recorded'
 +  return createUserMessage({
 +    content: [{
 +      type: 'text',
-+      text: `[semantic-progress] Compaction preserved the progress guard state: ${status}; ${safeCounts(state)}; ${blocker}. Required next: concrete edit/write/test, a materially different investigation tied to a specific unknown, or an explicit blocker/final response.`,
++      text: `[semantic-progress] Compaction preserved the progress guard state: ${status}; ${safeCounts(state)}; ${blocker}. If required discovery is complete, begin a concrete edit/write/test. Otherwise continue gathering distinct evidence tied to a specific implementation unknown. Do not stop solely because of this checkpoint.`,
 +    }],
 +    source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
 +  })
@@ -528,15 +523,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +      state.reasoningPrefixHash = undefined
 +      state.reasoningStep = undefined
 +
-+      if (!state.terminated && implementationGuardApplies(state) && state.modelContinuations >= limits.continuationHard) {
-+        cancelSemantic(
-+          ctx,
-+          sessionId,
-+          state,
-+          'continuation_hard_limit',
-+          `${limits.continuationHard} model continuations completed without a successful mutation, new relevant test result, or explicit blocker`,
-+        )
-+      }
 +      return
 +    }
 +

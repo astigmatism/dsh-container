@@ -3,7 +3,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_CONVERSATION_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
+const DEFAULT_CONVERSATION_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
 const DEFAULT_DELIVERABLES_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
 const PATCH_MARKER = "dsh-native-file-opening-v1";
 
@@ -46,6 +46,13 @@ export function guardedWorkspaceFileOpener(hostDescription, openFile) {
 /** Apply the capability boundary to the pinned conversation browser bundle. */
 export function patchConversationSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
+  if (
+    input.includes('const FILE_ADDRESS_PREFIX = "dsh-resource://file/";') &&
+    input.includes('const url = fileAddressFor(sessionId, cwd, path);') &&
+    input.includes('ctx.sidebarRight.openResource(url)')
+  ) {
+    return `${input}\n// ${PATCH_MARKER}: verified upstream in-app workspace resource opening; no native host dispatch.\n`;
+  }
   let source = input;
 
   source = replaceOnce(
@@ -103,6 +110,13 @@ export function patchConversationSource(input) {
 /** Make produced-file and folder affordances obey the same Host capability. */
 export function patchDeliverablesSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
+  if (
+    input.includes('function ProducedFiles({ matched: paths, openFile, t })') &&
+    input.includes('openFile(path);') &&
+    input.includes('producedFileMentions(paths, owner.openFile')
+  ) {
+    return `${input}\n// ${PATCH_MARKER}: verified produced-file actions use the chat resource opener.\n`;
+  }
   let source = input;
 
   source = replaceOnce(

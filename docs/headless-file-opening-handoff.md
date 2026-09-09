@@ -2,6 +2,12 @@
 
 Date: 2026-09-06
 
+> Superseded on 2026-09-08 for DeepSeek Harness `0.1.5-alpha.1`. That upstream
+> release provides an in-app `dsh-resource://file/` workspace viewer, so the
+> container no longer needs the native-host capability patch described below.
+> The build now verifies the upstream resource-opening contract and fails on
+> drift. The remainder of this document records the earlier implementation.
+
 ## Outcome
 
 The source fix is complete and verified. DSH conversation file actions are now

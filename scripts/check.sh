@@ -102,6 +102,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/qualify-dsh-read-schema.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
+    node --check scripts/patch-dsh-token-session-format.mjs
+    node --check scripts/patch-dsh-playwright-webserver.mjs
     node --check ollama-router/src/server.js
     node --test gateway/*.test.mjs
     node --test tests/*.test.mjs
@@ -117,19 +119,30 @@ if [ "$build" -eq 1 ]; then
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
 
+  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.5-alpha.1 ] || {
+    echo "Built image has the wrong Harness version label." >&2
+    exit 1
+  }
+  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 5dda764ed3aa172535a7967b06ff95d9cbfe536a ] || {
+    echo "Built image has the wrong upstream commit label." >&2
+    exit 1
+  }
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
+    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.5-alpha.1") process.exit(1)'
+
   # Verify the image with a UID unrelated to the base image's `node` user.
   inventory=$(docker run --rm --user 12345:12345 --entrypoint dsh \
     --env DSH_HOME=/opt/dsh-seed "$harness_image" plugin --profile web list)
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
-    'dsh-context@0.37.0' \
+    'dsh-context@0.47.0' \
     'dsh-favicon-status@0.1.0-rc.5' \
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
     'dsh-playwright@0.1.0' \
-    'dsh-session-pin@0.6.1' \
-    'dsh-ui-appearance@0.1.6'
+    'dsh-session-pin@0.7.7' \
+    'dsh-ui-appearance@0.1.8'
   do
     printf '%s\n' "$inventory" | grep -Fq "$expected" || {
       echo "Built image is missing: $expected" >&2
@@ -139,28 +152,42 @@ if [ "$build" -eq 1 ]; then
 
   docker run --rm --network none --read-only --entrypoint node "$harness_image" --input-type=module -e '
     import { readFile } from "node:fs/promises";
-    const conversationPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
+    const conversationPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
     const deliverablesPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
+    const tokenPath = "/opt/dsh-seed/profiles/web/node_modules/@zoytown/dsh-token/lib/index.js";
+    const playwrightPath = "/opt/dsh-seed/profiles/web/node_modules/dsh-playwright/lib/index.js";
     const conversation = await readFile(conversationPath, "utf8");
     const deliverables = await readFile(deliverablesPath, "utf8");
+    const token = await readFile(tokenPath, "utf8");
+    const playwright = await readFile(playwrightPath, "utf8");
     Function(conversation);
     Function(deliverables);
     for (const [name, source, markers] of [
-      ["conversation", conversation, [
+      ["chat", conversation, [
+        "dsh-cancellation-presentation-v1",
+        "event.data.reason.kind === \"error\" || event.data.reason.kind === \"aborted\"",
+        "failure.cancellation === void 0 ? {} : { cancellation: failure.cancellation }",
+        "Stopped by safety hook",
         "dsh-native-file-opening-v1",
-        "openFile: availableOpenFile",
-        "owner.openFile === void 0 ? void 0",
-        "guardedWorkspaceFileOpener(connection.hostDescription",
+        "const FILE_ADDRESS_PREFIX = \"dsh-resource://file/\";",
+        "const url = fileAddressFor(sessionId, cwd, path);",
+        "ctx.sidebarRight.openResource(url)",
       ]],
       ["deliverables", deliverables, [
         "dsh-native-file-opening-v1",
-        "shown.map((path) => canOpenPath ?",
-        "hidden > 0 && isLoopback && canOpenPath",
+        "function ProducedFiles({ matched: paths, openFile, t })",
+        "producedFileMentions(paths, owner.openFile",
       ]],
     ]) {
       for (const marker of markers) {
         if (!source.includes(marker)) throw new Error(`${name} browser module is missing ${marker}`);
       }
+    }
+    if (!token.includes("dsh-token-session-format-v3-compat-v1")) {
+      throw new Error("dsh-token is missing format v3 compatibility");
+    }
+    if (!playwright.includes("dsh-playwright-webserver-scope-v1")) {
+      throw new Error("dsh-playwright is missing scoped webServer compatibility");
     }
   '
 

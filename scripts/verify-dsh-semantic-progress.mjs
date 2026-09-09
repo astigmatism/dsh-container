@@ -12,7 +12,6 @@ assert.deepEqual(inject, ["agents", "fs", "tools"]);
 
 assert.deepEqual(DEFAULT_PROGRESS_LIMITS, {
   continuationDirective: 12,
-  continuationHard: 24,
   reasoningPrefixChars: 128,
   reasoningDirectiveOccurrence: 2,
   reasoningHardOccurrence: 3,
@@ -109,15 +108,14 @@ const correction = await preStep(
 );
 assert.equal(correction.messages.length, 1);
 assert.match(correction.messages[0].content[0].text, /trigger=continuation_no_progress_12/);
-for (let index = 13; index <= 24; index += 1) {
+for (let index = 13; index <= 48; index += 1) {
   event(session, {
     type: "assistant/message",
     data: { turn: 1, step: index + 1, message: { content: [], source: { provider: "test", model: "test" } } },
     surfaceOp: "append",
   });
 }
-assert.match(cancels.at(-1).reason, /guard=continuation_hard_limit/);
-assert.match(cancels.at(-1).reason, /No implementation occurred during this human turn/);
+assert.equal(cancels.length, 0, "distinct continued discovery must not be cancelled by a step count");
 
 event(session, { type: "turn/end", data: { turn: 1, reason: { kind: "aborted" } } });
 begin(2, "Read-only diagnosis; do not edit files.");
@@ -132,4 +130,4 @@ assert.equal(repeated.result.error.info.code, "SEMANTIC_DUPLICATE_READ_LOOP");
 assert.match(cancels.at(-1).reason, /guard=duplicate_read_repeated/);
 
 assert.ok(warnings.some((message) => /injected semantic progress correction/.test(message)));
-console.log("Verified installed continuation bound, unrestricted distinct reads, accurate mutation accounting, and duplicate suppression/termination.");
+console.log("Verified advisory implementation checkpoint, unrestricted distinct discovery, accurate mutation accounting, and duplicate suppression/termination.");

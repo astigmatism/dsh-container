@@ -6,6 +6,9 @@ project_dir=$(CDPATH= cd -- "$test_dir/.." && pwd)
 temporary_root=$(mktemp -d)
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
 
+grep -Fq 'COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx' "$project_dir/Dockerfile" \
+  || { echo "Harness image does not include the Buildx plugin required by delegated updates." >&2; exit 1; }
+
 check_project() {
   mode=$1
   shift

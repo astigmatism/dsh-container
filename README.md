@@ -596,6 +596,20 @@ runs a global Docker prune. Remote-mode deployment additionally removes the
 exact obsolete `deepseek-harness/ai-router` container only after direct-route
 verification, while retaining its image and persistent data.
 
+Delegated updates use the same pinned Docker CLI, Compose, and Buildx plugins
+inside the maintenance image as direct updates. The helper resolves the home
+for the configured numeric host UID through the host passwd database, verifies
+that it exists inside the configured host-filesystem view, and bind-mounts the
+exact host-native path with Docker's missing-source-safe mount form. If that
+cannot be done, the helper records a blocking boot-service failure before any
+fetch, build, or service change. Each maintenance lock records
+whether its owner is a host process or an exact Docker container ID. A later
+run refuses a live owner, but atomically reclaims a schema-1 lock when that
+process has exited or that exact container no longer exists or is no longer
+running. This prevents an interrupted Service Portal runner from permanently
+blocking future update attempts; legacy PID-only locks remain fail-closed and
+require operator inspection before removal.
+
 The `harness` service is the only service carrying the Service Portal update
 labels. The portal therefore offers one project-level update job for every
 container in the active `deepseek-harness` project, including managed-mode

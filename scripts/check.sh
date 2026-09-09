@@ -130,6 +130,7 @@ if [ "$build" -eq 1 ]; then
   }
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.5-alpha.1") process.exit(1)'
+  docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
 
   # Verify the image with a UID unrelated to the base image's `node` user.
   inventory=$(docker run --rm --user 12345:12345 --entrypoint dsh \

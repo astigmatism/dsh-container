@@ -17,6 +17,7 @@ boot_service=not-run
 lock_dir=$project_dir/data/update-and-restart.lock
 status_file=$project_dir/data/maintenance-status
 resume_file=$lock_dir/resume
+owner_file=$lock_dir/owner
 resume=${DSH_UPDATE_RESUME:-0}
 resume_temporary=
 pin_temporary=
@@ -394,6 +395,134 @@ write_status() {
   mv "$temporary" "$status_file"
 }
 
+lock_field() {
+  field_file=$1
+  field_name=$2
+  awk -F= -v wanted="$field_name" '$1 == wanted { print substr($0, index($0, "=") + 1); exit }' "$field_file"
+}
+
+write_lock_owner() {
+  owner_temporary=$(mktemp "$project_dir/data/.update-lock-owner.XXXXXX")
+  owner_kind=process
+  owner_container_name=
+  owner_container_id=
+  if [ -n "${DSH_UPDATE_CONTAINER_NAME:-}" ]; then
+    case "$DSH_UPDATE_CONTAINER_NAME" in
+      *[!A-Za-z0-9_.-]*|'')
+        echo "Refusing an unsafe maintenance container identity." >&2
+        rm -f "$owner_temporary"
+        return 1
+        ;;
+    esac
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "Cannot record maintenance ownership because Docker is unavailable." >&2
+      rm -f "$owner_temporary"
+      return 1
+    fi
+    owner_container_name=$DSH_UPDATE_CONTAINER_NAME
+    owner_container_id=$(docker inspect "$owner_container_name" --format '{{.Id}}' 2>/dev/null || true)
+    case "$owner_container_id" in
+      ''|*[!0-9a-f]*)
+        echo "Cannot verify maintenance container $owner_container_name." >&2
+        rm -f "$owner_temporary"
+        return 1
+        ;;
+    esac
+    owner_kind=container
+  fi
+  {
+    echo 'schema=1'
+    echo "kind=$owner_kind"
+    echo "pid=$$"
+    if [ "$owner_kind" = container ]; then
+      echo "container_name=$owner_container_name"
+      echo "container_id=$owner_container_id"
+      echo "portal_job_id=${SERVICE_PORTAL_UPDATE_JOB_ID:-}"
+    fi
+  } >"$owner_temporary"
+  chmod 0600 "$owner_temporary"
+  mv "$owner_temporary" "$owner_file"
+}
+
+lock_owner_is_stale() {
+  [ -f "$owner_file" ] || return 1
+  [ "$(lock_field "$owner_file" schema)" = 1 ] || return 1
+  owner_kind=$(lock_field "$owner_file" kind)
+  owner_pid=$(lock_field "$owner_file" pid)
+  case "$owner_pid" in ''|*[!0-9]*) return 1 ;; esac
+  case "$owner_kind" in
+    process)
+      if kill -0 "$owner_pid" 2>/dev/null; then
+        return 1
+      fi
+      # kill -0 also fails with EPERM. Treat any independently visible PID as
+      # live so a differently owned updater can never be reclaimed as stale.
+      [ -d "/proc/$owner_pid" ] && return 1
+      if command -v ps >/dev/null 2>&1 \
+        && ps -p "$owner_pid" -o pid= 2>/dev/null | grep -Eq '[0-9]'; then
+        return 1
+      fi
+      return 0
+      ;;
+    container)
+      owner_container_name=$(lock_field "$owner_file" container_name)
+      owner_container_id=$(lock_field "$owner_file" container_id)
+      case "$owner_container_name" in ''|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+      case "$owner_container_id" in ''|*[!0-9a-f]*) return 1 ;; esac
+      command -v docker >/dev/null 2>&1 || return 1
+      live_owner=$(docker inspect "$owner_container_name" \
+        --format '{{.Id}} {{.State.Running}}' 2>/dev/null || true)
+      [ "$live_owner" = "$owner_container_id true" ] && return 1
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+lock_owned_by_current_run() {
+  [ -f "$owner_file" ] || return 1
+  [ "$(lock_field "$owner_file" schema)" = 1 ] || return 1
+  [ "$(lock_field "$owner_file" pid)" = "$$" ] || return 1
+  if [ -n "${DSH_UPDATE_CONTAINER_NAME:-}" ]; then
+    [ "$(lock_field "$owner_file" kind)" = container ] || return 1
+    [ "$(lock_field "$owner_file" container_name)" = "$DSH_UPDATE_CONTAINER_NAME" ] || return 1
+    current_container_id=$(docker inspect "$DSH_UPDATE_CONTAINER_NAME" \
+      --format '{{.Id}}' 2>/dev/null || true)
+    [ -n "$current_container_id" ] \
+      && [ "$(lock_field "$owner_file" container_id)" = "$current_container_id" ]
+    return
+  fi
+  [ "$(lock_field "$owner_file" kind)" = process ]
+}
+
+reclaim_stale_lock() {
+  stale_lock=$project_dir/data/update-and-restart.lock.stale.$$
+  for lock_entry in "$lock_dir"/* "$lock_dir"/.[!.]* "$lock_dir"/..?*; do
+    [ -e "$lock_entry" ] || continue
+    case "$lock_entry" in
+      "$lock_dir/pid"|"$lock_dir/resume"|"$lock_dir/owner") ;;
+      *)
+        echo "Refusing to reclaim a maintenance lock containing an unknown entry: $lock_entry" >&2
+        return 1
+        ;;
+    esac
+    [ -f "$lock_entry" ] || {
+      echo "Refusing to reclaim a maintenance lock containing a non-file entry: $lock_entry" >&2
+      return 1
+    }
+  done
+  if ! mv "$lock_dir" "$stale_lock" 2>/dev/null; then
+    return 1
+  fi
+  rm -f "$stale_lock/pid" "$stale_lock/resume" "$stale_lock/owner"
+  if ! rmdir "$stale_lock"; then
+    echo "Could not remove the validated stale maintenance lock." >&2
+    return 1
+  fi
+  echo "Reclaimed an interrupted maintenance lock whose recorded owner is no longer running."
+  mkdir "$lock_dir" 2>/dev/null
+}
+
 finish() {
   status=$?
   trap - EXIT
@@ -415,7 +544,7 @@ finish() {
   if [ -n "$pin_temporary" ]; then
     rm -f "$pin_temporary"
   fi
-  rm -f "$lock_dir/pid" "$resume_file"
+  rm -f "$lock_dir/pid" "$resume_file" "$owner_file"
   rmdir "$lock_dir" 2>/dev/null || true
   exit "$status"
 }
@@ -429,12 +558,29 @@ if [ "$dry_run" -ne 1 ]; then
       echo "Refusing an invalid maintenance resume; the original lock is not owned by this process." >&2
       exit 1
     fi
-  elif ! mkdir "$lock_dir" 2>/dev/null; then
-    echo "Another maintenance run may be active: $lock_dir" >&2
-    exit 1
-  fi
-  if [ "$resume" -ne 1 ]; then
+    # Updaters predating schema 1 transfer only pid/resume. Upgrade that
+    # same-process lock during exec so existing installations can update.
+    if [ ! -f "$owner_file" ] && ! write_lock_owner; then
+      echo "Could not upgrade the transferred maintenance lock ownership." >&2
+      exit 1
+    fi
+    if ! lock_owned_by_current_run; then
+      echo "Refusing an invalid maintenance resume owner." >&2
+      exit 1
+    fi
+  else
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+      if ! lock_owner_is_stale || ! reclaim_stale_lock; then
+        echo "Another maintenance run may be active: $lock_dir" >&2
+        exit 1
+      fi
+    fi
     printf '%s\n' "$$" >"$lock_dir/pid"
+    if ! write_lock_owner; then
+      rm -f "$lock_dir/pid" "$owner_file"
+      rmdir "$lock_dir" 2>/dev/null || true
+      exit 1
+    fi
   fi
   trap finish EXIT
   trap 'exit 129' HUP

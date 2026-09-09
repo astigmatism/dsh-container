@@ -8,6 +8,16 @@ case "${1:-}" in
     exit "${FAKE_DOCKER_INFO_EXIT:-0}"
     ;;
   inspect)
+    if [ "${2:-}" = "${FAKE_LOCK_CONTAINER_NAME:-__no_lock_container__}" ]; then
+      [ "${FAKE_LOCK_CONTAINER_EXISTS:-1}" = 1 ] || exit 1
+      case "$*" in
+        *State.Running*)
+          printf '%s %s\n' "${FAKE_LOCK_CONTAINER_ID:?}" "${FAKE_LOCK_CONTAINER_RUNNING:-true}"
+          ;;
+        *) printf '%s\n' "${FAKE_LOCK_CONTAINER_ID:?}" ;;
+      esac
+      exit 0
+    fi
     case "$*" in
       *com.docker.compose.project.config_files*) ;;
       *com.docker.compose.project*)

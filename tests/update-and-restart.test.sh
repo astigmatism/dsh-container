@@ -15,6 +15,10 @@ fail() {
 assert_status() {
   fixture_path=$1
   expected=$2
+  if [ ! -f "$fixture_path/data/maintenance-status" ]; then
+    sed -n '1,160p' "$fixture_path/output.log" >&2
+    fail "maintenance status was not written"
+  fi
   grep -Fxq "$expected" "$fixture_path/data/maintenance-status" \
     || fail "status missing '$expected'"
 }
@@ -90,6 +94,8 @@ run_update() {
     HOME="$fixture_path/home" \
     DSH_HOME= \
     DSH_UPDATE_DELEGATED="${TEST_UPDATE_DELEGATED:-0}" \
+    DSH_UPDATE_CONTAINER_NAME="${TEST_UPDATE_CONTAINER_NAME:-}" \
+    SERVICE_PORTAL_UPDATE_JOB_ID="${TEST_SERVICE_PORTAL_JOB_ID:-}" \
     DSH_BOOT_SERVICE_HOME="${TEST_BOOT_SERVICE_HOME:-}" \
     FAKE_GIT_LOG="$fixture_path/git.log" \
     FAKE_GIT_STATE_FILE="$fixture_path/git-head" \
@@ -105,6 +111,10 @@ run_update() {
     FAKE_DEPLOY_LOG="$fixture_path/docker.log" \
     FAKE_GIT_DIRTY="${TEST_GIT_DIRTY:-}" \
     FAKE_DOCKER_INFO_EXIT="${TEST_DOCKER_INFO_EXIT:-0}" \
+    FAKE_LOCK_CONTAINER_NAME="${TEST_UPDATE_CONTAINER_NAME:-}" \
+    FAKE_LOCK_CONTAINER_ID="${TEST_LOCK_CONTAINER_ID:-}" \
+    FAKE_LOCK_CONTAINER_EXISTS="${TEST_LOCK_CONTAINER_EXISTS:-1}" \
+    FAKE_LOCK_CONTAINER_RUNNING="${TEST_LOCK_CONTAINER_RUNNING:-true}" \
     FAKE_COMPOSE_VERSION_EXIT="${TEST_COMPOSE_VERSION_EXIT:-0}" \
     FAKE_COMPOSE_CONFIG_EXIT="${TEST_COMPOSE_CONFIG_EXIT:-0}" \
     FAKE_COMPOSE_PULL_EXIT="${TEST_COMPOSE_PULL_EXIT:-0}" \
@@ -199,7 +209,10 @@ grep -Fq 'Persisted settings are empty' "$fixture/output.log" \
 make_fixture mismatched-settings mismatched
 mismatch_before=$(cksum "$fixture/data/dsh/settings.yaml")
 run_update "$fixture" --external-ollama
-[ "$update_status" -eq 0 ] || fail "valid machine-specific settings blocked maintenance"
+if [ "$update_status" -ne 0 ]; then
+  sed -n '1,240p' "$fixture/output.log" >&2
+  fail "valid machine-specific settings blocked maintenance"
+fi
 [ "$mismatch_before" = "$(cksum "$fixture/data/dsh/settings.yaml")" ] \
   || fail "machine-specific settings were modified"
 grep -Fq 'preserving the non-empty runtime configuration' "$fixture/output.log" \
@@ -682,6 +695,77 @@ run_update "$fixture" --external-ollama
   || fail "lock refusal removed another maintenance run's lock"
 [ ! -s "$fixture/git.log" ] && [ ! -s "$fixture/docker.log" ] \
   || fail "lock refusal invoked Git or Docker"
+
+make_fixture active-process-lock matching
+mkdir "$fixture/data/update-and-restart.lock"
+printf '%s\n' "$$" >"$fixture/data/update-and-restart.lock/pid"
+{
+  echo 'schema=1'
+  echo 'kind=process'
+  echo "pid=$$"
+} >"$fixture/data/update-and-restart.lock/owner"
+run_update "$fixture" --external-ollama
+[ "$update_status" -ne 0 ] || fail "active process maintenance lock was ignored"
+[ -e "$fixture/data/update-and-restart.lock/owner" ] \
+  || fail "active process lock refusal removed its owner record"
+
+make_fixture stale-process-lock matching
+mkdir "$fixture/data/update-and-restart.lock"
+printf '%s\n' 99999999 >"$fixture/data/update-and-restart.lock/pid"
+{
+  echo 'schema=1'
+  echo 'kind=process'
+  echo 'pid=99999999'
+} >"$fixture/data/update-and-restart.lock/owner"
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "stale process maintenance lock was not recovered"
+grep -Fq 'Reclaimed an interrupted maintenance lock' "$fixture/output.log" \
+  || fail "stale process lock recovery was not reported"
+[ ! -e "$fixture/data/update-and-restart.lock" ] \
+  || fail "recovered process update left a lock behind"
+
+container_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+replacement_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+make_fixture active-container-lock matching
+mkdir "$fixture/data/update-and-restart.lock"
+printf '%s\n' 7 >"$fixture/data/update-and-restart.lock/pid"
+{
+  echo 'schema=1'
+  echo 'kind=container'
+  echo 'pid=7'
+  echo 'container_name=service-portal-update-deepseek-harness-active'
+  echo "container_id=$container_id"
+  echo 'portal_job_id=active-job'
+} >"$fixture/data/update-and-restart.lock/owner"
+TEST_UPDATE_CONTAINER_NAME=service-portal-update-deepseek-harness-active
+TEST_LOCK_CONTAINER_ID=$container_id
+run_update "$fixture" --external-ollama
+unset TEST_UPDATE_CONTAINER_NAME TEST_LOCK_CONTAINER_ID
+[ "$update_status" -ne 0 ] || fail "active container maintenance lock was ignored"
+[ -e "$fixture/data/update-and-restart.lock/owner" ] \
+  || fail "active container lock refusal removed its owner record"
+
+make_fixture replaced-container-lock matching
+mkdir "$fixture/data/update-and-restart.lock"
+printf '%s\n' 7 >"$fixture/data/update-and-restart.lock/pid"
+{
+  echo 'schema=1'
+  echo 'kind=container'
+  echo 'pid=7'
+  echo 'container_name=service-portal-update-deepseek-harness-reused'
+  echo "container_id=$container_id"
+  echo 'portal_job_id=interrupted-job'
+} >"$fixture/data/update-and-restart.lock/owner"
+TEST_UPDATE_CONTAINER_NAME=service-portal-update-deepseek-harness-reused
+TEST_SERVICE_PORTAL_JOB_ID=replacement-job
+TEST_LOCK_CONTAINER_ID=$replacement_id
+run_update "$fixture" --external-ollama
+unset TEST_UPDATE_CONTAINER_NAME TEST_SERVICE_PORTAL_JOB_ID TEST_LOCK_CONTAINER_ID
+[ "$update_status" -eq 0 ] || fail "lock from a replaced maintenance container was not recovered"
+grep -Fq 'Reclaimed an interrupted maintenance lock' "$fixture/output.log" \
+  || fail "replaced container lock recovery was not reported"
+[ ! -e "$fixture/data/update-and-restart.lock" ] \
+  || fail "recovered container update left a lock behind"
 
 for mapping in \
   '20 docker-compose' \

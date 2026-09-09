@@ -39,6 +39,7 @@ fi
 "$project_dir/tests/service-portal.test.sh"
 "$project_dir/tests/compose-topology.test.sh"
 "$project_dir/tests/delegated-gateway.test.sh"
+"$project_dir/tests/dictation-validation.test.sh"
 "$project_dir/tests/profile-lockfile.test.sh"
 "$project_dir/tests/boot-service.test.sh"
 
@@ -95,6 +96,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
     node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check scripts/verify-dsh-inference-contract.mjs
+    node --check scripts/verify-dictation-client.mjs
+    node --check scripts/verify-dictation-backend.mjs
     node --check scripts/verify-local-model-profiles.mjs
     node scripts/verify-local-model-profiles.mjs config/settings.yaml
     node --check scripts/verify-dsh-context-compaction.mjs

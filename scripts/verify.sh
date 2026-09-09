@@ -142,6 +142,19 @@ if ! compose exec -T harness node -e \
   exit "$configuration_exit"
 fi
 
+# Load the deployed browser client with its private launch token and require
+# the local-speech plugin to mount exactly one accessible control inside the
+# current Harness composer. Inventory and source checks cannot detect a UI
+# integration that loaded successfully but no longer matches the composer.
+if ! compose exec -T harness node /opt/dsh-build/verify-dictation-client.mjs; then
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker Engine became unavailable during dictation client verification." >&2
+    exit "$docker_compose_exit"
+  fi
+  echo "The deployed Harness client did not render its local dictation control." >&2
+  exit "$application_health_exit"
+fi
+
 # Import the deployed loop detector itself (not a source-side helper) and
 # require the corrected generated implementation markers. This detects both a
 # stale runtime profile and a patch that was present in source but not applied
@@ -389,6 +402,17 @@ if ! compose exec -T gateway node --input-type=module -e '
   exit "$application_health_exit"
 fi
 echo "Verified authenticated gateway-to-Harness browser proxying."
+
+# Require the authenticated public dictation route, source-managed STT model,
+# non-empty private key, and the configured speech service to remain healthy.
+if ! compose exec -T gateway node /opt/dsh-gateway/verify-dictation-backend.mjs; then
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker Engine became unavailable during dictation backend verification." >&2
+    exit "$docker_compose_exit"
+  fi
+  echo "The deployed local dictation backend contract is unavailable." >&2
+  exit "$application_health_exit"
+fi
 
 if [ "$mode" = --managed-ollama ]; then
   if ! compose exec -T ollama ollama show qwen3.8:27b-mtp-q8_0 >/dev/null; then

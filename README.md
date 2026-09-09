@@ -423,6 +423,14 @@ Run a live TTS-to-STT round trip against the configured voice services:
 ./scripts/verify-speech.sh
 ```
 
+Dictation is a required deployment invariant. Image qualification renders the
+current Harness composer and fails unless the local microphone control mounts.
+Every `deploy.sh` and `update-and-restart.sh` run also executes the same check
+against the deployed browser client, then requires the authenticated
+`/local-stt/config` route, expected STT model, non-empty private key, and live
+STT health. An update cannot be reported successful if any part of that
+contract is missing.
+
 ## Moving existing runtime state
 
 Fresh deployment is the safer default. To retain existing sessions and the

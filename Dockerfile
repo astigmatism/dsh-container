@@ -77,6 +77,7 @@ COPY scripts/host-enter.sh /usr/local/bin/host-enter
 COPY scripts/sync-runtime-profile.sh /usr/local/bin/dsh-sync-runtime-profile
 COPY scripts/initialize-persisted-settings.sh /usr/local/bin/dsh-initialize-persisted-settings
 COPY scripts/verify-plugin-boot.sh /usr/local/bin/dsh-verify-plugin-boot
+COPY scripts/verify-dictation-client.mjs /opt/dsh-build/verify-dictation-client.mjs
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 
 RUN node /opt/dsh-build/verify-local-model-profiles.mjs /opt/dsh-defaults/settings.yaml
@@ -156,7 +157,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs /opt/dsh-gateway/
+COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/
 
 USER node
 ENTRYPOINT ["node", "/opt/dsh-gateway/server.mjs"]

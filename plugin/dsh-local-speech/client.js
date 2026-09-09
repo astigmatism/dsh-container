@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
       return mimeType === undefined ? {} : { mimeType }
     }
 
-    function insertTranscript(textarea, transcript) {
+    function insertTextareaTranscript(textarea, transcript) {
       const clean = transcript.trim()
       if (clean === '') return
       const start = textarea.selectionStart ?? textarea.value.length
@@ -95,7 +95,60 @@ window.__ModuleLoader__.load({
       textarea.setSelectionRange(caret, caret)
     }
 
-    async function transcribe(button, textarea, chunks, mimeType) {
+    function selectionRangeInside(editor) {
+      const selection = window.getSelection()
+      if (selection === null) return null
+      if (selection.rangeCount > 0) {
+        const current = selection.getRangeAt(0)
+        if (editor.contains(current.startContainer) && editor.contains(current.endContainer)) return current
+      }
+      const end = document.createRange()
+      end.selectNodeContents(editor)
+      end.collapse(false)
+      selection.removeAllRanges()
+      selection.addRange(end)
+      return end
+    }
+
+    function textAroundRange(editor, range) {
+      const before = range.cloneRange()
+      before.selectNodeContents(editor)
+      before.setEnd(range.startContainer, range.startOffset)
+      const after = range.cloneRange()
+      after.selectNodeContents(editor)
+      after.setStart(range.endContainer, range.endOffset)
+      return { before: before.toString(), after: after.toString() }
+    }
+
+    function insertContentEditableTranscript(editor, transcript) {
+      const clean = transcript.trim()
+      if (clean === '') return
+      editor.focus({ preventScroll: true })
+      const range = selectionRangeInside(editor)
+      if (range === null) throw new Error('Unable to select the Harness composer')
+      const around = textAroundRange(editor, range)
+      const prefix = around.before !== '' && !/\s$/.test(around.before) ? ' ' : ''
+      const suffix = around.after !== '' && !/^\s/.test(around.after) ? ' ' : ''
+      const inserted = `${prefix}${clean}${suffix}`
+      const previousText = editor.textContent
+      // A direct textContent mutation is invisible to Lexical. The native
+      // editing command follows the same beforeinput/input path as typing, so
+      // the visible DOM, draft store, undo history, and submit button agree.
+      const accepted = document.execCommand('insertText', false, inserted)
+      if (!accepted && editor.textContent === previousText) {
+        throw new Error('Unable to update the Harness composer')
+      }
+    }
+
+    function insertTranscript(input, transcript) {
+      if (input instanceof HTMLTextAreaElement) {
+        insertTextareaTranscript(input, transcript)
+        return
+      }
+      insertContentEditableTranscript(input, transcript)
+    }
+
+    async function transcribe(button, input, chunks, mimeType) {
       setState(button, 'working', 'Transcribing speech…')
       try {
         const speech = await config()
@@ -116,7 +169,7 @@ window.__ModuleLoader__.load({
           throw new Error(String(detail))
         }
         if (typeof payload.text !== 'string') throw new Error('STT response did not contain text')
-        insertTranscript(textarea, payload.text)
+        insertTranscript(input, payload.text)
         setState(button, 'idle', 'Dictate with local speech-to-text')
       } catch (error) {
         setState(button, 'error', error instanceof Error ? error.message : String(error))
@@ -124,7 +177,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    async function start(button, textarea) {
+    async function start(button, input) {
       if (!window.isSecureContext || navigator.mediaDevices?.getUserMedia === undefined) {
         throw new Error('Microphone access requires the trusted HTTPS address')
       }
@@ -144,21 +197,21 @@ window.__ModuleLoader__.load({
         window.clearTimeout(limit)
         for (const track of stream.getTracks()) track.stop()
         if (active?.recorder === recorder) active = null
-        void transcribe(button, textarea, chunks, recorder.mimeType)
+        void transcribe(button, input, chunks, recorder.mimeType)
       }, { once: true })
       recorder.start(250)
       active = { recorder, button }
       setState(button, 'recording', 'Stop recording and transcribe')
     }
 
-    async function toggle(button, textarea) {
+    async function toggle(button, input) {
       if (active !== null) {
         if (active.recorder.state === 'recording') active.recorder.stop()
         return
       }
       setState(button, 'working', 'Requesting microphone…')
       try {
-        await start(button, textarea)
+        await start(button, input)
       } catch (error) {
         setState(button, 'error', error instanceof Error ? error.message : String(error))
         window.setTimeout(() => setState(button, 'idle', 'Dictate with local speech-to-text'), 5000)
@@ -167,17 +220,19 @@ window.__ModuleLoader__.load({
 
     function mount(card) {
       if (card.querySelector(`[${BUTTON_ATTR}]`) !== null) return
-      const textarea = card.querySelector('textarea')
+      const input = card.querySelector('textarea, [data-composer-input]')
       const row = card.lastElementChild
       const trailing = row?.lastElementChild
-      if (!(textarea instanceof HTMLTextAreaElement) || !(trailing instanceof HTMLElement)) return
+      const supportedInput = input instanceof HTMLTextAreaElement
+        || input instanceof HTMLElement && input.matches('[data-composer-input][role="textbox"]')
+      if (!supportedInput || !(trailing instanceof HTMLElement)) return
       const button = document.createElement('button')
       button.type = 'button'
       button.setAttribute(BUTTON_ATTR, '')
       button.innerHTML = icon()
       setState(button, 'idle', 'Dictate with local speech-to-text')
       button.addEventListener('mousedown', event => event.preventDefault())
-      button.addEventListener('click', () => void toggle(button, textarea))
+      button.addEventListener('click', () => void toggle(button, input))
       trailing.insertBefore(button, trailing.lastElementChild)
     }
 

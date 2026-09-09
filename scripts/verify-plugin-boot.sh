@@ -110,12 +110,16 @@ const { chromium } = require(`${process.env.DSH_PROFILE_ROOT}/node_modules/playw
   await page.waitForTimeout(2000);
   const state = await page.evaluate(() => ({
     bodyChars: (document.body?.innerText ?? "").trim().length,
+    composerInputs: document.querySelectorAll("[data-composer-input]").length,
+    dictationButtons: document.querySelectorAll("[data-local-speech-button]").length,
     moduleLoader: typeof window.__ModuleLoader__,
   }));
   await browser.close();
   if (!response?.ok()) throw new Error(`final page status ${response?.status()}`);
   if (state.bodyChars < 20) throw new Error(`client body too small: ${state.bodyChars}`);
   if (state.moduleLoader !== "object") throw new Error(`module loader unavailable: ${state.moduleLoader}`);
+  if (state.composerInputs < 1) throw new Error("Harness composer input was not rendered");
+  if (state.dictationButtons < 1) throw new Error("local dictation control was not mounted");
   if (errors.length > 0) throw new Error(errors.join("\n"));
 })().catch((error) => {
   const detail = String(error?.stack ?? error).split(process.env.DSH_BOOT_TOKEN).join("<redacted>");

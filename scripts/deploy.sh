@@ -3,6 +3,8 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+HOST_HOME=${HOST_HOME:-${HOME:-}}
+export HOST_HOME
 mode=
 build_flag=--build
 

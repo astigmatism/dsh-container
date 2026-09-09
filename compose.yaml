@@ -20,6 +20,7 @@ services:
       io.service-portal.update.script: "scripts/update-and-restart.sh"
       io.service-portal.update.image: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.5-alpha.1-portable}"
       io.service-portal.update.user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+      io.service-portal.update.host-home: "${HOST_HOME:-}"
     container_name: deepseek-harness
     restart: unless-stopped
     init: true

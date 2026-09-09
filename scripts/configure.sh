@@ -117,6 +117,7 @@ else
   set_env HOST_UID "$host_uid"
   set_env HOST_GID "$host_gid"
   set_env HOST_USERNAME "$host_username"
+  set_env HOST_HOME "$host_home"
   set_env HOST_FILESYSTEM_SOURCE "$host_workspace"
   set_env HARNESS_WORKSPACE_ROOT /host
   set_env DOCKER_GID "$docker_gid"

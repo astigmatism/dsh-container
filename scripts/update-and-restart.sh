@@ -71,13 +71,48 @@ get_env() {
   awk -F= -v wanted="$1" '$1 == wanted { print substr($0, index($0, "=") + 1); exit }' "$env_file"
 }
 
+record_host_home() {
+  resolved_home=$1
+  case "$resolved_home" in
+    /|""|*:*|*=*)
+      echo "Refusing a host home that cannot be represented safely in Compose metadata: $resolved_home" >&2
+      return 1
+      ;;
+  esac
+  home_count=$(awk -F= '$1 == "HOST_HOME" { count++ } END { print count + 0 }' "$env_file")
+  [ "$home_count" -le 1 ] || {
+    echo "HOST_HOME must occur at most once in .env; found $home_count entries." >&2
+    return 1
+  }
+  configured_home=$(get_env HOST_HOME)
+  if [ -n "$configured_home" ] && [ "$configured_home" != "$resolved_home" ]; then
+    echo "Configured HOST_HOME ($configured_home) does not match the maintenance home ($resolved_home)." >&2
+    return 1
+  fi
+  [ "$configured_home" = "$resolved_home" ] && return 0
+  if [ "$dry_run" -eq 1 ]; then
+    echo "Host home:  would record $resolved_home for delegated Service Portal updates"
+    return 0
+  fi
+  home_temporary=$(mktemp "$project_dir/.env.host-home.XXXXXX")
+  awk -v replacement="$resolved_home" '
+    BEGIN { found = 0 }
+    $0 ~ /^HOST_HOME=/ { print "HOST_HOME=" replacement; found = 1; next }
+    { print }
+    END { if (!found) print "HOST_HOME=" replacement }
+  ' "$env_file" >"$home_temporary"
+  chmod 0600 "$home_temporary"
+  mv "$home_temporary" "$env_file"
+  echo "Recorded host home for delegated Service Portal maintenance: $resolved_home"
+}
+
 converge_boot_service() {
   convergence_phase=$1
   failure_type=boot-service
   failure_stage=boot-service-$convergence_phase
 
   if [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ]; then
-    install_home=${DSH_BOOT_SERVICE_HOME:-}
+    install_home=${DSH_BOOT_SERVICE_HOME:-${SERVICE_PORTAL_UPDATE_HOST_HOME:-}}
   else
     install_home=${HOME:-}
   fi
@@ -99,6 +134,11 @@ converge_boot_service() {
     echo "Boot-service convergence cannot inspect the unavailable host home: $install_home" >&2
     return 1
   fi
+  if [ "$convergence_phase" = preflight ]; then
+    record_host_home "$install_home" || return 1
+    HOST_HOME=$install_home
+    export HOST_HOME
+  fi
   if [ ! -x "$script_dir/install-boot-service.sh" ]; then
     boot_service=warning:installer-missing
     echo "Required boot-service installer is missing or not executable: $script_dir/install-boot-service.sh" >&2
@@ -114,12 +154,14 @@ converge_boot_service() {
     fi
   fi
   if [ -n "$installer_argument" ]; then
-    if boot_output=$(HOME="$install_home" "$script_dir/install-boot-service.sh" "$installer_argument" 2>&1); then
+    if boot_output=$(HOME="$install_home" DSH_BOOT_SERVICE_HOME="$install_home" \
+      "$script_dir/install-boot-service.sh" "$installer_argument" 2>&1); then
       installer_status=0
     else
       installer_status=$?
     fi
-  elif boot_output=$(HOME="$install_home" "$script_dir/install-boot-service.sh" 2>&1); then
+  elif boot_output=$(HOME="$install_home" DSH_BOOT_SERVICE_HOME="$install_home" \
+    "$script_dir/install-boot-service.sh" 2>&1); then
     installer_status=0
   else
     installer_status=$?

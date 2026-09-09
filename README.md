@@ -597,12 +597,14 @@ exact obsolete `deepseek-harness/ai-router` container only after direct-route
 verification, while retaining its image and persistent data.
 
 Delegated updates use the same pinned Docker CLI, Compose, and Buildx plugins
-inside the maintenance image as direct updates. The helper resolves the home
-for the configured numeric host UID through the host passwd database, verifies
-that it exists inside the configured host-filesystem view, and bind-mounts the
-exact host-native path with Docker's missing-source-safe mount form. If that
-cannot be done, the helper records a blocking boot-service failure before any
-fetch, build, or service change. Each maintenance lock records
+inside the maintenance image as direct updates. Service Portal receives the
+explicit `HOST_HOME` deployment label, validates it, and mounts that exact
+native directory with Docker's missing-source-safe mount form. Harness-originated
+maintenance resolves the same home for the configured numeric host UID through
+the host passwd database and verifies that it exists inside the configured
+host-filesystem view. If either path cannot do this, the helper records a
+blocking boot-service failure before any fetch, build, or service change. Each
+maintenance lock records
 whether its owner is a host process or an exact Docker container ID. A later
 run refuses a live owner, but atomically reclaims a schema-1 lock when that
 process has exited or that exact container no longer exists or is no longer

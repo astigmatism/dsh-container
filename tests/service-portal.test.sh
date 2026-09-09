@@ -39,6 +39,7 @@ expected = {
     prefix + "script": "scripts/update-and-restart.sh",
     prefix + "image": "local/deepseek-harness:0.1.5-alpha.1-portable",
     prefix + "user": "1000:1000",
+    prefix + "host-home": "/home/harness",
 }
 actual = {key: value for key, value in labels.items() if key.startswith(prefix)}
 if actual != expected:

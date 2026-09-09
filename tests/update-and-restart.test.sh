@@ -71,6 +71,7 @@ make_fixture() {
     printf '%s\n' 'DSH_DEPLOYMENT_MODE=external'
     printf 'HOST_UID=%s\n' "$(id -u)"
     printf 'HOST_GID=%s\n' "$(id -g)"
+    printf 'HOST_HOME=%s\n' "$fixture/home"
   } >"$fixture/.env"
   : >"$fixture/git.log"
   : >"$fixture/docker.log"
@@ -96,6 +97,7 @@ run_update() {
     DSH_UPDATE_DELEGATED="${TEST_UPDATE_DELEGATED:-0}" \
     DSH_UPDATE_CONTAINER_NAME="${TEST_UPDATE_CONTAINER_NAME:-}" \
     SERVICE_PORTAL_UPDATE_JOB_ID="${TEST_SERVICE_PORTAL_JOB_ID:-}" \
+    SERVICE_PORTAL_UPDATE_HOST_HOME="${TEST_SERVICE_PORTAL_HOST_HOME:-}" \
     DSH_BOOT_SERVICE_HOME="${TEST_BOOT_SERVICE_HOME:-}" \
     FAKE_GIT_LOG="$fixture_path/git.log" \
     FAKE_GIT_STATE_FILE="$fixture_path/git-head" \
@@ -222,6 +224,16 @@ make_fixture dsh-settings-mode matching
 chmod 0600 "$fixture/data/dsh/settings.yaml"
 run_update "$fixture" --external-ollama
 [ "$update_status" -eq 0 ] || fail "DSH mode 0600 blocked maintenance"
+
+make_fixture missing-host-home-record matching
+awk -F= '$1 != "HOST_HOME"' "$fixture/.env" >"$fixture/.env.without-home"
+mv "$fixture/.env.without-home" "$fixture/.env"
+run_update "$fixture" --external-ollama
+[ "$update_status" -eq 0 ] || fail "missing host-home metadata blocked direct maintenance"
+grep -Fxq "HOST_HOME=$fixture/home" "$fixture/.env" \
+  || fail "direct maintenance did not persist the delegated host-home metadata"
+grep -Fq 'Recorded host home for delegated Service Portal maintenance' "$fixture/output.log" \
+  || fail "host-home metadata migration was not reported"
 
 make_fixture wrong-settings-mode matching
 chmod 0666 "$fixture/data/dsh/settings.yaml"
@@ -361,6 +373,11 @@ assert_no_fetch_or_mutation "$fixture"
 
 make_fixture delegated-host-home matching
 delegated_home=$fixture/mounted-host-home
+awk -F= -v replacement="$delegated_home" '
+  $1 == "HOST_HOME" { print "HOST_HOME=" replacement; next }
+  { print }
+' "$fixture/.env" >"$fixture/.env.portal-home"
+mv "$fixture/.env.portal-home" "$fixture/.env"
 delegated_legacy=$delegated_home/.config/systemd/user/deepseek-harness-after-network.service.d/10-project-path.conf
 mkdir -p "$(dirname "$delegated_legacy")"
 {
@@ -369,10 +386,13 @@ mkdir -p "$(dirname "$delegated_legacy")"
   echo 'ExecStart=/bin/sh -c '\''. "$1"'\'' /old/checkout/scripts/start-after-network.sh /old/checkout/start-after-network.sh'
 } >"$delegated_legacy"
 TEST_UPDATE_DELEGATED=1
-TEST_BOOT_SERVICE_HOME=$delegated_home
+TEST_SERVICE_PORTAL_HOST_HOME=$delegated_home
 run_update "$fixture" --external-ollama
-unset TEST_UPDATE_DELEGATED TEST_BOOT_SERVICE_HOME
-[ "$update_status" -eq 0 ] || fail "delegated host-home update failed"
+unset TEST_UPDATE_DELEGATED TEST_SERVICE_PORTAL_HOST_HOME
+if [ "$update_status" -ne 0 ]; then
+  sed -n '1,200p' "$fixture/output.log" >&2
+  fail "delegated host-home update failed"
+fi
 assert_status "$fixture" 'state=ok'
 assert_status "$fixture" 'exit_code=0'
 assert_status "$fixture" 'boot_service=warning:bus-unreachable'

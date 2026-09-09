@@ -29,13 +29,13 @@ llm-pi-ai:
       retryPolicy:
         mode: normal
         maxRetries: 2
-        retryableCodes: [ EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT ]
+        retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
           name: Local active model (128k total)
           contextWindow: 131072
           maxTokens: 32768
-          input: [ text, image ]
+          input: [text, image]
           reasoningEfforts:
             off: none
             minimal: low
@@ -44,30 +44,29 @@ llm-pi-ai:
             high: xhigh
             xhigh: xhigh
             max: xhigh
-    # Deprecated compatibility ID for persisted selections created before the
-    # production router exposed its per-request slot capacity. It is the same
-    # endpoint and model as local-ollama, not a separate or larger context.
-    local-ollama-256k:
-      displayName: Local router (legacy ID; 128k total)
+    local-ollama-256:
+      displayName: Local router (256k total)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
       timeoutMs: 600000
       streamIdleTimeoutMs: 600000
-      maxConcurrency: 2
+      maxConcurrency: 1
+      # An omitted per-agent effort must use the router's medium default.
       reasoning: medium
-      # Keep pi-ai from sending prompt_cache_key to the production router.
+      # The production router uses volatile slot-prefix caching but does not
+      # accept OpenAI's explicit prompt_cache_key request field.
       cacheRetention: none
       retryPolicy:
         mode: normal
         maxRetries: 2
-        retryableCodes: [ EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT ]
+        retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
-          name: Local active model (legacy route; 128k total)
-          contextWindow: 131072
+          name: Local active model (256k total)
+          contextWindow: 262144
           maxTokens: 32768
-          input: [ text, image ]
+          input: [text, image]
           reasoningEfforts:
             off: none
             minimal: low

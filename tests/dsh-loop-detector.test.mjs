@@ -348,33 +348,31 @@ test("genuine large-scale repeated output remains functional", async () => {
   assert.match(harness.warnings[0], /large-scale repeat: 512 chars repeated 2x\+/);
 });
 
-test("sanitized incident replay is redirected at four reads and stopped before a ninth read", async () => {
+test("broad implementation discovery permits distinct reads beyond the former hard limit", async () => {
   const { apply } = await loadGeneratedPlugin();
   const harness = contractHarness(apply, { minLen: 10000 });
-  harness.begin("Implement the requested source-code fix and run its tests.");
+  harness.begin("Implement the requested feature after reading its architecture, schemas, API, and tests.");
   await harness.preStep();
 
-  for (let index = 1; index <= 4; index += 1) {
-    const call = await harness.tool("read", { file_path: `src/module-${index}.js`, offset: 1, limit: 100 });
-    assert.equal(call.dispatched, true);
+  for (let batch = 0; batch < 10; batch += 1) {
+    harness.continuation(`Investigating distinct subsystem ${batch} ${fixedBlock(`broad-discovery-${batch}`, 180)}`);
+    const calls = await Promise.all([
+      harness.tool("read", { file_path: `src/module-${batch * 2 + 1}.js`, offset: 1, limit: 100 }),
+      harness.tool("read", { file_path: `src/module-${batch * 2 + 2}.js`, offset: 1, limit: 100 }),
+    ]);
+    assert.ok(calls.every((call) => call.dispatched));
+    assert.equal((await harness.preStep()).messages.length, 0);
   }
-  const correction = await harness.preStep();
-  assert.equal(correction.messages.length, 1);
-  assert.match(correction.messages[0].content[0].text, /consecutive_read_only=4/);
-  assert.match(correction.messages[0].content[0].text, /concrete edit\/write\/test/);
-  assert.equal(correction.messages[0].source.kind, "plugin");
 
-  for (let index = 5; index <= 7; index += 1) {
-    const call = await harness.tool("read", { file_path: `src/module-${index}.js`, offset: 1, limit: 100 });
-    assert.equal(call.dispatched, true);
-  }
-  const eighth = await harness.tool("read", { file_path: "src/module-8.js", offset: 1, limit: 100 });
-  assert.equal(eighth.dispatched, false, "the eighth read must be stopped before dispatch");
-  assert.equal(harness.executions.length, 7);
-  assert.equal(harness.cancels.length, 1);
-  assert.match(harness.cancels[0].reason, /guard=read_only_hard_limit/);
-  assert.match(harness.cancels[0].reason, /No implementation occurred/);
-  assert.match(harness.cancels[0].reason, /action 8 was blocked before tool dispatch/);
+  assert.equal(harness.executions.length, 20);
+  assert.deepEqual(harness.cancels, []);
+  assert.equal((await harness.tool("str_replace_editor", {
+    command: "insert",
+    path: "/workspace/src/module-1.js",
+    insert_line: 1,
+    new_str: "const implemented = true;",
+  }, { isError: false, value: "updated", content: [] })).dispatched, true);
+  assert.deepEqual(harness.cancels, []);
 });
 
 test("first semantic duplicate is suppressed and an immediate retry terminates", async () => {
@@ -423,30 +421,29 @@ test("a successful edit or observed file-state change permits the same read agai
   assert.deepEqual(harness.cancels, []);
 });
 
-test("four-read correction and eight-read termination retain state across compaction", async () => {
+test("distinct discovery reads remain permitted across compaction", async () => {
   const { apply } = await loadGeneratedPlugin();
   const harness = contractHarness(apply, { minLen: 10000 });
   harness.begin("Implement a parser update after inspecting the relevant modules.");
   await harness.preStep();
 
-  for (let index = 1; index <= 4; index += 1) {
+  for (let index = 1; index <= 10; index += 1) {
     await harness.tool(index % 2 === 0 ? "grep" : "read", index % 2 === 0
       ? { pattern: `symbol_${index}`, path: "src" }
       : { file_path: `src/file-${index}.ts`, offset: 1, limit: 80 });
   }
   harness.compact();
   const afterCompaction = await harness.preStep();
-  assert.equal(afterCompaction.messages.length, 2);
+  assert.equal(afterCompaction.messages.length, 1);
   assert.match(afterCompaction.messages[0].content[0].text, /Compaction preserved/);
   assert.match(afterCompaction.messages[0].content[0].text, /no implementation has occurred/);
-  assert.match(afterCompaction.messages[1].content[0].text, /consecutive_read_only=4/);
+  assert.match(afterCompaction.messages[0].content[0].text, /consecutive_read_only=10/);
 
-  for (let index = 5; index <= 7; index += 1) {
+  for (let index = 11; index <= 20; index += 1) {
     await harness.tool("glob", { pattern: `**/*-${index}.ts`, path: "src" });
   }
-  const stopped = await harness.tool("read", { file_path: "src/eighth.ts", offset: 1, limit: 80 });
-  assert.equal(stopped.dispatched, false);
-  assert.match(harness.cancels[0].reason, /consecutive_read_only=8/);
+  assert.equal(harness.executions.length, 20);
+  assert.deepEqual(harness.cancels, []);
 });
 
 test("alternating reads, searches, and harmless shell actions cannot bypass continuation bound", async () => {
@@ -473,6 +470,41 @@ test("alternating reads, searches, and harmless shell actions cannot bypass cont
   assert.match(harness.cancels[0].reason, /guard=continuation_hard_limit/);
   assert.match(harness.cancels[0].reason, /24 model continuations/);
   assert.ok(harness.warnings.some((entry) => /injected semantic progress correction/.test(entry)));
+});
+
+test("todo updates and stderr suppression do not fabricate implementation progress", async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const harness = contractHarness(apply, { minLen: 10000 });
+  harness.begin("Implement the missing behavior and verify it.");
+  await harness.preStep();
+
+  assert.equal((await harness.tool("todo_write", { todos: [{ content: "Inspect code", status: "in_progress" }] })).dispatched, true);
+  assert.equal((await harness.tool("bash", { command: "git status --short 2>/dev/null" })).dispatched, true);
+  for (let index = 1; index <= 24; index += 1) {
+    harness.continuation(`Still investigating ${index} ${fixedBlock(`false-mutation-${index}`, 180)}`);
+  }
+
+  assert.equal(harness.cancels.length, 1);
+  assert.match(harness.cancels[0].reason, /guard=continuation_hard_limit/);
+  assert.match(harness.cancels[0].reason, /No implementation occurred during this human turn/);
+  assert.match(harness.cancels[0].reason, /categories=other=2/);
+});
+
+test("a real shell output redirect advances the implementation epoch", async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const harness = contractHarness(apply, { minLen: 10000 });
+  harness.begin("Implement the missing behavior and verify it.");
+  await harness.preStep();
+
+  for (let index = 1; index <= 12; index += 1) {
+    harness.continuation(`Initial investigation ${index} ${fixedBlock(`before-redirect-${index}`, 180)}`);
+  }
+  assert.equal((await harness.tool("bash", { command: "printf '%s\\n' fixed > src/app.js" })).dispatched, true);
+  for (let index = 1; index <= 23; index += 1) {
+    harness.continuation(`Post-edit verification ${index} ${fixedBlock(`after-redirect-${index}`, 180)}`);
+  }
+
+  assert.deepEqual(harness.cancels, []);
 });
 
 test("reasoning-prefix second and third occurrence behavior survives compaction without plaintext telemetry", async () => {
@@ -547,8 +579,6 @@ test("production profile exposes the centrally configured semantic thresholds an
   assert.match(loopPatch, /export const inject = \['agents', 'fs', 'tools'\]/);
   const profile = await readFile(path.join(projectRoot, "seed/profile/cordis.patch.yml"), "utf8");
   for (const marker of [
-    "readOnlyDirective: 4",
-    "readOnlyHard: 8",
     "continuationDirective: 12",
     "continuationHard: 24",
     "reasoningPrefixChars: 128",
@@ -559,4 +589,5 @@ test("production profile exposes the centrally configured semantic thresholds an
   ]) {
     assert.match(profile, new RegExp(marker));
   }
+  assert.doesNotMatch(profile, /readOnly(?:Directive|Hard):/);
 });

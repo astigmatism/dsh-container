@@ -11,8 +11,6 @@ const { apply, inject, DEFAULT_PROGRESS_LIMITS } = await import(pathToFileURL(pl
 assert.deepEqual(inject, ["agents", "fs", "tools"]);
 
 assert.deepEqual(DEFAULT_PROGRESS_LIMITS, {
-  readOnlyDirective: 4,
-  readOnlyHard: 8,
   continuationDirective: 12,
   continuationHard: 24,
   reasoningPrefixChars: 128,
@@ -92,22 +90,34 @@ async function runTool(name, args) {
 
 begin(1, "Implement the requested change and test it.");
 await preStep({ agent, turn: 1, step: 1, signal: new AbortController().signal }, async () => ({ kind: "enter", messages: [] }));
-for (let index = 1; index <= 4; index += 1) {
+for (let index = 1; index <= 20; index += 1) {
   assert.equal((await runTool("read", { file_path: `src/${index}.js`, offset: 1, limit: 50 })).dispatched, true);
 }
+assert.equal(cancels.length, 0);
+assert.equal((await runTool("todo_write", { todos: [{ content: "Inspect", status: "in_progress" }] })).dispatched, true);
+assert.equal((await runTool("bash", { command: "git status --short 2>/dev/null" })).dispatched, true);
+for (let index = 1; index <= 12; index += 1) {
+  event(session, {
+    type: "assistant/message",
+    data: { turn: 1, step: index + 1, message: { content: [], source: { provider: "test", model: "test" } } },
+    surfaceOp: "append",
+  });
+}
 const correction = await preStep(
-  { agent, turn: 1, step: 2, signal: new AbortController().signal },
+  { agent, turn: 1, step: 14, signal: new AbortController().signal },
   async () => ({ kind: "enter", messages: [] }),
 );
 assert.equal(correction.messages.length, 1);
-assert.match(correction.messages[0].content[0].text, /consecutive_read_only=4/);
-for (let index = 5; index <= 7; index += 1) {
-  assert.equal((await runTool("read", { file_path: `src/${index}.js`, offset: 1, limit: 50 })).dispatched, true);
+assert.match(correction.messages[0].content[0].text, /trigger=continuation_no_progress_12/);
+for (let index = 13; index <= 24; index += 1) {
+  event(session, {
+    type: "assistant/message",
+    data: { turn: 1, step: index + 1, message: { content: [], source: { provider: "test", model: "test" } } },
+    surfaceOp: "append",
+  });
 }
-const eighth = await runTool("read", { file_path: "src/8.js", offset: 1, limit: 50 });
-assert.equal(eighth.dispatched, false);
-assert.equal(eighth.result.error.info.code, "SEMANTIC_NO_PROGRESS");
-assert.match(cancels.at(-1).reason, /guard=read_only_hard_limit/);
+assert.match(cancels.at(-1).reason, /guard=continuation_hard_limit/);
+assert.match(cancels.at(-1).reason, /No implementation occurred during this human turn/);
 
 event(session, { type: "turn/end", data: { turn: 1, reason: { kind: "aborted" } } });
 begin(2, "Read-only diagnosis; do not edit files.");
@@ -122,4 +132,4 @@ assert.equal(repeated.result.error.info.code, "SEMANTIC_DUPLICATE_READ_LOOP");
 assert.match(cancels.at(-1).reason, /guard=duplicate_read_repeated/);
 
 assert.ok(warnings.some((message) => /injected semantic progress correction/.test(message)));
-console.log("Verified installed semantic progress correction, read-only hard limit, and duplicate suppression/termination.");
+console.log("Verified installed continuation bound, unrestricted distinct reads, accurate mutation accounting, and duplicate suppression/termination.");

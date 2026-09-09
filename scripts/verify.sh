@@ -140,7 +140,6 @@ if ! compose exec -T harness node --input-type=module -e '
     "primitivePeriod",
     "if (!hasSemanticSignal(segment)) continue",
     "DUPLICATE_READ_SUPPRESSED",
-    "read_only_hard_limit",
     "continuation_hard_limit",
     "reasoning_prefix_cycle",
     "Compaction preserved the progress guard state",

@@ -281,17 +281,19 @@ duplicate reads are suppressed once and cancel the turn if immediately retried;
 a successful mutation or a new relevant test result advances the progress
 epoch and permits a changed file to be read again.
 
-For implementation requests with write-capable tools, the default read-only
-directive and hard-stop thresholds are four and eight actions. The overall
-no-progress continuation thresholds are 12 and 24, and normalized reasoning
-prefixes of at least 128 characters direct on their second occurrence and stop
-on their third. These values are centralized under `dsh-loop-detector` in
-`seed/profile/cordis.patch.yml`. Diagnosis and review tasks remain read-only;
-duplicate-read and reasoning-cycle protection still applies. Semantic guard
-cancellations use distinct reason codes and explicitly report that no
-implementation occurred, while the character-level repetition detector remains
-enabled as an independent secondary defense. None of these policies changes
-the selected model, reasoning effort, context window, sampling, or concurrency.
+Distinct repository reads are not capped by a raw action count, so broad
+discovery can inspect as many unique files or ranges as the work requires.
+Exact duplicate reads are still suppressed. For implementation requests with
+write-capable tools, the overall no-progress continuation thresholds are 12 and
+24. Normalized reasoning prefixes of at least 128 characters direct on their
+second occurrence and stop on their third. These values are centralized under
+`dsh-loop-detector` in `seed/profile/cordis.patch.yml`. Diagnosis and review
+tasks remain read-only; duplicate-read and reasoning-cycle protection still
+applies. Semantic guard cancellations use distinct reason codes and accurately
+report whether implementation occurred, while the character-level repetition
+detector remains enabled as an independent secondary defense. None of these
+policies changes the selected model, reasoning effort, context window, sampling,
+or concurrency.
 
 The 128K provider declares `maxConcurrency: 2`; the 256K provider declares
 `maxConcurrency: 1`. The patched adapter enforces each limit immediately around

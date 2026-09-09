@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191a1658c6d
 --- /dev/null
 +++ b/lib/index.js
-@@ -0,0 +1,722 @@
+@@ -0,0 +1,705 @@
 +import { createHash } from 'node:crypto'
 +import { resolve as resolvePath } from 'node:path'
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -12,8 +12,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +export const inject = ['agents', 'fs', 'tools']
 +
 +export const DEFAULT_PROGRESS_LIMITS = Object.freeze({
-+  readOnlyDirective: 4,
-+  readOnlyHard: 8,
 +  continuationDirective: 12,
 +  continuationHard: 24,
 +  reasoningPrefixChars: 128,
@@ -114,7 +112,9 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +const IMPLEMENTATION_WORDS = /\b(?:implement|fix|change|modify|add|remove|create|build|refactor|update|patch|write|edit|deploy|upgrade|migrate|repair|harden)\b/iu
 +const EXPLICIT_READ_ONLY = /\b(?:read[- ]only|do not (?:edit|change|modify|implement)|without (?:editing|changing|modifying)|no (?:edits|changes|implementation))\b/iu
 +const TEST_COMMAND = /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|lint|build|typecheck)|(?:^|[\s;&|])(?:pytest|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|make\s+(?:test|check|build)|node\s+--test|deno\s+test|dotnet\s+test|ctest)(?:\s|$)/iu
-+const MUTATION_COMMAND = /(?:^|[\s;&|])(?:apply_patch|patch|touch|mkdir|install|cp|mv|rm|truncate)\b|(?:sed|perl)\s+[^\n]*(?:-i|-pi)\b|(?:^|[^<>])>{1,2}(?!>)/iu
++const MUTATION_COMMAND = /(?:^|[\s;&|])(?:apply_patch|patch|touch|mkdir|install|cp|mv|rm|truncate)\b|(?:sed|perl)\s+[^\n]*(?:-i|-pi)\b/iu
++const OUTPUT_REDIRECT = /(?:^|[\s;&|])(?:\d*>{1,2}|&>)(?!>)/u
++const NON_MUTATING_REDIRECT = /(?:^|[\s;&|])(?:\d*>{1,2}\s*(?:\/dev\/null|\/dev\/stdout|\/dev\/stderr)|\d*>&\d+)(?=$|[\s;&|])/giu
 +
 +function hash(value) {
 +  return createHash('sha256').update(String(value)).digest('hex')
@@ -136,8 +136,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +
 +function resolveLimits(config) {
 +  const limits = {
-+    readOnlyDirective: positiveInteger(config.readOnlyDirective, DEFAULT_PROGRESS_LIMITS.readOnlyDirective, 'readOnlyDirective'),
-+    readOnlyHard: positiveInteger(config.readOnlyHard, DEFAULT_PROGRESS_LIMITS.readOnlyHard, 'readOnlyHard'),
 +    continuationDirective: positiveInteger(config.continuationDirective, DEFAULT_PROGRESS_LIMITS.continuationDirective, 'continuationDirective'),
 +    continuationHard: positiveInteger(config.continuationHard, DEFAULT_PROGRESS_LIMITS.continuationHard, 'continuationHard'),
 +    reasoningPrefixChars: positiveInteger(config.reasoningPrefixChars, DEFAULT_PROGRESS_LIMITS.reasoningPrefixChars, 'reasoningPrefixChars'),
@@ -145,9 +143,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +    reasoningHardOccurrence: positiveInteger(config.reasoningHardOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningHardOccurrence, 'reasoningHardOccurrence'),
 +    readDefaultOffset: positiveInteger(config.readDefaultOffset, DEFAULT_PROGRESS_LIMITS.readDefaultOffset, 'readDefaultOffset'),
 +    readDefaultLimit: positiveInteger(config.readDefaultLimit, DEFAULT_PROGRESS_LIMITS.readDefaultLimit, 'readDefaultLimit'),
-+  }
-+  if (limits.readOnlyDirective >= limits.readOnlyHard) {
-+    throw new Error('[loop-detector] readOnlyDirective must be lower than readOnlyHard')
 +  }
 +  if (limits.continuationDirective >= limits.continuationHard) {
 +    throw new Error('[loop-detector] continuationDirective must be lower than continuationHard')
@@ -248,13 +243,15 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  if (READ_TOOL_NAMES.has(name) || /(?:^|_)(?:read|grep|glob|search)$/.test(name)) {
 +    return { kind: name === 'read' ? 'read' : 'search', name }
 +  }
-+  if (MUTATION_TOOL_NAMES.has(name) || /(?:^|_)(?:write|edit|apply_patch)$/.test(name)) {
++  if (MUTATION_TOOL_NAMES.has(name) || (name !== 'todo_write' && /(?:^|_)(?:write|edit|apply_patch)$/.test(name))) {
 +    return { kind: 'mutation', name }
 +  }
 +  if (name === 'bash' || name === 'pwsh') {
 +    const command = typeof args?.command === 'string' ? args.command : ''
 +    if (TEST_COMMAND.test(command)) return { kind: 'test', name }
-+    if (MUTATION_COMMAND.test(command)) return { kind: 'mutation', name }
++    if (MUTATION_COMMAND.test(command) || OUTPUT_REDIRECT.test(command.replace(NON_MUTATING_REDIRECT, ' '))) {
++      return { kind: 'mutation', name }
++    }
 +  }
 +  if (BLOCKER_TOOL_NAMES.has(name)) return { kind: 'blocker', name }
 +  return { kind: 'other', name }
@@ -672,16 +669,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +      }
 +      state.duplicateSuppressed = undefined
 +
-+      if (implementationGuardApplies(state) && state.consecutiveReadOnly >= limits.readOnlyHard) {
-+        return cancelSemantic(
-+          ctx,
-+          sessionId,
-+          state,
-+          'read_only_hard_limit',
-+          `${limits.readOnlyHard} consecutive read/search actions were attempted; action ${limits.readOnlyHard} was blocked before tool dispatch`,
-+        )
-+      }
-+
 +      if (state.fingerprints.has(fingerprint) || state.inFlightFingerprints.has(fingerprint)) {
 +        state.categories.duplicate_suppressed += 1
 +        state.duplicateSuppressed = fingerprint
@@ -689,10 +676,6 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +          'DUPLICATE_READ_SUPPRESSED',
 +          'duplicate_read_suppressed: The same canonical read/search region is already in context (or in flight) and no relevant mutation or file-state change intervened. Choose a different range/query tied to a specific unknown, or take a concrete edit/write/test/final action.',
 +        )
-+      }
-+
-+      if (implementationGuardApplies(state) && state.consecutiveReadOnly >= limits.readOnlyDirective && !state.correctiveInjected) {
-+        state.pendingDirective ??= `read_only_count_${state.consecutiveReadOnly}`
 +      }
 +
 +      state.inFlightFingerprints.add(fingerprint)

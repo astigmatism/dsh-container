@@ -73,10 +73,9 @@
         checkReasoning: true
         # Provider-independent semantic progress containment. These defaults
         # are explicit here so production bounds and contract tests share one
-        # reviewed configuration surface. The read defaults match the pinned
-        # @deepseek-ai/dsh-tool-fs schema/runtime (offset 1, limit 2000).
-        readOnlyDirective: 4
-        readOnlyHard: 8
+        # reviewed configuration surface. Distinct repository reads are never
+        # capped by count. The read defaults only canonicalize duplicate-read
+        # detection and match the pinned @deepseek-ai/dsh-tool-fs runtime.
         continuationDirective: 12
         continuationHard: 24
         reasoningPrefixChars: 128

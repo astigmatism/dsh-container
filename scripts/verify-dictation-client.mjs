@@ -19,6 +19,10 @@ try {
     executablePath: '/usr/bin/chromium',
     headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    // The Harness uses /host as HOME so agent file operations start at the
+    // mounted host filesystem. That directory can be read-only to this UID,
+    // while Chromium requires a writable home for its crash-state directory.
+    env: { ...process.env, HOME: process.env.DSH_BROWSER_HOME || '/tmp' },
   })
   const page = await browser.newPage()
   page.on('pageerror', error => errors.push(`pageerror: ${error.message}`))

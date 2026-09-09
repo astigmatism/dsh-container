@@ -22,6 +22,9 @@ grep -Fq 'node /opt/dsh-gateway/verify-dictation-backend.mjs' "$project_dir/scri
   || fail "post-deployment verification does not check the dictation backend"
 grep -Fq 'COPY scripts/verify-dictation-client.mjs /opt/dsh-build/verify-dictation-client.mjs' "$project_dir/Dockerfile" \
   || fail "Harness image does not contain the dictation client verifier"
+grep -Fq "HOME: process.env.DSH_BROWSER_HOME || '/tmp'" \
+  "$project_dir/scripts/verify-dictation-client.mjs" \
+  || fail "dictation client verifier does not give Chromium a writable home"
 grep -Fq 'scripts/verify-dictation-backend.mjs /opt/dsh-gateway/' "$project_dir/Dockerfile" \
   || fail "gateway image does not contain the dictation backend verifier"
 grep -Fq 'dictationButtons: document.querySelectorAll("[data-local-speech-button]").length' \

@@ -12,39 +12,39 @@ function providerBlock(name, nextName) {
   return settings.slice(start, end);
 }
 
-const canonical = providerBlock("local-ollama", "local-ollama-256k");
-const expanded = providerBlock("local-ollama-256k");
+const canonical = providerBlock("local-ollama", "local-everyday");
+const expanded = providerBlock("local-everyday");
 
-test("canonical selection uses only the public alias and leaves effort at the medium provider default", () => {
-  assert.match(settings, /^agent-default-model:\n  provider: local-ollama\n  model: local-active\n\n/m);
-  assert.doesNotMatch(settings.slice(0, settings.indexOf("\npermission:")), /reasoningEffort:/);
-  assert.equal((settings.match(/- id: local-active/g) ?? []).length, 2);
-  assert.doesNotMatch(settings, /qwen3\.8|mtp|tensor.split/i);
+test("canonical selection uses only the public alias and seeds the deliberate DSH medium default", () => {
+  assert.match(settings, /^agent-default-model:\n  provider: local-ollama\n  model: local-active\n  reasoningEffort: medium\n\n/m);
+  assert.match(settings.slice(0, settings.indexOf("\npermission:")), /reasoningEffort: medium/);
+  assert.equal((settings.match(/- id: local-active/g) ?? []).length, 1);
+  assert.match(expanded, /- id: qwen3\.8-27b-abliterated-q6_k/);
 });
 
-test("128K and 256K selections expose their distinct request contracts", () => {
+test("Daytime 128K and Nighttime 32K selections expose their distinct request contracts", () => {
   for (const block of [canonical, expanded]) {
     assert.match(block, /baseURL: http:\/\/ai-router:11434\/v1/);
-    assert.match(block, /maxTokens: 32768/);
+    assert.match(block, /maxTokens: null/);
     assert.match(block, /reasoning: medium/);
     assert.match(block, /off: none/);
     assert.match(block, /minimal: low/);
     assert.match(block, /high: xhigh/);
     assert.match(block, /max: xhigh/);
   }
-  assert.match(canonical, /displayName: Local Router \(128K context\)/);
-  assert.match(canonical, /name: Local Active Model \(128K context\)/);
+  assert.match(canonical, /displayName: Daytime \(128K\)/);
+  assert.match(canonical, /name: Daytime \(128K\)/);
   assert.match(canonical, /contextWindow: 131072/);
-  assert.match(canonical, /maxConcurrency: 2/);
-  assert.match(expanded, /displayName: Local Router \(256K context\)/);
-  assert.match(expanded, /name: Local Active Model \(256K context\)/);
-  assert.match(expanded, /contextWindow: 262144/);
+  assert.match(canonical, /maxConcurrency: 1/);
+  assert.match(expanded, /displayName: Nighttime \(32K\)/);
+  assert.match(expanded, /name: Nighttime \(32K\)/);
+  assert.match(expanded, /contextWindow: 32768/);
   assert.match(expanded, /maxConcurrency: 1/);
 });
 
 test("busy retries stay bounded while context and timeout failures are not blindly retried", () => {
   for (const block of [canonical, expanded]) {
-    assert.match(block, /timeoutMs: 600000/);
+    assert.doesNotMatch(block, /^      timeoutMs:/m);
     assert.match(block, /streamIdleTimeoutMs: 600000/);
     assert.match(block, /maxRetries: 2/);
     assert.match(block, /retryableCodes: \[\s*EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT\s*\]/);

@@ -1,31 +1,24 @@
-/**
- * Keep DSH's local-active model capabilities aligned with the router marker.
- *
- * The two repository-owned providers are operator-selectable backend profiles,
- * so their context and concurrency stay fixed while the replaceable backend is
- * switched. Complete schema-v2 metadata remains authoritative for shared
- * capabilities: output ceiling, input modalities, and effort wire values.
+/** Synchronize two resident model choices from public router metadata.
+ * Coding retains local-active for existing agents; everyday uses its real ID.
  */
 
 export const name = "router-model-discovery";
 
 const DSH_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const DSH_INPUT_MODALITIES = new Set(["text", "image"]);
-const DEFAULT_PROVIDERS = ["local-ollama", "local-ollama-256k"];
+const DEFAULT_PROVIDERS = ["local-ollama", "local-everyday"];
 const PROVIDER_PRESENTATION = new Map([
   ["local-ollama", {
-    displayName: "Local Router (128K context)",
-    modelName: "Local Active Model (128K context)",
+    displayName: "Daytime (128K)",
+    modelName: "Daytime (128K)",
     contextWindow: 131072,
-    maxConcurrency: 2,
-    reasoning: "medium",
-  }],
-  ["local-ollama-256k", {
-    displayName: "Local Router (256K context)",
-    modelName: "Local Active Model (256K context)",
-    contextWindow: 262144,
     maxConcurrency: 1,
-    reasoning: "medium",
+  }],
+  ["local-everyday", {
+    displayName: "Nighttime (32K)",
+    modelName: "Nighttime (32K)",
+    contextWindow: 32768,
+    maxConcurrency: 1,
   }],
 ]);
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -56,60 +49,121 @@ export function routerMetadataOf(entry) {
   if (!plainObject(metadata) || metadata.schema_version !== 2 || metadata.complete !== true) {
     throw new Error("router discovery metadata is not a complete schema-v2 document");
   }
-  if (!positiveInteger(metadata.context_window)) {
-    throw new Error("router discovery metadata has no valid context_window");
+  if (!Array.isArray(metadata.warnings) || metadata.warnings.length) throw new Error("router discovery metadata has warnings");
+  for (const field of ["context_window", "active_request_limit"]) {
+    if (!positiveInteger(metadata[field])) throw new Error(`router discovery metadata has no valid ${field}`);
   }
-  if (!positiveInteger(metadata.max_output_tokens)) {
-    throw new Error("router discovery metadata has no valid max_output_tokens");
+  if (metadata.health !== undefined && (!plainObject(metadata.health) || metadata.health.available !== true)) {
+    throw new Error("router model backend is unavailable");
   }
-  if (!positiveInteger(metadata.active_request_limit)) {
-    throw new Error("router discovery metadata has no valid active_request_limit");
+  for (const field of ["input_modalities", "capabilities"]) {
+    if (!Array.isArray(metadata[field]) || !metadata[field].length || metadata[field].some(value => !nonEmptyString(value))) {
+      throw new Error(`router discovery metadata has invalid ${field}`);
+    }
   }
-  if (!Array.isArray(metadata.input_modalities) || metadata.input_modalities.some((value) => !nonEmptyString(value))) {
-    throw new Error("router discovery metadata has invalid input_modalities");
+  if (!metadata.input_modalities.includes("text") || metadata.input_modalities.includes("image") !== metadata.capabilities.includes("vision")) {
+    throw new Error("router discovery metadata has inconsistent input capabilities");
+  }
+  const unrestricted = metadata.output_policy === "unrestricted";
+  if (!unrestricted && ![undefined, "legacy", "bounded"].includes(metadata.output_policy)) {
+    throw new Error("router discovery metadata has an unknown output_policy");
+  }
+  if (unrestricted
+    ? metadata.max_output_tokens !== null || metadata.default_output_tokens !== null
+    : !positiveInteger(metadata.max_output_tokens) || (metadata.default_output_tokens !== undefined &&
+      (!positiveInteger(metadata.default_output_tokens) || metadata.default_output_tokens > metadata.max_output_tokens))) {
+    throw new Error("router discovery metadata has invalid output limits");
   }
   const reasoning = metadata.reasoning;
-  if (!plainObject(reasoning) || typeof reasoning.supported !== "boolean") {
-    throw new Error("router discovery metadata has no definitive reasoning capability");
-  }
+  if (!plainObject(reasoning) || typeof reasoning.supported !== "boolean") throw new Error("router discovery metadata has no definitive reasoning capability");
+  if (reasoning.supported !== metadata.capabilities.includes("thinking")) throw new Error("router discovery metadata has inconsistent reasoning capability");
   if (!plainObject(reasoning.efforts) || !plainObject(reasoning.aliases) || !plainObject(reasoning.per_effort)) {
     throw new Error("router discovery metadata has incomplete reasoning maps");
   }
-  if (!positiveInteger(reasoning.absolute_max_output_tokens)) {
+  if (!['cap', 'reject'].includes(reasoning.output_limit_policy)) throw new Error("router discovery metadata has an invalid output_limit_policy");
+  if (unrestricted ? reasoning.absolute_max_output_tokens !== null : !positiveInteger(reasoning.absolute_max_output_tokens)) {
     throw new Error("router discovery metadata has no valid absolute reasoning output limit");
   }
-  if (reasoning.absolute_max_output_tokens !== metadata.max_output_tokens) {
-    throw new Error("router discovery metadata has inconsistent output limits");
-  }
+  if (reasoning.absolute_max_output_tokens !== metadata.max_output_tokens) throw new Error("router discovery metadata has inconsistent output limits");
   for (const [level, wire] of Object.entries(reasoning.efforts)) {
     if (!nonEmptyString(level) || !nonEmptyString(wire) || !plainObject(reasoning.per_effort[level])) {
       throw new Error(`router discovery metadata has an invalid reasoning effort "${level}"`);
     }
     const limits = reasoning.per_effort[level];
-    if (
-      typeof limits.enabled !== "boolean" ||
-      !positiveInteger(limits.default_output_tokens) ||
-      !positiveInteger(limits.max_output_tokens) ||
-      limits.default_output_tokens > limits.max_output_tokens
-    ) {
+    if (typeof limits.enabled !== "boolean" || (unrestricted
+      ? limits.default_output_tokens !== null || limits.max_output_tokens !== null
+      : !positiveInteger(limits.default_output_tokens) || !positiveInteger(limits.max_output_tokens) ||
+        limits.default_output_tokens > limits.max_output_tokens || limits.max_output_tokens > reasoning.absolute_max_output_tokens)) {
       throw new Error(`router discovery metadata has invalid limits for reasoning effort "${level}"`);
     }
   }
   for (const [alias, target] of Object.entries(reasoning.aliases)) {
-    if (!nonEmptyString(alias) || !nonEmptyString(target) || reasoning.efforts[target] === undefined) {
+    if (!nonEmptyString(alias) || !nonEmptyString(target) || !Object.hasOwn(reasoning.efforts, target)) {
       throw new Error(`router discovery metadata has an invalid reasoning alias "${alias}"`);
     }
   }
   if (reasoning.supported === true) {
-    if (!nonEmptyString(reasoning.default) || !DSH_REASONING_LEVELS.includes(reasoning.default)) {
-      throw new Error("router discovery metadata has no DSH-compatible reasoning default");
-    }
     const target = reasoning.aliases[reasoning.default] ?? reasoning.default;
-    if (!nonEmptyString(reasoning.efforts[target])) {
+    if (!nonEmptyString(reasoning.default) || !Object.hasOwn(reasoning.efforts, target)) {
       throw new Error("router discovery metadata reasoning default is not supported");
     }
   }
   return metadata;
+}
+
+function ordered(value) {
+  if (Array.isArray(value)) return value.map(ordered);
+  if (!plainObject(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])]));
+}
+
+/** Resolve singleton aliases, canonical-only catalogs and explicit alias rows. */
+export function resolveRouterEntry(body, modelId) {
+  if (!Array.isArray(body?.data) || !body.data.length) throw new Error("router discovery has no model catalog");
+  const exact = body.data.filter(entry => entry?.id === modelId);
+  const targets = body.data.filter(entry => entry?.id !== modelId && entry?.x_ollama_router?.alias !== true && entry?.x_ollama_router?.aliases?.includes(modelId));
+  if (exact.length > 1 || targets.length > 1) throw new Error(`ambiguous router model identity: ${modelId}`);
+  const entry = exact[0] ?? targets[0];
+  if (!entry) {
+    const error = new Error(`router model is not advertised: ${modelId}`);
+    error.code = "ROUTER_MODEL_NOT_FOUND";
+    throw error;
+  }
+  if (exact[0]) {
+    const meta = entry.x_ollama_router;
+    const target = targets[0] ?? (meta?.alias === true ? body.data.find(row => row.id === meta.upstream_model && row.id !== modelId) : undefined);
+    if (target) {
+      const { alias: _alias, ...aliasMetadata } = meta;
+      const { alias: _canonical, ...canonicalMetadata } = target.x_ollama_router;
+      if (meta?.alias !== true || meta.upstream_model !== target.id || !sameJson(ordered(aliasMetadata), ordered(canonicalMetadata))) {
+        throw new Error(`router alias metadata disagrees with its target: ${modelId}`);
+      }
+    }
+  }
+  return entry;
+}
+
+export async function fetchRouterCatalog(baseURL, signal = AbortSignal.timeout(10_000)) {
+  let endpoint;
+  try { endpoint = new URL(baseURL); } catch { throw new Error("router provider baseURL is invalid"); }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw new Error("router provider baseURL must use HTTP(S) without embedded credentials");
+  }
+  const response = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { headers: { accept: "application/json" }, signal });
+  if (!response.ok) throw new Error(`router discovery returned HTTP ${response.status}`);
+  return response.json();
+}
+
+export function requireRouterCapabilities(metadata, { browser = false, effort } = {}) {
+  if (browser) {
+    for (const capability of ["vision", "tools"]) {
+      if (!metadata.capabilities.includes(capability)) throw new Error(`selected browser route is missing ${capability} capability`);
+    }
+  }
+  if (effort !== undefined) {
+    const mapped = dshReasoningEfforts(metadata.reasoning);
+    if (!mapped || !Object.hasOwn(mapped, effort)) throw new Error(`selected route does not support configured reasoning effort: ${effort}`);
+  }
 }
 
 /** Translate the router vocabulary into dsh-llm-pi-ai's fixed selector levels. */
@@ -148,17 +202,16 @@ export function provisionProviderOps(settings, providerName, modelId, storedSett
   if (!plainObject(source) || !Array.isArray(source.models)) {
     throw new Error(`cannot provision DSH provider "${providerName}" without local-ollama`);
   }
-  const modelIndex = source.models.findIndex((model) => model?.id === modelId);
+  const modelIndex = source.models.findIndex((model) => model?.id === "local-active" || model?.id === "qwen3.8-27b-q8_0");
   if (modelIndex < 0) {
     throw new Error(`cannot provision DSH provider "${providerName}" without model "${modelId}"`);
   }
-  const models = source.models.map((model, index) => index === modelIndex
-    ? {
-        ...model,
-        name: presentation.modelName,
-        contextWindow: presentation.contextWindow,
-      }
-    : model);
+  const models = [{
+    ...source.models[modelIndex],
+    id: modelId,
+    name: presentation.modelName,
+    contextWindow: presentation.contextWindow,
+  }];
   return [{
     op: "set",
     path: ["providers", providerName],
@@ -166,7 +219,6 @@ export function provisionProviderOps(settings, providerName, modelId, storedSett
       ...source,
       displayName: presentation.displayName,
       maxConcurrency: presentation.maxConcurrency,
-      reasoning: presentation.reasoning,
       models,
     },
   }];
@@ -184,10 +236,11 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
   const input = metadata.input_modalities.filter((value) => DSH_INPUT_MODALITIES.has(value));
   if (input.length === 0) throw new Error("router advertises no input modality DSH can represent");
   const reasoningEfforts = dshReasoningEfforts(metadata.reasoning);
-  const presentation = PROVIDER_PRESENTATION.get(providerName);
-  const contextWindow = presentation?.contextWindow ?? metadata.context_window;
-  const maxConcurrency = presentation?.maxConcurrency ?? metadata.active_request_limit;
-  const reasoningDefault = presentation?.reasoning ?? metadata.reasoning.default;
+  const presentation = nonEmptyString(metadata.display_name)
+    ? { displayName: metadata.display_name, modelName: metadata.display_name }
+    : PROVIDER_PRESENTATION.get(providerName);
+  const contextWindow = metadata.context_window;
+  const maxConcurrency = metadata.active_request_limit;
   const operations = [];
   if (presentation !== undefined && provider.displayName !== presentation.displayName) {
     operations.push({
@@ -203,20 +256,9 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
       value: maxConcurrency,
     });
   }
-  if (metadata.reasoning.supported === true && provider.reasoning !== reasoningDefault) {
-    operations.push({
-      op: "set",
-      path: ["providers", providerName, "reasoning"],
-      value: reasoningDefault,
-    });
-  } else if (
-    metadata.reasoning.supported === false &&
-    Object.hasOwn(storedSettings?.providers?.[providerName] ?? {}, "reasoning")
-  ) {
-    operations.push({
-      op: "unset",
-      path: ["providers", providerName, "reasoning"],
-    });
+  // Keep explicit client policy separate from the router's raw default.
+  if (provider.reasoning === undefined && reasoningEfforts?.medium) {
+    operations.push({ op: "set", path: ["providers", providerName, "reasoning"], value: "medium" });
   }
 
   const modelCurrent =
@@ -255,29 +297,75 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
   return operations;
 }
 
-function listingUrl(baseURL) {
-  return `${baseURL.replace(/\/+$/, "")}/models`;
+/** The same synchronization is used by startup and the optional offline migration. */
+export async function synchronizeRouterSettings(settingsService, providers = DEFAULT_PROVIDERS) {
+  const initial = settingsService.get("llm-pi-ai");
+  if (!plainObject(initial)) throw new Error('DSH settings namespace "llm-pi-ai" is not registered yet');
+  const catalogs = new Map();
+  const plans = [];
+  // Fetch and validate every selected contract before provisioning any provider.
+  for (const providerName of providers) {
+    const provider = initial.providers?.[providerName];
+    const baseURL = provider?.baseURL ?? initial.providers?.["local-ollama"]?.baseURL;
+    if (!nonEmptyString(baseURL)) throw new Error(`provider ${providerName} has no baseURL`);
+    if (!catalogs.has(baseURL)) catalogs.set(baseURL, await fetchRouterCatalog(baseURL));
+    const modelIds = provider?.models?.map(model => model.id) ?? ["qwen3.8-27b-abliterated-q6_k"];
+    for (const modelId of modelIds) {
+      let entry;
+      try { entry = resolveRouterEntry(catalogs.get(baseURL), modelId); }
+      catch (error) {
+        if (!provider && error.code === "ROUTER_MODEL_NOT_FOUND") continue;
+        throw error;
+      }
+      const metadata = routerMetadataOf(entry);
+      requireRouterCapabilities(metadata, { effort: (provider ?? initial.providers?.["local-ollama"])?.reasoning });
+      plans.push({ providerName, modelId, metadata });
+    }
+  }
+  for (const { providerName, modelId, metadata } of plans) {
+    let settings = settingsService.get("llm-pi-ai");
+    let stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user;
+    const provision = provisionProviderOps(settings, providerName, modelId, stored);
+    if (provision.length) {
+      // Provision with the target's capabilities in the same atomic operation.
+      const proposed = { providers: { [providerName]: provision[0].value } };
+      for (const op of capabilityOps(proposed, providerName, modelId, metadata)) applyOperation(proposed, op);
+      provision[0].value = proposed.providers[providerName];
+      await settingsService.mutate("llm-pi-ai", provision);
+      settings = settingsService.get("llm-pi-ai");
+      stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user;
+    }
+    const ops = capabilityOps(settings, providerName, modelId, metadata, stored);
+    if (ops.length) await settingsService.mutate("llm-pi-ai", ops);
+  }
+  const primary = plans.find(plan => plan.providerName === "local-ollama");
+  if (primary) {
+    const settings = settingsService.get("llm-pi-ai");
+    const retired = settings.providers?.["local-ollama-256k"];
+    const ownedRetired = retired?.baseURL === settings.providers?.["local-ollama"]?.baseURL &&
+      retired?.models?.length === 1 && retired.models[0].id === "local-active";
+    const selected = settingsService.get("agent-default-model");
+    if (ownedRetired && selected?.provider === "local-ollama-256k") {
+      await settingsService.mutate("agent-default-model", [
+        { op: "set", path: ["provider"], value: "local-ollama" },
+        { op: "set", path: ["model"], value: primary.modelId }
+      ]);
+    }
+    if (ownedRetired) await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", "local-ollama-256k"] }]);
+  }
 }
 
-async function fetchEntry(baseURL, modelId, signal) {
-  const url = listingUrl(baseURL);
-  const response = await fetch(url, {
-    headers: { accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  const body = await response.json();
-  if (!Array.isArray(body?.data)) throw new Error(`${url} returned no model data array`);
-  const entry = body.data.find((candidate) => candidate?.id === modelId);
-  if (entry === undefined) throw new Error(`${url} did not advertise model "${modelId}"`);
-  return entry;
+export function applyOperation(settings, operation) {
+  const parent = operation.path.slice(0, -1).reduce((object, key) => object[key] ??= {}, settings);
+  if (operation.op === "unset") delete parent[operation.path.at(-1)];
+  else parent[operation.path.at(-1)] = structuredClone(operation.value);
 }
 
 /** Cordis plugin entry point. */
 export function apply(ctx, config = {}) {
   const configuredProviders = Array.isArray(config.providers) ? config.providers.filter(nonEmptyString) : [];
-  const providers = configuredProviders.length > 0 ? configuredProviders : DEFAULT_PROVIDERS;
-  const modelId = nonEmptyString(config.model) ? config.model : "local-active";
+  const providers = configuredProviders.length > 0 ? configuredProviders.filter((p) => p !== "local-ollama-256k") : DEFAULT_PROVIDERS;
+
   const configuredInterval = Number(config.pollIntervalMs);
   const pollIntervalMs = Number.isFinite(configuredInterval)
     ? Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(configuredInterval))
@@ -303,40 +391,8 @@ export function apply(ctx, config = {}) {
       if (running || stopped) return;
       running = true;
       try {
-        const settings = settingsService.get("llm-pi-ai");
-        if (!plainObject(settings)) throw new Error('DSH settings namespace "llm-pi-ai" is not registered yet');
-        const byEndpoint = new Map();
-        for (const providerName of providers) {
-          try {
-            let latest = settingsService.get("llm-pi-ai");
-            let descriptor = settingsService.describe().find((candidate) => candidate.ns === "llm-pi-ai");
-            const provisionOps = provisionProviderOps(latest, providerName, modelId, descriptor?.user);
-            if (provisionOps.length > 0) {
-              await settingsService.mutate("llm-pi-ai", provisionOps);
-              sctx.logger.info(`router-model-discovery: provisioned ${providerName}/${modelId} profile`);
-              latest = settingsService.get("llm-pi-ai");
-            }
-            const baseURL = latest.providers?.[providerName]?.baseURL;
-            if (!nonEmptyString(baseURL)) throw new Error("provider has no baseURL");
-            const cacheKey = `${baseURL}\n${modelId}`;
-            let pending = byEndpoint.get(cacheKey);
-            if (pending === undefined) {
-              pending = fetchEntry(baseURL, modelId, AbortSignal.timeout(10_000));
-              byEndpoint.set(cacheKey, pending);
-            }
-            const metadata = routerMetadataOf(await pending);
-            latest = settingsService.get("llm-pi-ai");
-            descriptor = settingsService.describe().find((candidate) => candidate.ns === "llm-pi-ai");
-            const ops = capabilityOps(latest, providerName, modelId, metadata, descriptor?.user);
-            if (ops.length > 0) {
-              await settingsService.mutate("llm-pi-ai", ops);
-              sctx.logger.info(`router-model-discovery: synchronized ${providerName}/${modelId} capabilities`);
-            }
-            lastFailure.delete(providerName);
-          } catch (error) {
-            reportFailure(providerName, error);
-          }
-        }
+        await synchronizeRouterSettings(settingsService, providers);
+        lastFailure.clear();
       } catch (error) {
         reportFailure("llm-pi-ai", error);
       } finally {

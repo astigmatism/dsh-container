@@ -95,6 +95,11 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check seed/plugins/dsh-web-search-free.js
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
     node --check scripts/patch-dsh-llm-pi-ai.mjs
+    node --check scripts/patch-unrestricted-policy.mjs
+    node --check scripts/verify-unrestricted-wire.mjs
+    node --check scripts/migrate-resident-models.mjs
+    node --check scripts/verify-router-contract.mjs
+    node --check scripts/verify-router-startup.mjs
     node --check scripts/verify-dsh-inference-contract.mjs
     node --check scripts/verify-dictation-client.mjs
     node --check scripts/verify-dictation-backend.mjs
@@ -223,6 +228,8 @@ if [ "$build" -eq 1 ]; then
     cmp /opt/dsh-seed/.dsh-plugins/dsh-web-search-free.js /data/dsh/.dsh-plugins/dsh-web-search-free.js
     cmp /opt/dsh-seed/.dsh-plugins/dsh-router-model-discovery.js /data/dsh/.dsh-plugins/dsh-router-model-discovery.js
   '
+
+  docker run --rm --network none --entrypoint node "$harness_image" /opt/dsh-build/verify-router-startup.mjs
 
   # Boot smoke check: actually import the plugin tree by starting `dsh web`
   # from the image seed in a throwaway DSH_HOME and require a stable HTTP

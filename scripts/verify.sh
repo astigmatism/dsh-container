@@ -222,16 +222,14 @@ if ! compose exec -T harness node /opt/dsh-build/verify-dsh-inference-contract.m
   exit "$configuration_exit"
 fi
 
-# The discovery plugin upgrades persisted settings in place when the second
-# profile is absent and restores each profile's static capacity after backend
-# swaps. Wait briefly for its immediate synchronization before validating the
-# user-visible model-selection contract.
-profile_deadline=$(( $(date +%s) + 30 ))
-while ! profile_output=$(compose exec -T harness node /opt/dsh-build/verify-local-model-profiles.mjs 2>&1); do
+# The entrypoint migrates known providers before launch; discovery keeps them current.
+# Compare to the current router contract after allowing one synchronization.
+profile_deadline=$(( $(date +%s) + 45 ))
+while ! profile_output=$(compose exec -T harness node /opt/dsh-build/verify-router-contract.mjs 2>&1); do
   if [ "$(date +%s)" -ge "$profile_deadline" ]; then
     printf '%s\n' "$profile_output" >&2
-    echo "The deployed Harness did not expose both local model profiles." >&2
-    exit "$configuration_exit"
+    echo "The configured router model contracts did not synchronize." >&2
+    exit "$provider_exit"
   fi
   sleep 1
 done
@@ -342,47 +340,8 @@ if [ "$mode" = --remote-ollama ]; then
     echo "Remote mode resolved ai-router to '$resolved_hosts' instead of REMOTE_OLLAMA_HOST '$remote_host'." >&2
     exit "$provider_exit"
   fi
-  if ! compose exec -T harness node --input-type=module -e '
-    const response = await fetch("http://ai-router:11434/v1/models");
-    if (!response.ok) throw new Error(`model discovery returned HTTP ${response.status}`);
-    const body = await response.json();
-    const model = body?.data?.find((entry) => entry?.id === "local-active");
-    const metadata = model?.x_ollama_router;
-    if (metadata?.schema_version !== 2 || !metadata?.complete || metadata?.warnings?.length) {
-      throw new Error(`local-active discovery is not complete schema-v2: ${JSON.stringify(metadata)}`);
-    }
-    const backendProfile = `${metadata.context_window}:${metadata.active_request_limit}`;
-    if (!new Set(["131072:2", "262144:1"]).has(backendProfile)) {
-      throw new Error(
-        `backend capacity is ${backendProfile}; expected 128K/2 or 256K/1`,
-      );
-    }
-    if (metadata.max_output_tokens !== 32768) {
-      throw new Error("max_output_tokens is " + metadata.max_output_tokens + "; expected 32768");
-    }
-    for (const modality of ["text", "image"]) {
-      if (!metadata.input_modalities?.includes(modality)) throw new Error(`missing ${modality} input modality`);
-    }
-    for (const capability of ["vision", "tools"]) {
-      if (!metadata.capabilities?.includes(capability)) throw new Error(`missing ${capability} capability`);
-    }
-    const reasoning = metadata.reasoning;
-    if (
-      reasoning?.supported !== true ||
-      reasoning.default !== "medium" ||
-      reasoning.absolute_max_output_tokens !== 32768 ||
-      reasoning.efforts?.off !== "none" ||
-      reasoning.efforts?.low !== "low" ||
-      reasoning.efforts?.medium !== "medium" ||
-      reasoning.efforts?.xhigh !== "xhigh" ||
-      reasoning.aliases?.minimal !== "low" ||
-      reasoning.aliases?.high !== "xhigh" ||
-      reasoning.aliases?.max !== "xhigh"
-    ) {
-      throw new Error("local-active reasoning contract is incompatible: " + JSON.stringify(reasoning));
-    }
-  '; then
-    echo "The direct remote router did not advertise the qualified local-active request contract." >&2
+  if ! compose exec -T harness node /opt/dsh-build/verify-router-contract.mjs --mode remote; then
+    echo "The direct remote router did not satisfy the configured model contracts." >&2
     exit "$provider_exit"
   fi
 fi

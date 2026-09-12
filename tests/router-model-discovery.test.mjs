@@ -17,6 +17,8 @@ function entry(overrides = {}) {
     x_ollama_router: {
       schema_version: 2,
       complete: true,
+      warnings: [],
+      capabilities: ["completion", "thinking"],
       context_window: 131072,
       max_output_tokens: 16384,
       active_request_limit: 2,
@@ -57,6 +59,7 @@ test("consumes the complete router reasoning vocabulary and aliases", () => {
 test("represents a definitive non-reasoning marker without model-name inference", () => {
   const candidate = entry();
   candidate.x_ollama_router.reasoning.supported = false;
+  candidate.x_ollama_router.capabilities = ["completion"];
   candidate.x_ollama_router.reasoning.efforts = {};
   candidate.x_ollama_router.reasoning.aliases = {};
   candidate.x_ollama_router.reasoning.per_effort = {};
@@ -79,7 +82,7 @@ test("rejects invalid capacity and reasoning defaults before mutating settings",
 
   const invalidDefault = entry();
   invalidDefault.x_ollama_router.reasoning.default = "ultra";
-  assert.throws(() => routerMetadataOf(invalidDefault), /DSH-compatible reasoning default/);
+  assert.throws(() => routerMetadataOf(invalidDefault), /reasoning default is not supported/);
 });
 
 test("contract synchronization corrects context, output, concurrency, and capabilities", () => {
@@ -113,13 +116,12 @@ test("contract synchronization corrects context, output, concurrency, and capabi
     },
   };
   const ops = capabilityOps(settings, "local", "local-active", routerMetadataOf(entry()), storedSettings);
-  assert.deepEqual(ops.map((op) => op.path.at(-1)), ["maxConcurrency", "reasoning", "models"]);
+  assert.deepEqual(ops.map((op) => op.path.at(-1)), ["maxConcurrency", "models"]);
   assert.equal(ops[0].value, 2);
-  assert.equal(ops[1].value, "medium");
-  assert.equal(ops[2].value[0].maxTokens, 16384);
-  assert.equal(ops[2].value[0].contextWindow, 131072);
-  assert.deepEqual(ops[2].value[0].input, ["text"]);
-  assert.equal("compat" in ops[2].value[0], false);
+  assert.equal(ops[1].value[0].maxTokens, 16384);
+  assert.equal(ops[1].value[0].contextWindow, 131072);
+  assert.deepEqual(ops[1].value[0].input, ["text"]);
+  assert.equal("compat" in ops[1].value[0], false);
   assert.equal(settings.providers.local.models[0].maxTokens, 32768);
   assert.equal(settings.providers.local.cacheRetention, "none");
 });
@@ -151,7 +153,7 @@ test("capability synchronization is a no-op once metadata is current", () => {
   assert.deepEqual(capabilityOps(settings, "local", "local-active", routerMetadataOf(entry())), []);
 });
 
-test("new 256K profile is provisioned from an existing 128K runtime provider", () => {
+test("new Nighttime profile is provisioned from an existing 128K runtime provider", () => {
   const settings = {
     providers: {
       "local-ollama": {
@@ -170,16 +172,16 @@ test("new 256K profile is provisioned from an existing 128K runtime provider", (
       },
     },
   };
-  const ops = provisionProviderOps(settings, "local-ollama-256k", "local-active");
+  const ops = provisionProviderOps(settings, "local-everyday", "qwen3.8-27b-abliterated-q6_k");
   assert.equal(ops.length, 1);
-  assert.deepEqual(ops[0].path, ["providers", "local-ollama-256k"]);
-  assert.equal(ops[0].value.displayName, "Local Router (256K context)");
+  assert.deepEqual(ops[0].path, ["providers", "local-everyday"]);
+  assert.equal(ops[0].value.displayName, "Nighttime (32K)");
   assert.equal(ops[0].value.baseURL, "http://ai-router:11434/v1");
   assert.equal(ops[0].value.maxConcurrency, 1);
   assert.equal(ops[0].value.reasoning, "medium");
-  assert.equal(ops[0].value.models[0].name, "Local Active Model (256K context)");
-  assert.equal(ops[0].value.models[0].contextWindow, 262144);
-  assert.equal(settings.providers["local-ollama-256k"], undefined);
+  assert.equal(ops[0].value.models[0].name, "Nighttime (32K)");
+  assert.equal(ops[0].value.models[0].contextWindow, 32768);
+  assert.equal(settings.providers["local-everyday"], undefined);
 });
 
 test("profile provisioning avoids materializing resolved schema defaults", () => {
@@ -201,62 +203,32 @@ test("profile provisioning avoids materializing resolved schema defaults", () =>
   });
   const [operation] = provisionProviderOps(
     resolved,
-    "local-ollama-256k",
-    "local-active",
+    "local-everyday",
+    "qwen3.8-27b-abliterated-q6_k",
     stored,
   );
   assert.equal(operation.value.contextWindow, undefined);
   assert.equal(operation.value.modelOverrides, undefined);
   assert.equal(operation.value.headers, undefined);
   assert.equal(operation.value.maxRequestImageBytes, undefined);
-  assert.equal(operation.value.models[0].contextWindow, 262144);
+  assert.equal(operation.value.models[0].contextWindow, 32768);
 });
 
-test("repository profiles retain their selected context and concurrency while shared capabilities synchronize", () => {
-  const settings = {
-    providers: {
-      "local-ollama": {
-        displayName: "stale 128K label",
-        maxConcurrency: 1,
-        reasoning: "off",
-        models: [{
-          id: "local-active",
-          name: "stale 128K model label",
-          contextWindow: 262144,
-          maxTokens: 32768,
-          input: ["image"],
-          reasoningEfforts: { off: "none", max: "max" },
-        }],
-      },
-      "local-ollama-256k": {
-        displayName: "stale 256K label",
-        maxConcurrency: 2,
-        reasoning: "off",
-        models: [{
-          id: "local-active",
-          name: "stale 256K model label",
-          contextWindow: 131072,
-          maxTokens: 32768,
-          input: ["image"],
-          reasoningEfforts: { off: "none", max: "max" },
-        }],
-      },
-    },
-  };
-  for (const [provider, contextWindow, maxConcurrency, label] of [
-    ["local-ollama", 131072, 2, "128K"],
-    ["local-ollama-256k", 262144, 1, "256K"],
+test("resident profiles take labels and capacities from discovery while retaining deliberate effort", () => {
+  for (const [provider, model, context, label] of [
+    ["local-ollama", "local-active", 131072, "Daytime (128K)"],
+    ["local-everyday", "qwen3.8-27b-abliterated-q6_k", 32768, "Nighttime (32K)"],
   ]) {
-    const ops = capabilityOps(settings, provider, "local-active", routerMetadataOf(entry()));
-    assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "reasoning", "models"]);
-    assert.equal(ops[0].value, `Local Router (${label} context)`);
-    assert.equal(ops[1].value, maxConcurrency);
-    assert.equal(ops[2].value, "medium");
-    assert.equal(ops[3].value[0].id, "local-active");
-    assert.equal(ops[3].value[0].name, `Local Active Model (${label} context)`);
-    assert.equal(ops[3].value[0].contextWindow, contextWindow);
-    assert.equal(ops[3].value[0].maxTokens, 16384);
-    assert.deepEqual(ops[3].value[0].input, ["text"]);
+    const settings = {providers: {[provider]: {displayName: "old", maxConcurrency: 2, reasoning: "off", models: [{id:model,name:"old",contextWindow:262144,maxTokens:32768}]}}};
+    const metadata = routerMetadataOf(entry({display_name:label,context_window:context,active_request_limit:1}));
+    const ops = capabilityOps(settings, provider, model, metadata);
+    assert.deepEqual(ops.map(op => op.path.at(-1)), ["displayName","maxConcurrency","models"]);
+    assert.equal(ops[0].value,label);
+    assert.equal(ops[1].value,1);
+    assert.equal(ops[2].value[0].id,model);
+    assert.equal(ops[2].value[0].name,label);
+    assert.equal(ops[2].value[0].contextWindow,context);
+    assert.equal(settings.providers[provider].reasoning,"off");
   }
 });
 
@@ -290,7 +262,7 @@ test("plugin activates without a hard settings injection and synchronizes immedi
     describe: () => [{ ns: "llm-pi-ai", user: settings }],
     mutate: async (_namespace, ops) => resolveMutation(ops),
   };
-  globalThis.fetch = async () => new Response(JSON.stringify({ data: [entry()] }), {
+  globalThis.fetch = async () => new Response(JSON.stringify({data:[entry()]}), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
@@ -313,12 +285,11 @@ test("plugin activates without a hard settings injection and synchronizes immedi
       pollIntervalMs: 60_000,
     });
     const ops = await mutation;
-    assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "reasoning", "models"]);
-    assert.equal(ops[0].value, "Local Router (128K context)");
+    assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "models"]);
+    assert.equal(ops[0].value, "Daytime (128K)");
     assert.equal(ops[1].value, 2);
-    assert.equal(ops[2].value, "medium");
-    assert.equal(ops[3].value[0].name, "Local Active Model (128K context)");
-    assert.equal(ops[3].value[0].maxTokens, 16384);
+    assert.equal(ops[2].value[0].name, "Daytime (128K)");
+    assert.equal(ops[2].value[0].maxTokens, 16384);
   } finally {
     dispose?.();
     globalThis.fetch = previousFetch;

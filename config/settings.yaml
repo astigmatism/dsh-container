@@ -1,6 +1,7 @@
 agent-default-model:
   provider: local-ollama
   model: local-active
+  reasoningEffort: medium
 
 permission:
   defaultPreset: danger-full-access
@@ -14,15 +15,14 @@ ui-onboarding:
 llm-pi-ai:
   providers:
     local-ollama:
-      displayName: Local Router (128K context)
+      displayName: Daytime (128K)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
-      timeoutMs: 600000
       streamIdleTimeoutMs: 600000
-      maxConcurrency: 2
-      # An omitted per-agent effort must use the router's medium default.
+      maxConcurrency: 1
       reasoning: medium
+      # Medium is a DSH choice; the router raw default remains template-defined.
       # The production router uses volatile slot-prefix caching but does not
       # accept OpenAI's explicit prompt_cache_key request field.
       cacheRetention: none
@@ -32,9 +32,9 @@ llm-pi-ai:
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
-          name: Local Active Model (128K context)
+          name: Daytime (128K)
           contextWindow: 131072
-          maxTokens: 32768
+          maxTokens: null
           input: [text, image]
           reasoningEfforts:
             off: none
@@ -44,16 +44,15 @@ llm-pi-ai:
             high: xhigh
             xhigh: xhigh
             max: xhigh
-    local-ollama-256k:
-      displayName: Local Router (256K context)
+    local-everyday:
+      displayName: Nighttime (32K)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
-      timeoutMs: 600000
       streamIdleTimeoutMs: 600000
       maxConcurrency: 1
-      # An omitted per-agent effort must use the router's medium default.
       reasoning: medium
+      # Medium is a DSH choice; the router raw default remains template-defined.
       # The production router uses volatile slot-prefix caching but does not
       # accept OpenAI's explicit prompt_cache_key request field.
       cacheRetention: none
@@ -62,11 +61,11 @@ llm-pi-ai:
         maxRetries: 2
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
-        - id: local-active
-          name: Local Active Model (256K context)
-          contextWindow: 262144
-          maxTokens: 32768
-          input: [text, image]
+        - id: qwen3.8-27b-abliterated-q6_k
+          name: Nighttime (32K)
+          contextWindow: 32768
+          maxTokens: null
+          input: [text]
           reasoningEfforts:
             off: none
             minimal: low

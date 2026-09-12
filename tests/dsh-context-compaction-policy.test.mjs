@@ -6,7 +6,7 @@ const profile = await readFile(new URL("../seed/profile/cordis.patch.yml", impor
 const settings = await readFile(new URL("../config/settings.yaml", import.meta.url), "utf8");
 
 const CONTEXT_WINDOW = 131072;
-const EXPANDED_CONTEXT_WINDOW = 262144;
+const EVERYDAY_CONTEXT_WINDOW = 32768;
 const REQUESTED_OUTPUT = 32768;
 const ROUTER_RESERVE = 1024;
 const INCIDENT_ROUTER_INPUT = 101165;
@@ -37,24 +37,21 @@ test("Web mounts automatic compaction, manual recovery, and replay-safe pruning"
 
 test("both selectable context profiles use the 70 percent request budget policy", () => {
   const compact = block("compaction-basic", "command-compact");
-  for (const provider of ["local-ollama", "local-ollama-256k"]) {
+  for (const [provider, model] of [["local-ollama", "local-active"], ["local-everyday", "qwen3.8-27b-abliterated-q6_k"]]) {
     assert.match(
       compact,
-      new RegExp(`provider: ${provider.replaceAll("-", "\\-")}\\n\\s+model: local-active\\n\\s+thresholdRatio: 0\\.70`),
+      new RegExp(`provider: ${provider.replaceAll("-", "\\-")}\\n\\s+model: ${model}\\n\\s+thresholdRatio: 0\\.70`),
     );
   }
   assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 2);
 });
 
-test("the 256K profile derives its pressure boundary from the larger selected window", () => {
-  const policyThreshold = Math.floor(EXPANDED_CONTEXT_WINDOW * 0.70);
-  const admissibleInput = EXPANDED_CONTEXT_WINDOW - REQUESTED_OUTPUT - ROUTER_RESERVE;
-  assert.equal(policyThreshold, 183500);
-  assert.equal(admissibleInput, 228352);
-  assert.equal(admissibleInput - policyThreshold, 44852);
+test("Nighttime compaction follows its 32K working context without a summary quota", () => {
+  assert.equal(Math.floor(EVERYDAY_CONTEXT_WINDOW * 0.70), 22937);
+  assert.match(block("compaction-basic", "command-compact"), /maxTokens: null/);
 });
 
-test("incident pre-step pressure compacts before the inadmissible dispatch", () => {
+test("historical incident pre-step pressure compacts before the inadmissible dispatch", () => {
   const defaultThreshold = Math.floor(CONTEXT_WINDOW * 0.8);
   const policyThreshold = Math.floor(CONTEXT_WINDOW * 0.70);
   const admissibleInput = CONTEXT_WINDOW - REQUESTED_OUTPUT - ROUTER_RESERVE;
@@ -71,7 +68,7 @@ test("incident pre-step pressure compacts before the inadmissible dispatch", () 
   assert.equal(INCIDENT_ROUTER_INPUT - dshPreStep, 1430, "observed meter-to-router uncertainty");
 });
 
-test("pi-ai clamp miss is reproduced without reducing normal output allowance", () => {
+test("historical capped pi-ai clamp miss remains reproducible", () => {
   const estimatorSafety = 4096;
   const clamp = (estimated) => Math.min(
     REQUESTED_OUTPUT,
@@ -81,7 +78,7 @@ test("pi-ai clamp miss is reproduced without reducing normal output allowance", 
   assert.equal(CONTEXT_WINDOW - INCIDENT_PI_ESTIMATE - estimatorSafety - REQUESTED_OUTPUT, 2832);
   assert.equal(INCIDENT_ROUTER_INPUT - INCIDENT_PI_ESTIMATE, 9789);
   assert.ok(INCIDENT_ROUTER_INPUT > CONTEXT_WINDOW - REQUESTED_OUTPUT - ROUTER_RESERVE);
-  assert.equal(clamp(20000), REQUESTED_OUTPUT, "ordinary smaller requests retain 32768 output tokens");
+  assert.equal(clamp(20000), REQUESTED_OUTPUT, "historical smaller requests retained the inherited quota");
 });
 
 test("captured tool-result pruning returns far below the policy threshold", () => {
@@ -92,7 +89,7 @@ test("captured tool-result pruning returns far below the policy threshold", () =
 });
 
 test("context overflow remains outside the ordinary retry set", () => {
-  for (const provider of ["local-ollama", "local-ollama-256k"]) {
+  for (const [provider, model] of [["local-ollama", "local-active"], ["local-everyday", "qwen3.8-27b-abliterated-q6_k"]]) {
     const start = settings.indexOf(`    ${provider}:\n`);
     assert.notEqual(start, -1);
     const retryLine = settings.slice(start).match(/retryableCodes: \[([^\]]+)\]/)?.[1] ?? "";

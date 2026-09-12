@@ -47,8 +47,8 @@ requireMarkers("pi-ai context estimator", estimate, [
   "estimateTextTokens(context.systemPrompt)",
 ]);
 requireMarkers("pi-ai OpenAI Responses transport", responses, [
-  "params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)",
-  'const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning',
+  "params.max_output_tokens = (model.maxTokens === null ? options.maxTokens : Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS))",
+  'const reasoningEffort = clampedReasoning === "off" && model.maxTokens !== null ? undefined : clampedReasoning',
   'effort: (model.thinkingLevelMap?.off ?? "none")',
   'params.include = ["reasoning.encrypted_content"]',
   "maxRetries: 0",

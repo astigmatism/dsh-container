@@ -48,8 +48,13 @@ RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}
 # exact source anchors so a future DSH layout change fails the image build
 # instead of silently dropping behavior.
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
+COPY scripts/patch-unrestricted-policy.mjs /opt/dsh-build/patch-unrestricted-policy.mjs
+COPY scripts/verify-unrestricted-wire.mjs /opt/dsh-build/verify-unrestricted-wire.mjs
 COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
 COPY scripts/verify-local-model-profiles.mjs /opt/dsh-build/verify-local-model-profiles.mjs
+COPY scripts/verify-router-contract.mjs /opt/dsh-build/verify-router-contract.mjs
+COPY scripts/verify-router-startup.mjs /opt/dsh-build/verify-router-startup.mjs
+COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/verify-dsh-token-policy.mjs /opt/dsh-build/verify-dsh-token-policy.mjs
@@ -60,6 +65,8 @@ COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
 COPY scripts/patch-dsh-playwright-webserver.mjs /opt/dsh-build/patch-dsh-playwright-webserver.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
+    && node /opt/dsh-build/patch-unrestricted-policy.mjs \
+    && node /opt/dsh-build/verify-unrestricted-wire.mjs \
     && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
     && node /opt/dsh-build/verify-dsh-context-compaction.mjs \
     && node /opt/dsh-build/patch-dsh-cancellation-presentation.mjs \

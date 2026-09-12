@@ -25,11 +25,11 @@ needs the NVIDIA Container Toolkit.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
-- Two selectable `local-active` OpenAI Responses profiles at
-  `http://ai-router:11434/v1`: 131,072 context tokens with two simultaneous
-  generations, or 262,144 context tokens with one simultaneous generation.
-  Both keep the same 32,768-token output ceiling and public model alias.
-- Medium default reasoning; explicit off, low, medium, and xhigh are supported,
+- Two resident OpenAI Responses models at `http://ai-router:11434/v1`:
+  Daytime (128K) and Nighttime (32K), each with one independent generation slot
+  and no inherited output ceiling.
+- Explicit DSH medium reasoning by default; the raw router default remains
+  template-defined. Off, low, medium, and xhigh are supported,
   while the existing minimal, high, and max selectors map to low, xhigh, and
   xhigh respectively.
 - Remote mode delegates active-model selection, Responses, tools, reasoning,
@@ -203,86 +203,56 @@ is supplied explicitly.
 
 ## Persisted settings lifecycle
 
-`config/settings.yaml` is the reviewed default configuration used to seed a
-new deployment. It defaults to `local-ollama/local-active`, displayed as
-`Local Active Model (128K context)`, with a complete 131,072-token request
-window and concurrency two. `local-ollama-256k/local-active` is displayed as
-`Local Active Model (256K context)`, with a complete 262,144-token request
-window and concurrency one. Both select the same public alias and endpoint;
-the operator switches the backend profile to match the DSH selection. No
-client configuration depends on the replaceable backend model name or its MTP
-implementation.
+`config/settings.yaml` seeds **Daytime (128K)** through
+`local-ollama/local-active` and **Nighttime (32K)** through
+`local-everyday/qwen3.8-27b-abliterated-q6_k`. Each resident model has one
+independent generation slot. The former 256K selection is retired.
 
-The schema-v2 discovery plugin validates the router and synchronizes capabilities
-shared by both profiles: output ceiling, input modalities, and reasoning effort
-wire values. It deliberately preserves each selection's context window and
-concurrency while the backend is swapped. It also provisions the 256K profile
-into older persisted settings that contain only the 128K route and corrects
-stale names or capacities without changing the established provider IDs. The
-checked-in settings are the fallback when discovery is temporarily unavailable.
-A fresh configuration omits an agent-level reasoning choice and sets both
-provider defaults to medium; explicit off remains a real model capability.
-Selecting off sends the router's `none` wire value, and max sends `xhigh`.
+The discovery plugin reads each model's router metadata, including
+`x_ollama_router.display_name`, context, concurrency, modalities and effort
+mappings. Daytime supports text, images, tools and reasoning; Nighttime supports
+text and reasoning. Stable API IDs remain separate from display names.
+Discovery provisions Nighttime and removes the obsolete 256K provider, moving
+a retired default back to Daytime. Existing deliberate effort choices remain.
 
-The Web profile explicitly re-enables DSH's base `compaction-basic`,
-`command-compact`, and replay-safe tool-result-pruner rows (the Web bundle
-disables all three by default). Automatic compaction is active with one bounded
-overflow recovery attempt. Both local provider IDs use a `0.70` exact-target
-policy, applied to their selected context window:
+A normal image update atomically reconciles the known providers in the
+entrypoint before Harness launches; the refreshed plugin then maintains them
+through DSH's settings service. It validates the target metadata
+and inherited effort before provisioning Nighttime, applies each model's actual
+capacity and modalities, and removes only the recognized legacy 256K route.
+A default selecting that retired route moves to the primary while preserving
+its explicit effort. Unrelated providers, model properties and settings remain.
+Discovery failure leaves the file unchanged and the application available;
+provider verification still fails until the contract is synchronized. No manual
+production settings migration is required. The optional
+`scripts/migrate-resident-models.mjs` uses the same synchronization for explicit
+local maintenance and keeps a private backup when it changes a file.
 
-```text
-router admissible formatted input = 131,072 - 32,768 - 1,024 = 97,280
-proactive token-meter trigger      = floor(131,072 × 0.70) = 91,750
-admission uncertainty margin       = 97,280 - 91,750 = 5,530
-retained recent surface            = floor(131,072 × 0.16) = 20,971
+Both providers seed medium as an explicit DSH preference. Existing agent,
+request and provider choices are preserved; the router's raw `default` remains
+template-defined. Output capability maxima are null under the current
+unrestricted policy, so no positive request allowance, enabled thinking budget
+or total generation deadline is injected. Explicit off and finite allowances
+remain caller choices. The installed SDK patch preserves those choices and
+leaves connection/progress/stall handling to the router. The build tests actual
+installed SDK requests so null cannot become a fallback allowance.
 
-expanded admissible input          = 262,144 - 32,768 - 1,024 = 228,352
-expanded token-meter trigger       = floor(262,144 × 0.70) = 183,500
-expanded uncertainty margin        = 228,352 - 183,500 = 44,852
-expanded retained surface          = floor(262,144 × 0.16) = 41,943
-```
+The discovery plugin and both readiness scripts share one resolver and validator.
+They accept the legacy exact alias, canonical entries with alias metadata, and
+explicit alias rows whose metadata agrees with the canonical target. Unknown,
+partial or contradictory output policy fails validation. The remote verifier
+compares persisted context, concurrency, output and effort mappings with current
+router metadata and retains the primary route's vision/tool requirements;
+browser readiness validates the selected route. It does not require the
+text-only secondary to advertise vision or tools.
 
-At `agent/pre-step`, DSH's token meter prices the last canonical request
-envelope and current durable surface. It reuses provider input/output/cache
-usage only when that envelope still matches, then adds estimated surface
-movement since that successful response. Otherwise it estimates the complete
-system prompt, tool schemas, user/assistant messages, tool calls/results, and
-preserved reasoning. Crossing 91,750 on the 128K selection or 183,500 on the
-256K selection first prunes eligible oversized tool results to their configured
-head/marker/tail representation. If the remeasured surface is still at pressure,
-`compaction-basic` summarizes a balanced older region while retaining the recent
-tail. Raw shadowed events remain in the append-only session log.
-
-The 0.70 route policy is intentionally lower than DSH's general 0.80 default.
-On the 128K selection, reserving 32,768 output tokens already consumes 25% of
-the window, and the remaining 5,530-token gap covers request serialization and
-tokenization uncertainty in addition to the router's explicit 1,024-token
-reserve. The 256K selection uses the same ratio but derives its threshold and
-retained tail from 262,144.
-
-The pinned pi-ai layer still dynamically clamps every request's output
-allowance as a final admission safeguard:
-
-```text
-max_output_tokens =
-  min(requested output cap (normally 32,768),
-      max(transport minimum,
-          selected context window - estimated serialized context
-          - 4,096 safety tokens))
-
-estimated serialized context budget for a requested output reservation =
-  selected context window - requested output tokens - 4,096 safety tokens
-```
-
-The estimate includes the system prompt, tool schemas, messages, tool calls,
-tool results, retained reasoning, and image allowance. The router exposes no
-tokenization endpoint, so the estimator uses prior provider usage when
-available and otherwise a four-characters-per-token heuristic. Harness durable
-replay clears pi-ai usage values, so continued Harness turns usually take the
-heuristic path. The 4,096-token estimator allowance is not treated as a reason
-to let context consume the route's generation budget: proactive compaction is
-the primary protection, and output reduction happens only when the later pi-ai
-estimate still cannot admit the requested cap.
+Automatic and manual compaction and replay-safe tool pruning remain enabled.
+The 70% working-context trigger is 91,750 tokens for Daytime and 22,937 for
+Nighttime. Summaries have no injected output quota; full original events remain
+in durable session storage. Working-context summaries are lossy. The router
+counts actual formatted input and rejects infeasible explicit allowances
+without clipping them. See `scripts/patch-unrestricted-policy.mjs` and
+`scripts/verify-unrestricted-wire.mjs` for the deployed integration.
 
 The shared DSH overflow classifier is patched to recognize the router's
 `CONTEXT_LIMIT_EXCEEDED` code and its “formatted input … exceeds the … token
@@ -327,19 +297,14 @@ detector remains enabled as an independent secondary defense. None of these
 policies changes the selected model, reasoning effort, context window, sampling,
 or concurrency.
 
-The 128K provider declares `maxConcurrency: 2`; the 256K provider declares
-`maxConcurrency: 1`. The patched adapter enforces each limit immediately around
-model generation with a FIFO gate keyed by normalized endpoint URL and provider
-profile. Context conversion and ordinary local tool execution do not consume a
-generation slot, queued calls can be cancelled, and a slot is released before
-any higher-level retry begins. Operators should switch the backend profile and
-the DSH selection together rather than run the two profiles simultaneously.
+Both providers declare `maxConcurrency: 1`. The adapter keeps provider gates
+independent, and both resident models may run simultaneously. The router queues
+same-backend contention without disturbing an active generation.
 
 Busy/rate-limit, server, transport, and empty-response failures retain at most
 two bounded Harness retries; the underlying SDK retry loop is disabled.
-Timeout and context-overflow failures are not in that retry set. Request and
-stream-idle timeouts both remain 600 seconds for long fresh prefills. Both
-routes set `cacheRetention: none` so pi-ai does not send the unsupported OpenAI
+Timeout and context-overflow failures are not in that retry set. Unrestricted local generation has no total client deadline; its stream-idle
+setting defers to router backend-progress detection. Both routes set `cacheRetention: none` so pi-ai omits an unnecessary OpenAI
 `prompt_cache_key` field; the production backend still performs its own
 volatile slot-prefix caching. Reasoning summaries and opaque signatures are
 stored separately in replay state and reconstructed before tool calls on

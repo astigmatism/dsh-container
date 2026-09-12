@@ -58,22 +58,7 @@ docker exec "$container" node /opt/dsh-build/verify-dsh-playwright-stream.mjs ||
   exit 1
 }
 
-docker exec "$container" node --input-type=module -e '
-  const response = await fetch("http://ai-router:11434/v1/models");
-  if (!response.ok) throw new Error(`model discovery returned HTTP ${response.status}`);
-  const body = await response.json();
-  const model = body?.data?.find((entry) => entry?.id === "local-active");
-  const metadata = model?.x_ollama_router;
-  if (metadata?.schema_version !== 2 || !metadata?.complete || metadata?.warnings?.length) {
-    throw new Error(`local-active discovery is not complete schema-v2: ${JSON.stringify(metadata)}`);
-  }
-  for (const modality of ["text", "image"]) {
-    if (!metadata.input_modalities?.includes(modality)) throw new Error(`missing ${modality} input modality`);
-  }
-  for (const capability of ["vision", "tools"]) {
-    if (!metadata.capabilities?.includes(capability)) throw new Error(`missing ${capability} capability`);
-  }
-' || {
+docker exec "$container" node /opt/dsh-build/verify-router-contract.mjs --browser || {
   echo "The active model route is not advertising complete vision and tool support." >&2
   exit 1
 }

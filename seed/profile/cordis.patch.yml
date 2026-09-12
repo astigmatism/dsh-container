@@ -26,25 +26,22 @@
 # durable path here: proactive step pressure, one bounded canonical-overflow
 # recovery, the idle /compact operator command, and replay-safe tool pruning.
 #
-# The 128K route can admit at most 97,280 formatted input tokens while keeping
-# its 32,768 output allowance and the router's 1,024-token reserve. A 0.70
-# policy triggers at 91,750, leaving 5,530 tokens for meter/serialization/
-# tokenizer uncertainty. The 256K profile uses the same conservative ratio
-# against its larger declared window.
+# Working-context pressure triggers disclosed, durable compaction at 70%.
+# Summaries have no injected output quota; original events remain in storage.
 - id: compaction-basic
   disabled: false
   config:
     auto: true
     retainRatio: 0.16
-    maxTokens: 8192
+    maxTokens: null
     compactionRetries: 1
     maxOverflowRetries: 1
     modelPolicies:
       - provider: local-ollama
         model: local-active
         thresholdRatio: 0.70
-      - provider: local-ollama-256k
-        model: local-active
+      - provider: local-everyday
+        model: qwen3.8-27b-abliterated-q6_k
         thresholdRatio: 0.70
 
 - id: command-compact
@@ -99,6 +96,6 @@
     - id: router-model-discovery
       name: '../../.dsh-plugins/dsh-router-model-discovery.js'
       config:
-        providers: [ local-ollama, local-ollama-256k ]
+        providers: [ local-ollama, local-everyday ]
         model: local-active
         pollIntervalMs: 30000

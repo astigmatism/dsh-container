@@ -14,7 +14,7 @@ const { BasicCompactionEngine } = await import(
 );
 
 const CONTEXT_WINDOW = 131072;
-const EXPANDED_CONTEXT_WINDOW = 262144;
+const EVERYDAY_CONTEXT_WINDOW = 32768;
 const INCIDENT_MEASUREMENT = 99735;
 
 function config(thresholdRatio = 0.70) {
@@ -23,12 +23,12 @@ function config(thresholdRatio = 0.70) {
     retainRatio: 0.16,
     summarizationProvider: "",
     summarizationModel: "",
-    maxTokens: 8192,
+    maxTokens: null,
     compactionRetries: 1,
     maxOverflowRetries: 1,
     modelPolicies: [
       { provider: "local-ollama", model: "local-active", thresholdRatio },
-      { provider: "local-ollama-256k", model: "local-active", thresholdRatio },
+      { provider: "local-everyday", model: "qwen3.8-27b-abliterated-q6_k", thresholdRatio },
     ],
     auto: true,
   };
@@ -51,7 +51,7 @@ function userEvent(seq) {
 function pressureAgent(provider) {
   const events = [userEvent(0), userEvent(1), userEvent(2)];
   return {
-    options: { provider, model: "local-active" },
+    options: { provider, model: provider === "local-everyday" ? "qwen3.8-27b-abliterated-q6_k" : "local-active" },
     session: {
       events,
       surface: { nodes: [0, 1, 2], replaceGeneration: 0 },
@@ -59,7 +59,7 @@ function pressureAgent(provider) {
         return events[seq];
       },
       requestHeader() {
-        return { config: { provider, model: "local-active", maxTokens: 32768 } };
+        return { config: { provider, model: provider === "local-everyday" ? "qwen3.8-27b-abliterated-q6_k" : "local-active" } };
       },
     },
   };
@@ -77,7 +77,7 @@ function pressureEngine(provider, thresholdRatio = 0.70, measurement = INCIDENT_
       { seq: 2, tokens: measurement - Math.floor(measurement * 0.8) },
     ],
   };
-  const low = { ...high, totalTokens: 30000 };
+  const low = { ...high, totalTokens: 10000 };
   const engine = Object.create(BasicCompactionEngine.prototype);
   Object.assign(engine, {
     config: config(thresholdRatio),
@@ -86,8 +86,8 @@ function pressureEngine(provider, thresholdRatio = 0.70, measurement = INCIDENT_
         async resolveModelInfo() {
           return {
             context: {
-              contextWindow: provider === "local-ollama-256k"
-                ? EXPANDED_CONTEXT_WINDOW
+              contextWindow: provider === "local-everyday"
+                ? EVERYDAY_CONTEXT_WINDOW
                 : CONTEXT_WINDOW,
             },
           };
@@ -126,7 +126,7 @@ assert.notEqual(
 );
 assert.equal(canonicalPressure.compactCalls(), 1);
 
-const expandedBelowPressure = pressureEngine("local-ollama-256k");
+const expandedBelowPressure = pressureEngine("local-everyday", 0.70, 20000);
 assert.equal(
   await expandedBelowPressure.engine.compactIfNeeded(
     expandedBelowPressure.agent,
@@ -134,11 +134,11 @@ assert.equal(
     new AbortController().signal,
   ),
   null,
-  "the same incident-sized surface remains below pressure in the 256K profile",
+  "a 20K surface remains below pressure in the 32K everyday model",
 );
 assert.equal(expandedBelowPressure.compactCalls(), 0);
 
-const expandedPressure = pressureEngine("local-ollama-256k", 0.70, 190000);
+const expandedPressure = pressureEngine("local-everyday", 0.70, 25000);
 assert.notEqual(
   await expandedPressure.engine.compactIfNeeded(
     expandedPressure.agent,
@@ -146,7 +146,7 @@ assert.notEqual(
     new AbortController().signal,
   ),
   null,
-  "the 256K profile must compact once its own threshold is crossed",
+  "the 32K everyday model must compact once its own threshold is crossed",
 );
 assert.equal(expandedPressure.compactCalls(), 1);
 
@@ -262,7 +262,7 @@ if (mode === "--effective-config") {
   assert.doesNotMatch(compact, /disabled: true/);
   assert.match(compact, /auto: true/);
   assert.match(compact, /provider: local-ollama\n\s+model: local-active\n\s+thresholdRatio: 0\.7/);
-  assert.match(compact, /provider: local-ollama-256k\n\s+model: local-active\n\s+thresholdRatio: 0\.7/);
+  assert.match(compact, /provider: local-everyday\n\s+model: qwen3.8-27b-abliterated-q6_k\n\s+thresholdRatio: 0\.7/);
   assert.doesNotMatch(row("command-compact", "subagent"), /disabled: true/);
   assert.doesNotMatch(row("tool-result-pruner", "tool-todo"), /disabled: true/);
 }

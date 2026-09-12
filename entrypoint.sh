@@ -21,6 +21,16 @@ DSH_SETTINGS_UID=$(id -u) \
 DSH_SETTINGS_GID=$(id -g) \
   "$settings_initializer" --replace-empty --preserve-divergent
 
+# Reconcile known router capabilities before any lazy agent/settings scope can
+# read the persisted file. Invalid/unavailable discovery never changes settings;
+# keep the application available and let provider verification report the cause.
+router_migrator=${DSH_ROUTER_SETTINGS_MIGRATOR:-/opt/dsh-build/migrate-resident-models.mjs}
+if [ -f "$router_migrator" ]; then
+  if ! node "$router_migrator" --startup "$runtime_home/settings.yaml"; then
+    echo "Router settings synchronization deferred; persisted settings were preserved." >&2
+  fi
+fi
+
 # Upstream protects every browser and RPC request with a process launch token.
 # Generate it at container start, publish it only through the mode-0600 shared
 # file consumed by the colocated gateway, and inject the same value into DSH.

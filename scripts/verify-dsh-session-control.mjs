@@ -17,7 +17,7 @@ async function rpc(name, request) {
   const method = `session/${name}`;
   const response = await fetch(`${base}/api/${method}`, {
     method: 'POST', headers: { cookie, 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args: name === 'list' ? { _request: request } : { request } } }),
+    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args: name === 'modelCatalog' ? {} : name === 'list' ? { _request: request } : { request } } }),
     signal: AbortSignal.timeout(10000),
   });
   assert.equal(response.status, 200, `${name}: HTTP ${response.status}`);
@@ -25,6 +25,9 @@ async function rpc(name, request) {
   assert.equal(result.ok, true, `${name}: ${result.error?.code}: ${result.error?.message}`);
   return result.value;
 }
+// Harness model selection also updates the global default. Save and restore
+// that preference, even though this test owns an otherwise isolated session.
+const originalDefault = (await rpc('modelCatalog')).default;
 const { sessionId } = await rpc('create', { cwd: '/tmp' });
 console.log(`Smoke-test session: ${sessionId}`);
 async function row() {
@@ -73,5 +76,6 @@ try {
   assert.ok(!events.some(event => event.type === 'tool/start'), 'smoke test did not execute tools');
   console.log('Live Harness API: durable cancellation and same-session model recovery passed.');
 } finally {
-  await rpc('cancel', { sessionId });
+  try { await rpc('cancel', { sessionId }); }
+  finally { await rpc('selectModel', { sessionId, ...originalDefault }); }
 }

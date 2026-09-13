@@ -14,7 +14,7 @@ const { BasicCompactionEngine } = await import(
 );
 
 const CONTEXT_WINDOW = 131072;
-const EVERYDAY_CONTEXT_WINDOW = 32768;
+const EVERYDAY_CONTEXT_WINDOW = 131072;
 const INCIDENT_MEASUREMENT = 99735;
 
 function config(thresholdRatio = 0.70) {
@@ -126,7 +126,7 @@ assert.notEqual(
 );
 assert.equal(canonicalPressure.compactCalls(), 1);
 
-const expandedBelowPressure = pressureEngine("local-everyday", 0.70, 20000);
+const expandedBelowPressure = pressureEngine("local-everyday", 0.70, 90000);
 assert.equal(
   await expandedBelowPressure.engine.compactIfNeeded(
     expandedBelowPressure.agent,
@@ -134,11 +134,11 @@ assert.equal(
     new AbortController().signal,
   ),
   null,
-  "a 20K surface remains below pressure in the 32K everyday model",
+  "a 90K surface remains below pressure in the 128K everyday model",
 );
 assert.equal(expandedBelowPressure.compactCalls(), 0);
 
-const expandedPressure = pressureEngine("local-everyday", 0.70, 25000);
+const expandedPressure = pressureEngine("local-everyday", 0.70, 95000);
 assert.notEqual(
   await expandedPressure.engine.compactIfNeeded(
     expandedPressure.agent,
@@ -146,7 +146,7 @@ assert.notEqual(
     new AbortController().signal,
   ),
   null,
-  "the 32K everyday model must compact once its own threshold is crossed",
+  "the 128K everyday model must compact once its own threshold is crossed",
 );
 assert.equal(expandedPressure.compactCalls(), 1);
 

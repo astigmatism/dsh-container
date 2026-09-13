@@ -45,7 +45,7 @@ llm-pi-ai:
             xhigh: xhigh
             max: xhigh
     local-everyday:
-      displayName: Nighttime (32K)
+      displayName: Nighttime (128K)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
@@ -62,8 +62,8 @@ llm-pi-ai:
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: qwen3.8-27b-abliterated-q6_k
-          name: Nighttime (32K)
-          contextWindow: 32768
+          name: Nighttime (128K)
+          contextWindow: 131072
           maxTokens: null
           input: [text]
           reasoningEfforts:

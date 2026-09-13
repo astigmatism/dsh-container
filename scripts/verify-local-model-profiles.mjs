@@ -26,9 +26,9 @@ const profiles = [
   },
   {
     provider: "local-everyday",
-    displayName: "Nighttime (32K)",
-    modelName: "Nighttime (32K)",
-    contextWindow: 32768,
+    displayName: "Nighttime (128K)",
+    modelName: "Nighttime (128K)",
+    contextWindow: 131072,
     maxConcurrency: 1,
   },
 ];
@@ -45,4 +45,4 @@ for (const profile of profiles) {
   assert.ok(!/^      timeoutMs:/m.test(block), `${profile.provider} sets a generation deadline`);
 }
 
-console.log("Verified resident coding 128K/1 and everyday 32K/1 model choices with unrestricted output and an explicit DSH medium default.");
+console.log("Verified resident coding 128K/1 and everyday 128K/1 model choices with unrestricted output and an explicit DSH medium default.");

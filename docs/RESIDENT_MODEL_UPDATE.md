@@ -9,7 +9,7 @@ backends and inconsistent output policies still fail verification.
 
 Current resident defaults are Daytime (`local-ollama/local-active`, 131072
 context, one active request) and Nighttime
-(`local-everyday/qwen3.8-27b-abliterated-q6_k`, 32768 context, one active request).
+(`local-everyday/qwen3.8-27b-abliterated-q6_k`, 131072 context, one active request).
 The primary supports image/tool work; the secondary supports text and reasoning.
 Those values are discovered, not required as historical constants. The remote
 verifier retains the primary route's vision/tool requirement; browser readiness

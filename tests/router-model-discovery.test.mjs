@@ -175,12 +175,12 @@ test("new Nighttime profile is provisioned from an existing 128K runtime provide
   const ops = provisionProviderOps(settings, "local-everyday", "qwen3.8-27b-abliterated-q6_k");
   assert.equal(ops.length, 1);
   assert.deepEqual(ops[0].path, ["providers", "local-everyday"]);
-  assert.equal(ops[0].value.displayName, "Nighttime (32K)");
+  assert.equal(ops[0].value.displayName, "Nighttime (128K)");
   assert.equal(ops[0].value.baseURL, "http://ai-router:11434/v1");
   assert.equal(ops[0].value.maxConcurrency, 1);
   assert.equal(ops[0].value.reasoning, "medium");
-  assert.equal(ops[0].value.models[0].name, "Nighttime (32K)");
-  assert.equal(ops[0].value.models[0].contextWindow, 32768);
+  assert.equal(ops[0].value.models[0].name, "Nighttime (128K)");
+  assert.equal(ops[0].value.models[0].contextWindow, 131072);
   assert.equal(settings.providers["local-everyday"], undefined);
 });
 
@@ -211,13 +211,13 @@ test("profile provisioning avoids materializing resolved schema defaults", () =>
   assert.equal(operation.value.modelOverrides, undefined);
   assert.equal(operation.value.headers, undefined);
   assert.equal(operation.value.maxRequestImageBytes, undefined);
-  assert.equal(operation.value.models[0].contextWindow, 32768);
+  assert.equal(operation.value.models[0].contextWindow, 131072);
 });
 
 test("resident profiles take labels and capacities from discovery while retaining deliberate effort", () => {
   for (const [provider, model, context, label] of [
     ["local-ollama", "local-active", 131072, "Daytime (128K)"],
-    ["local-everyday", "qwen3.8-27b-abliterated-q6_k", 32768, "Nighttime (32K)"],
+    ["local-everyday", "qwen3.8-27b-abliterated-q6_k", 131072, "Nighttime (128K)"],
   ]) {
     const settings = {providers: {[provider]: {displayName: "old", maxConcurrency: 2, reasoning: "off", models: [{id:model,name:"old",contextWindow:262144,maxTokens:32768}]}}};
     const metadata = routerMetadataOf(entry({display_name:label,context_window:context,active_request_limit:1}));

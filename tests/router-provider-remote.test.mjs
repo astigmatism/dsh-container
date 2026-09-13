@@ -21,7 +21,7 @@ function entry(id, { unrestricted = true, primary = id === PRIMARY } = {}) {
   return { id, object: 'model', x_ollama_router: {
     schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: id,
     aliases: primary ? ['local-active'] : [], display_name: primary ? 'Primary' : 'Secondary',
-    health: { available: true, status: 200 }, context_window: primary ? 131072 : 32768,
+    health: { available: true, status: 200 }, context_window: 131072,
     active_request_limit: 1, output_policy: unrestricted ? 'unrestricted' : 'bounded',
     max_output_tokens: max, default_output_tokens: defaultTokens,
     input_modalities: primary ? ['text', 'image'] : ['text'],
@@ -104,7 +104,7 @@ test('normal startup migration and the exact remote-direct verifier accept canon
   assert.equal(providers['local-ollama'].models[0].maxTokens, null);
   assert.equal(providers['local-ollama'].reasoning, 'medium');
   assert.deepEqual(providers['local-everyday'].models[0].input, ['text']);
-  assert.equal(providers['local-everyday'].models[0].contextWindow, 32768);
+  assert.equal(providers['local-everyday'].models[0].contextWindow, 131072);
   assert.equal(providers['local-everyday'].reasoning, 'medium');
   assert.equal(providers['local-ollama'].models[0].custom, 'retain');
   assert.equal(providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');

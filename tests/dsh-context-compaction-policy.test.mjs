@@ -6,7 +6,7 @@ const profile = await readFile(new URL("../seed/profile/cordis.patch.yml", impor
 const settings = await readFile(new URL("../config/settings.yaml", import.meta.url), "utf8");
 
 const CONTEXT_WINDOW = 131072;
-const EVERYDAY_CONTEXT_WINDOW = 32768;
+const EVERYDAY_CONTEXT_WINDOW = 131072;
 const REQUESTED_OUTPUT = 32768;
 const ROUTER_RESERVE = 1024;
 const INCIDENT_ROUTER_INPUT = 101165;
@@ -46,8 +46,8 @@ test("both selectable context profiles use the 70 percent request budget policy"
   assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 2);
 });
 
-test("Nighttime compaction follows its 32K working context without a summary quota", () => {
-  assert.equal(Math.floor(EVERYDAY_CONTEXT_WINDOW * 0.70), 22937);
+test("Nighttime compaction follows its 128K working context without a summary quota", () => {
+  assert.equal(Math.floor(EVERYDAY_CONTEXT_WINDOW * 0.70), 91750);
   assert.match(block("compaction-basic", "command-compact"), /maxTokens: null/);
 });
 

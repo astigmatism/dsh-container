@@ -16,7 +16,7 @@ const secondaryId = 'qwen3.8-27b-abliterated-q6_k';
 const entries = [primaryId, secondaryId].map((id, index) => ({ id, x_ollama_router: {
   schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: id,
   aliases: index ? [] : ['local-active'], display_name: index ? 'Secondary fixture' : 'Primary fixture',
-  context_window: index ? 32768 : 131072, active_request_limit: 1,
+  context_window: 131072, active_request_limit: 1,
   output_policy: 'unrestricted', max_output_tokens: null, default_output_tokens: null,
   input_modalities: index ? ['text'] : ['text', 'image'],
   capabilities: index ? ['completion', 'thinking'] : ['completion', 'thinking', 'tools', 'vision'],

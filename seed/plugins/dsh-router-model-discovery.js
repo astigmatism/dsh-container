@@ -15,9 +15,9 @@ const PROVIDER_PRESENTATION = new Map([
     maxConcurrency: 1,
   }],
   ["local-everyday", {
-    displayName: "Nighttime (32K)",
-    modelName: "Nighttime (32K)",
-    contextWindow: 32768,
+    displayName: "Nighttime (128K)",
+    modelName: "Nighttime (128K)",
+    contextWindow: 131072,
     maxConcurrency: 1,
   }],
 ]);

@@ -17,6 +17,8 @@ assert.deepEqual(DEFAULT_PROGRESS_LIMITS, {
   reasoningHardOccurrence: 3,
   readDefaultOffset: 1,
   readDefaultLimit: 2000,
+  testTimeoutMs: 120000,
+  repeatedTestTimeouts: 2,
 });
 
 const handlers = new Map();

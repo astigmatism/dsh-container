@@ -1,9 +1,9 @@
 diff --git a/lib/index.js b/lib/index.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191a1658c6d
+index 0000000000000000000000000000000000000000..b420583821147c6781845c94aeb1bf5e6f435004
 --- /dev/null
 +++ b/lib/index.js
-@@ -0,0 +1,691 @@
+@@ -0,0 +1,743 @@
 +import { createHash } from 'node:crypto'
 +import { resolve as resolvePath } from 'node:path'
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -18,6 +18,8 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  reasoningHardOccurrence: 3,
 +  readDefaultOffset: 1,
 +  readDefaultLimit: 2000,
++  testTimeoutMs: 120000,
++  repeatedTestTimeouts: 2,
 +})
 +
 +function hasSemanticSignal(text) {
@@ -141,7 +143,10 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +    reasoningHardOccurrence: positiveInteger(config.reasoningHardOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningHardOccurrence, 'reasoningHardOccurrence'),
 +    readDefaultOffset: positiveInteger(config.readDefaultOffset, DEFAULT_PROGRESS_LIMITS.readDefaultOffset, 'readDefaultOffset'),
 +    readDefaultLimit: positiveInteger(config.readDefaultLimit, DEFAULT_PROGRESS_LIMITS.readDefaultLimit, 'readDefaultLimit'),
++    testTimeoutMs: positiveInteger(config.testTimeoutMs, DEFAULT_PROGRESS_LIMITS.testTimeoutMs, 'testTimeoutMs'),
++    repeatedTestTimeouts: positiveInteger(config.repeatedTestTimeouts, DEFAULT_PROGRESS_LIMITS.repeatedTestTimeouts, 'repeatedTestTimeouts'),
 +  }
++  if (limits.testTimeoutMs > 2147483647) throw new Error('[loop-detector] testTimeoutMs exceeds the timer maximum')
 +  if (limits.reasoningDirectiveOccurrence >= limits.reasoningHardOccurrence) {
 +    throw new Error('[loop-detector] reasoningDirectiveOccurrence must be lower than reasoningHardOccurrence')
 +  }
@@ -184,6 +189,7 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +    reasoningStep: undefined,
 +    reasoningPrefixCounts: new Map(),
 +    testMilestones: new Set(),
++    testTimeouts: new Map(),
 +    verifiedBlocker: false,
 +    totalMutations: 0,
 +    totalTests: 0,
@@ -220,6 +226,7 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  state.reasoningStep = undefined
 +  state.reasoningPrefixCounts.clear()
 +  if (kind === 'mutation') {
++    state.testTimeouts.clear()
 +    state.mutationGeneration += 1
 +    state.totalMutations += 1
 +  } else if (kind === 'test') {
@@ -227,6 +234,10 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  } else if (kind === 'blocker') {
 +    state.verifiedBlocker = true
 +  }
++}
++
++function isTestCommand(command) {
++  return /(?:^|[\s;&|])(?:[^\s;&|]*\/)?(?:pytest|python[\d.]*(?:\s+-[^\s]+)*\s+-m\s+pytest|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?::[\w-]+)?|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|make\s+test|node\s+--test|deno\s+test|dotnet\s+test|ctest)(?=\s|$)/iu.test(command)
 +}
 +
 +function classifyTool(execution) {
@@ -243,7 +254,7 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +  }
 +  if (name === 'bash' || name === 'pwsh') {
 +    const command = typeof args?.command === 'string' ? args.command : ''
-+    if (TEST_COMMAND.test(command)) return { kind: 'test', name }
++    if (TEST_COMMAND.test(command) || isTestCommand(command)) return { kind: 'test', name }
 +    if (MUTATION_COMMAND.test(command) || OUTPUT_REDIRECT.test(command.replace(NON_MUTATING_REDIRECT, ' '))) {
 +      return { kind: 'mutation', name }
 +    }
@@ -629,6 +640,45 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +    }
 +  }
 +
++  async function boundedTest(execution, next, state, sessionId) {
++    if (execution.arguments?.run_in_background === true) {
++      return semanticError('UNBOUNDED_TEST_REJECTED', 'Test commands must run in the foreground with a bounded timeout so Stop cancels their process tree. Retry with run_in_background=false. Long-lived development servers are unaffected.')
++    }
++    const command = execution.arguments?.command ?? ''
++    // Group the same pytest target across timeout/verbosity wrappers. Retain
++    // selectors; distinct tests are independent. Do not retain command text.
++    const targets = [...command.matchAll(/(?:[\w./-]+\.py)(?:::[\w.[\]-]+)*/gu)].map(match => match[0]).sort()
++    const key = hash(stableJson({ cwd: execution.arguments?.workdir ?? execution.agent?.session?.header?.cwd, target: targets.length ? targets : command.trim().replace(/\s+/gu, ' ') }))
++    const upstream = execution.signal
++    const controller = new AbortController()
++    let expired = false
++    const timeoutMs = Math.min(limits.testTimeoutMs, execution.arguments?.timeoutMs > 0 ? execution.arguments.timeoutMs : limits.testTimeoutMs)
++    const timer = setTimeout(() => { expired = true; controller.abort('bounded test timeout') }, timeoutMs)
++    execution.signal = AbortSignal.any([upstream, controller.signal])
++    let result
++    try {
++      result = await next()
++    } finally {
++      clearTimeout(timer)
++      execution.signal = upstream
++    }
++    // Caller Stop remains caller cancellation, never a timeout strike.
++    if (upstream.aborted) return result
++    const timedOut = expired || result.value?.timedOut === true || result.error?.info?.code === 'TOOL_TIMEOUT'
++    if (!timedOut) {
++      // Successful completion (including a normal failing assertion) is new
++      // evidence and permits another diagnostic attempt at this target.
++      if (!result.isError) state.testTimeouts.delete(key)
++      return result
++    }
++    const count = (state.testTimeouts.get(key) ?? 0) + 1
++    state.testTimeouts.set(key, count)
++    if (count >= limits.repeatedTestTimeouts) {
++      return cancelSemantic(ctx, sessionId, state, 'repeated_test_timeout', `${count} timeouts for the same test target without an intervening source mutation or completed test. Fix the test lifecycle before retrying; completed files and session history are preserved.`, 'REPEATED_TEST_TIMEOUT')
++    }
++    return semanticError('TEST_TIMEOUT', `Test command timed out after ${timeoutMs}ms and its foreground process was stopped. Investigate cleanup or deadlock before retrying. Another timeout for this target without progress will pause the turn.`)
++  }
++
 +  ctx.on('tools/execute', async (execution, next) => {
 +    const sessionId = execution?.agent?.id === undefined ? undefined : String(execution.agent.id)
 +    const state = sessionId === undefined ? undefined : stateFor(sessionId)
@@ -678,7 +728,9 @@ index 0000000000000000000000000000000000000000..d25bef84f2935d98c65e44a4266af191
 +
 +    state.duplicateSuppressed = undefined
 +    state.consecutiveReadOnly = 0
-+    const result = await next()
++    const result = classification.kind === 'test' && isTestCommand(execution.arguments?.command ?? '')
++      ? await boundedTest(execution, next, state, sessionId)
++      : await next()
 +    if (result.isError) return result
 +
 +    if (classification.kind === 'mutation') {

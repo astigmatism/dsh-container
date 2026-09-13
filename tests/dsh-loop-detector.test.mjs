@@ -140,12 +140,13 @@ function contractHarness(apply, config = {}) {
     async tool(name, args, result = { isError: false, value: {}, content: [] }) {
       const controller = new AbortController();
       let dispatched = false;
+      const execution = { name, arguments: args, agent, signal: controller.signal };
       const output = await onTool(
-        { name, arguments: args, agent, signal: controller.signal },
+        execution,
         async () => {
           dispatched = true;
           executions.push({ name });
-          return result;
+          return typeof result === "function" ? result(execution, controller) : result;
         },
       );
       return { result: output, dispatched };
@@ -591,4 +592,58 @@ test("production profile exposes the centrally configured semantic thresholds an
   }
   assert.doesNotMatch(profile, /continuationHard:/);
   assert.doesNotMatch(profile, /readOnly(?:Directive|Hard):/);
+});
+
+test('background tests are rejected before dispatch; background servers remain available', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Fix the test');
+  for (const command of ['pytest tests/test_sse.py', '.venv/bin/python -m pytest tests/test_sse.py', '.venv/bin/pytest tests/test_sse.py']) {
+    const result = await h.tool('bash', { command, run_in_background: true });
+    assert.equal(result.dispatched, false);
+    assert.equal(result.result.error.info.code, 'UNBOUNDED_TEST_REJECTED');
+  }
+  assert.equal((await h.tool('bash', { command: 'npm run dev', run_in_background: true })).dispatched, true);
+});
+
+test('hung tests abort cooperatively and repeated target timeouts pause the turn', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply, { testTimeoutMs: 15 });
+  h.begin('Fix the test');
+  const hung = ({ signal }) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ isError: true, error: { message: 'aborted' }, content: [] }), { once: true }));
+  const first = await h.tool('bash', { command: 'python -m pytest tests/test_sse.py -v' }, hung);
+  assert.equal(first.result.error.info.code, 'TEST_TIMEOUT');
+  h.compact();
+  const second = await h.tool('bash', { command: 'timeout 300 python -m pytest tests/test_sse.py -q' }, hung);
+  assert.equal(second.result.error.info.code, 'REPEATED_TEST_TIMEOUT');
+  assert.match(h.cancels[0].reason, /guard=repeated_test_timeout/);
+});
+
+test('different test targets and source edits permit further diagnostics', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Fix tests');
+  const timeout = { isError: false, value: { timedOut: true }, content: [] };
+  for (const file of ['first', 'second']) {
+    assert.equal((await h.tool('bash', { command: `pytest tests/test_${file}.py` }, timeout)).result.error.info.code, 'TEST_TIMEOUT');
+  }
+  await h.tool('edit', { file_path: 'tests/test_first.py', old_string: 'old', new_string: 'new' });
+  assert.equal((await h.tool('bash', { command: 'pytest tests/test_first.py' }, timeout)).result.error.info.code, 'TEST_TIMEOUT');
+  assert.equal(h.cancels.length, 0);
+});
+
+test('caller Stop is preserved and does not count as a test timeout', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply, { testTimeoutMs: 1000 });
+  h.begin('Fix tests');
+  const stopped = { isError: true, error: { message: 'user stop' }, content: [] };
+  for (let i = 0; i < 2; i++) {
+    const result = await h.tool('bash', { command: 'pytest tests/test_sse.py' }, (exec, caller) => {
+      caller.abort('user');
+      assert.equal(exec.signal.aborted, true);
+      return stopped;
+    });
+    assert.deepEqual(result.result, stopped);
+  }
+  assert.equal(h.cancels.length, 0);
 });

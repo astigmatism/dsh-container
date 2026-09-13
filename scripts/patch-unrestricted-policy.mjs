@@ -16,8 +16,8 @@ export function patchAdapter(input) {
   s = replace(s, 'function profileOptions(profile, reasoning, apiKey)', 'function profileOptions(profile, reasoning, apiKey, model)');
   s = replace(s, 'const enabledReasoning = reasoning === "off" ? void 0 : reasoning;', 'const enabledReasoning = reasoning === "off" && model.maxTokens !== null ? void 0 : reasoning;');
   s = replace(s, '...profileOptions(profile, reasoning, apiKey)', '...profileOptions(profile, reasoning, apiKey, model)');
-  s = replace(s, 'idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT")',
-    '(model.maxTokens === null ? { signal: upstream, next: iterator => iterator.next(), [Symbol.dispose]() {} } : idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"))');
+  // Unrestricted output is independent of transport health. Keep the upstream
+  // idle watchdog, which resets on stream progress and propagates caller aborts.
   return s;
 }
 export function patchSimpleOptions(input) {

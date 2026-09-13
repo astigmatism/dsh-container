@@ -17,9 +17,9 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-- DeepSeek Harness `0.1.5-alpha.1`, the official package built from GitHub tag
-  `dsh-v0.1.5-alpha.1` at commit
-  `5dda764ed3aa172535a7967b06ff95d9cbfe536a`; pnpm `11.7.0`; Docker CLI
+- DeepSeek Harness `0.1.5-rc.2`, the official package built from GitHub tag
+  `dsh-v0.1.5-rc.2` at commit
+  `fb2c4b9e698e30edb738bca4cf0618587db7d203`; pnpm `11.7.0`; Docker CLI
   `29.6.0`. The release and commit are immutable build inputs rather than a
   moving `master` reference.
 - Node 22 base pinned to the digest used by the source image.
@@ -50,7 +50,7 @@ The locked web profile contains these nine plugins:
    compatibility patch, installed but disabled by default because its
    inode/device-sensitive refold path and per-frame synchronous Zstandard
    decompression have caused repeatable multi-gigabyte Harness RSS growth
-2. `dsh-context` 0.47.0
+2. `dsh-context` 0.52.0
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
 5. `dsh-playwright` 0.1.0 with its existing panel-layout patch and a narrowly
@@ -59,9 +59,10 @@ The locked web profile contains these nine plugins:
    Browser Use panel and model-facing Playwright tools
 6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
-7. `dsh-session-pin` 0.7.7
-8. `dsh-ui-appearance` 0.1.8
-9. `dsh-favicon-status` 0.1.0-rc.5
+7. `dsh-session-pin` 0.7.11
+8. `dsh-ui-appearance` 0.1.10
+9. `dsh-favicon-status` 0.1.0-rc.6 with its manifest UTF-8 BOM removed at
+   image build time so the upstream profile loader can parse it
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
@@ -297,14 +298,38 @@ detector remains enabled as an independent secondary defense. None of these
 policies changes the selected model, reasoning effort, context window, sampling,
 or concurrency.
 
+Recognized shell test commands (`pytest`, `python -m pytest`, npm/pnpm/yarn/bun
+`test`, `node --test`, and the common Go/Rust/Java/.NET test runners) must run
+in the foreground. Background test requests receive an actionable error before
+spawning a job. Foreground tests inherit user cancellation and a configurable
+120-second deadline; their process tree must reach quiescence before the
+result returns. Two timeouts for the same test target without a source mutation
+or completed test pause the turn with `repeated_test_timeout`. A normal failed
+assertion is useful evidence, not a timeout. The guard survives transcript
+compaction and resets on a new human turn. Build commands and development
+servers keep their existing execution policy. Indirect shell scripts and
+arbitrary custom runners cannot always be recognized; explicitly bound those
+commands when diagnosing a hang.
+
+The running status now shows the current step number, time in that step, and
+total turn duration. A long turn with advancing steps is distinguishable from
+one long step; the clock does not claim that the model is making useful
+progress. Reloading the page retains the durable turn/step time anchors.
+
 Both providers declare `maxConcurrency: 1`. The adapter keeps provider gates
 independent, and both resident models may run simultaneously. The router queues
 same-backend contention without disturbing an active generation.
 
 Busy/rate-limit, server, transport, and empty-response failures retain at most
 two bounded Harness retries; the underlying SDK retry loop is disabled.
-Timeout and context-overflow failures are not in that retry set. Unrestricted local generation has no total client deadline; its stream-idle
-setting defers to router backend-progress detection. Both routes set `cacheRetention: none` so pi-ai omits an unnecessary OpenAI
+Timeout and context-overflow failures are not in that retry set. Unrestricted
+local generation has no total client deadline or implicit output quota. The
+Harness now honors `streamIdleTimeoutMs` even for unrestricted models (ten
+minutes in the seeded settings), independently of the router's backend-progress
+watchdog. Inactivity expiry and user Stop close the HTTP request and response
+body, release the provider slot, and preserve the durable task history. A
+stream that continues producing model events resets the inactivity timer.
+Both routes set `cacheRetention: none` so pi-ai omits an unnecessary OpenAI
 `prompt_cache_key` field; the production backend still performs its own
 volatile slot-prefix caching. Reasoning summaries and opaque signatures are
 stored separately in replay state and reconstructed before tool calls on
@@ -357,7 +382,7 @@ session cookie after the stored gateway credentials are accepted. HTTP Basic
 Auth remains available for non-browser clients. Sessions last up to 12 hours
 and are invalidated when the gateway restarts.
 
-Harness `0.1.5-alpha.1` also authenticates its own browser and RPC carrier.
+Harness `0.1.5-rc.2` also authenticates its own browser and RPC carrier.
 The container entrypoint generates a fresh 32-byte launch token on every
 start, stores it as `data/backend-auth/launch-token` with mode `0600`, and supplies
 the same value to Harness. The gateway sees that file through a read-only
@@ -578,8 +603,8 @@ before fetch. After fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
 before it can change services. During this handoff, exact legacy
-`0.1.1-rc.2` package/image pins are atomically migrated to the qualified
-`0.1.5-alpha.1` tag and its recorded upstream commit; deliberately customized
+`0.1.1-rc.2` and `0.1.5-alpha.1` package/image pins are atomically migrated to the qualified
+`0.1.5-rc.2` tag and its recorded upstream commit; deliberately customized
 pins are left unchanged, and dry-run reports the migration without editing
 `.env`. The fetched updater also records `DSH_TOKEN_ENABLED=false` when an
 older `.env` has no token-plugin policy, while preserving an existing exact

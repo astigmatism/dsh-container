@@ -113,7 +113,8 @@ export function patchDeliverablesSource(input) {
   if (
     input.includes('function ProducedFiles({ matched: paths, openFile, t })') &&
     input.includes('openFile(path);') &&
-    input.includes('producedFileMentions(paths, owner.openFile')
+    (input.includes('producedFileMentions(paths, owner.openFile') ||
+      (input.includes('if (file === void 0) owner.openFile(path);') && input.includes('else opener.open(sessionId, file.seq, file.index);')))
   ) {
     return `${input}\n// ${PATCH_MARKER}: verified produced-file actions use the chat resource opener.\n`;
   }

@@ -76,6 +76,8 @@
     - id: loop-detector
       name: 'dsh-loop-detector'
       config:
+        testTimeoutMs: 120000
+        repeatedTestTimeouts: 2
         minLen: 512
         maxRetries: 1
         checkReasoning: true

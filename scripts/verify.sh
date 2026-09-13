@@ -85,9 +85,9 @@ while :; do
 done
 
 expected_dsh_version=$(get_env DSH_VERSION)
-[ -n "$expected_dsh_version" ] || expected_dsh_version=0.1.5-alpha.1
+[ -n "$expected_dsh_version" ] || expected_dsh_version=0.1.5-rc.2
 expected_upstream_commit=$(get_env DSH_UPSTREAM_COMMIT)
-[ -n "$expected_upstream_commit" ] || expected_upstream_commit=5dda764ed3aa172535a7967b06ff95d9cbfe536a
+[ -n "$expected_upstream_commit" ] || expected_upstream_commit=fb2c4b9e698e30edb738bca4cf0618587db7d203
 deployed_dsh_version=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' deepseek-harness 2>/dev/null || true)
 deployed_upstream_commit=$(docker inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' deepseek-harness 2>/dev/null || true)
 if [ "$deployed_dsh_version" != "$expected_dsh_version" ] \
@@ -113,14 +113,14 @@ if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
 fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-context@0.47.0' \
-  'dsh-favicon-status@0.1.0-rc.5' \
+  'dsh-context@0.52.0' \
+  'dsh-favicon-status@0.1.0-rc.6' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
   'dsh-playwright@0.1.0' \
-  'dsh-session-pin@0.7.7' \
-  'dsh-ui-appearance@0.1.8'
+  'dsh-session-pin@0.7.11' \
+  'dsh-ui-appearance@0.1.10'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
     echo "Missing captured plugin: $expected" >&2
@@ -280,6 +280,7 @@ if ! compose exec -T harness node --input-type=module -e '
   Function(source);
   for (const marker of [
     "dsh-cancellation-presentation-v1",
+    "dsh-step-progress-status-v1",
     "event.data.reason.kind === \"error\" || event.data.reason.kind === \"aborted\"",
     "failure.cancellation === void 0 ? {} : { cancellation: failure.cancellation }",
     "Stopped by user",
@@ -298,7 +299,8 @@ if ! compose exec -T harness node --input-type=module -e '
   for (const marker of [
     "dsh-native-file-opening-v1",
     "function ProducedFiles({ matched: paths, openFile, t })",
-    "producedFileMentions(paths, owner.openFile",
+    "if (file === void 0) owner.openFile(path);",
+    "else opener.open(sessionId, file.seq, file.index);",
   ]) {
     if (!deliverables.includes(marker)) throw new Error(`deployed deliverables browser module is missing ${marker}`);
   }
@@ -419,4 +421,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.1.5-alpha.1, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.1.5-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

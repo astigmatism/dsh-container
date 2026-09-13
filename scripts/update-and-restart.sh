@@ -25,11 +25,14 @@ token_policy_temporary=
 unset DSH_UPDATE_RESUME
 export GIT_TERMINAL_PROMPT=0
 
+previous_dsh_version=0.1.5-alpha.1
+previous_upstream_commit=5dda764ed3aa172535a7967b06ff95d9cbfe536a
+previous_harness_image=local/deepseek-harness:0.1.5-alpha.1-portable
 legacy_dsh_version=0.1.1-rc.2
 legacy_harness_image=local/deepseek-harness:0.1.1-rc.2-portable
-current_dsh_version=0.1.5-alpha.1
-current_upstream_commit=5dda764ed3aa172535a7967b06ff95d9cbfe536a
-current_harness_image=local/deepseek-harness:0.1.5-alpha.1-portable
+current_dsh_version=0.1.5-rc.2
+current_upstream_commit=fb2c4b9e698e30edb738bca4cf0618587db7d203
+current_harness_image=local/deepseek-harness:0.1.5-rc.2-portable
 
 case "$resume" in
   0|1) ;;
@@ -238,20 +241,23 @@ migrate_upstream_pins() {
   configured_commit=$(get_env DSH_UPSTREAM_COMMIT)
   configured_image=$(get_env HARNESS_IMAGE)
   case "$configured_version" in
-    ""|"$legacy_dsh_version"|"$current_dsh_version") ;;
+    ""|"$legacy_dsh_version"|"$previous_dsh_version"|"$current_dsh_version") ;;
     *) echo "Preserving custom DSH_VERSION/HARNESS_IMAGE pins; automatic upstream migration was not applied." >&2; return 0 ;;
   esac
   case "$configured_commit" in
-    ""|"$current_upstream_commit") ;;
+    ""|"$previous_upstream_commit"|"$current_upstream_commit") ;;
     *) echo "Preserving custom DSH_VERSION/HARNESS_IMAGE pins; automatic upstream migration was not applied." >&2; return 0 ;;
   esac
   case "$configured_image" in
-    ""|"$legacy_harness_image"|"$current_harness_image") ;;
+    ""|"$legacy_harness_image"|"$previous_harness_image"|"$current_harness_image") ;;
     *) echo "Preserving custom DSH_VERSION/HARNESS_IMAGE pins; automatic upstream migration was not applied." >&2; return 0 ;;
   esac
 
   if [ "$configured_version" != "$legacy_dsh_version" ] \
-    && [ "$configured_image" != "$legacy_harness_image" ]; then
+    && [ "$configured_image" != "$legacy_harness_image" ] \
+    && [ "$configured_version" != "$previous_dsh_version" ] \
+    && [ "$configured_commit" != "$previous_upstream_commit" ] \
+    && [ "$configured_image" != "$previous_harness_image" ]; then
     return 0
   fi
   if [ "$dry_run" -eq 1 ]; then
@@ -261,22 +267,24 @@ migrate_upstream_pins() {
 
   pin_temporary=$(mktemp "$project_dir/.env.upstream-migration.XXXXXX")
   awk \
+    -v previous_version="$previous_dsh_version" \
+    -v previous_image="$previous_harness_image" \
     -v legacy_version="$legacy_dsh_version" \
     -v current_version="$current_dsh_version" \
     -v legacy_image="$legacy_harness_image" \
     -v current_image="$current_harness_image" \
     -v current_commit="$current_upstream_commit" '
       BEGIN { saw_commit = 0; migrated_version = 0 }
-      $0 == "DSH_VERSION=" legacy_version {
+      $0 == "DSH_VERSION=" legacy_version || $0 == "DSH_VERSION=" previous_version {
         print "DSH_VERSION=" current_version
         migrated_version = 1
         next
       }
-      $0 == "HARNESS_IMAGE=" legacy_image {
+      $0 == "HARNESS_IMAGE=" legacy_image || $0 == "HARNESS_IMAGE=" previous_image {
         print "HARNESS_IMAGE=" current_image
         next
       }
-      $0 ~ /^DSH_UPSTREAM_COMMIT=/ { saw_commit = 1 }
+      $0 ~ /^DSH_UPSTREAM_COMMIT=/ { saw_commit = 1; print "DSH_UPSTREAM_COMMIT=" current_commit; next }
       { print }
       END {
         if (migrated_version && !saw_commit) print "DSH_UPSTREAM_COMMIT=" current_commit
@@ -290,7 +298,7 @@ migrate_upstream_pins() {
 
 delegate_from_harness() {
   helper_image=${HOST_EXEC_IMAGE:-$(get_env HARNESS_IMAGE)}
-  [ -n "$helper_image" ] || helper_image=local/deepseek-harness:0.1.5-alpha.1-portable
+  [ -n "$helper_image" ] || helper_image=local/deepseek-harness:0.1.5-rc.2-portable
   docker_gid=$(stat -c '%g' /var/run/docker.sock)
   maintenance_name=deepseek-harness-maintenance-$(date -u +%Y%m%d%H%M%S)-$$
 
@@ -1026,7 +1034,7 @@ remove_obsolete_images() {
 
 if [ -n "$obsolete_image_ids" ] && [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ]; then
   cleanup_image=$(get_env HARNESS_IMAGE)
-  [ -n "$cleanup_image" ] || cleanup_image=local/deepseek-harness:0.1.5-alpha.1-portable
+  [ -n "$cleanup_image" ] || cleanup_image=local/deepseek-harness:0.1.5-rc.2-portable
   docker_gid=$(stat -c '%g' /var/run/docker.sock)
   cleanup_name=deepseek-harness-image-cleanup-$(date -u +%Y%m%d%H%M%S)-$$
   # This helper uses the newly deployed image, waits for the updater container

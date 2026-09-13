@@ -288,9 +288,9 @@ test("plugin activates without a hard settings injection and synchronizes immedi
     });
     const ops = await mutation;
     assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "models"]);
-    assert.equal(ops[0].value, "Daytime (144K)");
+    assert.equal(ops[0].value, "Daytime (160K)");
     assert.equal(ops[1].value, 2);
-    assert.equal(ops[2].value[0].name, "Daytime (144K)");
+    assert.equal(ops[2].value[0].name, "Daytime (160K)");
     assert.equal(ops[2].value[0].maxTokens, 16384);
   } finally {
     dispose?.();

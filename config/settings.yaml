@@ -15,7 +15,7 @@ ui-onboarding:
 llm-pi-ai:
   providers:
     local-ollama:
-      displayName: Daytime (144K)
+      displayName: Daytime (160K)
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
@@ -32,8 +32,8 @@ llm-pi-ai:
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
       models:
         - id: local-active
-          name: Daytime (144K)
-          contextWindow: 147456
+          name: Daytime (160K)
+          contextWindow: 163840
           maxTokens: null
           input: [text, image]
           reasoningEfforts:

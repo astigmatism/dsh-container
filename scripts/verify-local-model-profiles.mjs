@@ -19,9 +19,9 @@ const profiles = [
   {
     provider: "local-ollama",
     next: "local-everyday",
-    displayName: "Daytime (128K)",
-    modelName: "Daytime (128K)",
-    contextWindow: 131072,
+    displayName: "Daytime (144K)",
+    modelName: "Daytime (144K)",
+    contextWindow: 147456,
     maxConcurrency: 1,
   },
   {
@@ -45,4 +45,4 @@ for (const profile of profiles) {
   assert.ok(!/^      timeoutMs:/m.test(block), `${profile.provider} sets a generation deadline`);
 }
 
-console.log("Verified resident coding 128K/1 and everyday 128K/1 model choices with unrestricted output and an explicit DSH medium default.");
+console.log("Verified resident coding 144K/1 and everyday 128K/1 model choices with unrestricted output and an explicit DSH medium default.");

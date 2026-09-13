@@ -9,9 +9,9 @@ const DSH_INPUT_MODALITIES = new Set(["text", "image"]);
 const DEFAULT_PROVIDERS = ["local-ollama", "local-everyday"];
 const PROVIDER_PRESENTATION = new Map([
   ["local-ollama", {
-    displayName: "Daytime (128K)",
-    modelName: "Daytime (128K)",
-    contextWindow: 131072,
+    displayName: "Daytime (144K)",
+    modelName: "Daytime (144K)",
+    contextWindow: 147456,
     maxConcurrency: 1,
   }],
   ["local-everyday", {

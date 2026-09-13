@@ -26,7 +26,7 @@ needs the NVIDIA Container Toolkit.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
 - Two resident OpenAI Responses models at `http://ai-router:11434/v1`:
-  Daytime (128K) and Nighttime (128K), each with one independent generation slot
+  Daytime (144K) and Nighttime (128K), each with one independent generation slot
   and no inherited output ceiling.
 - Explicit DSH medium reasoning by default; the raw router default remains
   template-defined. Off, low, medium, and xhigh are supported,
@@ -203,7 +203,7 @@ is supplied explicitly.
 
 ## Persisted settings lifecycle
 
-`config/settings.yaml` seeds **Daytime (128K)** through
+`config/settings.yaml` seeds **Daytime (144K)** through
 `local-ollama/local-active` and **Nighttime (128K)** through
 `local-everyday/qwen3.8-27b-abliterated-q6_k`. Each resident model has one
 independent generation slot. The former 256K selection is retired.
@@ -247,8 +247,8 @@ browser readiness validates the selected route. It does not require the
 text-only secondary to advertise vision or tools.
 
 Automatic and manual compaction and replay-safe tool pruning remain enabled.
-The 70% working-context trigger is 91,750 tokens for both Daytime and
-Nighttime. Summaries have no injected output quota; full original events remain
+The 70% working-context trigger is 103,219 tokens for Daytime and
+91,750 tokens for Nighttime. Summaries have no injected output quota; full original events remain
 in durable session storage. Working-context summaries are lossy. The router
 counts actual formatted input and rejects infeasible explicit allowances
 without clipping them. See `scripts/patch-unrestricted-policy.mjs` and

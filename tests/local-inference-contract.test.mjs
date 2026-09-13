@@ -22,7 +22,7 @@ test("canonical selection uses only the public alias and seeds the deliberate DS
   assert.match(expanded, /- id: qwen3\.8-27b-abliterated-q6_k/);
 });
 
-test("Daytime and Nighttime selections both expose 128K request contracts", () => {
+test("Daytime 144K and Nighttime 128K selections expose independent request contracts", () => {
   for (const block of [canonical, expanded]) {
     assert.match(block, /baseURL: http:\/\/ai-router:11434\/v1/);
     assert.match(block, /maxTokens: null/);
@@ -32,9 +32,9 @@ test("Daytime and Nighttime selections both expose 128K request contracts", () =
     assert.match(block, /high: xhigh/);
     assert.match(block, /max: xhigh/);
   }
-  assert.match(canonical, /displayName: Daytime \(128K\)/);
-  assert.match(canonical, /name: Daytime \(128K\)/);
-  assert.match(canonical, /contextWindow: 131072/);
+  assert.match(canonical, /displayName: Daytime \(144K\)/);
+  assert.match(canonical, /name: Daytime \(144K\)/);
+  assert.match(canonical, /contextWindow: 147456/);
   assert.match(canonical, /maxConcurrency: 1/);
   assert.match(expanded, /displayName: Nighttime \(128K\)/);
   assert.match(expanded, /name: Nighttime \(128K\)/);

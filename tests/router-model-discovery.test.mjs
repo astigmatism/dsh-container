@@ -217,6 +217,8 @@ test("profile provisioning avoids materializing resolved schema defaults", () =>
 test("resident profiles take labels and capacities from discovery while retaining deliberate effort", () => {
   for (const [provider, model, context, label] of [
     ["local-ollama", "local-active", 131072, "Daytime (128K)"],
+    ["local-ollama", "local-active", 147456, "Daytime (144K)"],
+    ["local-ollama", "local-active", 163840, "Daytime (160K)"],
     ["local-everyday", "qwen3.8-27b-abliterated-q6_k", 131072, "Nighttime (128K)"],
   ]) {
     const settings = {providers: {[provider]: {displayName: "old", maxConcurrency: 2, reasoning: "off", models: [{id:model,name:"old",contextWindow:262144,maxTokens:32768}]}}};
@@ -286,9 +288,9 @@ test("plugin activates without a hard settings injection and synchronizes immedi
     });
     const ops = await mutation;
     assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "models"]);
-    assert.equal(ops[0].value, "Daytime (128K)");
+    assert.equal(ops[0].value, "Daytime (144K)");
     assert.equal(ops[1].value, 2);
-    assert.equal(ops[2].value[0].name, "Daytime (128K)");
+    assert.equal(ops[2].value[0].name, "Daytime (144K)");
     assert.equal(ops[2].value[0].maxTokens, 16384);
   } finally {
     dispose?.();

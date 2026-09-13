@@ -7,7 +7,7 @@ router's repaired explicit alias row. The configured local provider contracts
 must match complete schema-v2 metadata; ambiguous aliases, warnings, unavailable
 backends and inconsistent output policies still fail verification.
 
-Current resident defaults are Daytime (`local-ollama/local-active`, 131072
+Current resident defaults are Daytime (`local-ollama/local-active`, 147456
 context, one active request) and Nighttime
 (`local-everyday/qwen3.8-27b-abliterated-q6_k`, 131072 context, one active request).
 The primary supports image/tool work; the secondary supports text and reasoning.

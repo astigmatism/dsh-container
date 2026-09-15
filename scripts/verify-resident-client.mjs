@@ -62,8 +62,19 @@ try {
   await rpc('rename', { sessionId, title });
   await page.goto(base, { waitUntil: 'networkidle' });
   const group = page.getByRole('treeitem').filter({ has: page.getByText(created.workspace.title, { exact: true }) }).first();
-  if (await group.getAttribute('aria-expanded') !== 'true') await group.click();
-  await page.getByText(title, { exact: true }).click();
+  const sessionRow = page.getByText(title, { exact: true });
+  // Workspace restoration can expand the most recent group while the browser
+  // connects. Re-read its state instead of racing that restoration with one
+  // blind toggle, and click the label rather than the row's action buttons.
+  const navigationDeadline = Date.now() + 30000;
+  while (!(await sessionRow.isVisible())) {
+    assert.ok(Date.now() < navigationDeadline, `verification session is visible in its workspace (expanded=${await group.getAttribute('aria-expanded')})`);
+    if (await group.getAttribute('aria-expanded') === 'false') {
+      await group.getByText(created.workspace.title, { exact: true }).click();
+    }
+    await delay(100);
+  }
+  await sessionRow.click();
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
   await trigger.click();

@@ -16,9 +16,13 @@ export async function loadRouterContract() {
 }
 
 export async function verifyConfiguredRoutes(settings, { browser = false, primaryBrowser = false } = {}) {
-  const { resolveRouterEntry, routerMetadataOf, fetchRouterCatalog, requireRouterCapabilities, dshReasoningEfforts } = await loadRouterContract();
+  const { resolveRouterEntry, routerMetadataOf, fetchRouterCatalog, requireRouterCapabilities, dshReasoningEfforts, RESIDENT_MODELS } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
   assert.ok(providers?.['local-ollama'], 'missing local-ollama provider');
+  assert.deepEqual(Object.keys(providers).sort(), Object.keys(RESIDENT_MODELS).sort(), 'Only Daytime and Nighttime providers may be selectable');
+  for (const [name, model] of Object.entries(RESIDENT_MODELS)) {
+    assert.deepEqual(providers[name].models?.map(row => row.id), [model], `${name} must expose exactly its resident model`);
+  }
   const selected = settings['agent-default-model'];
   const names = browser ? [selected?.provider ?? 'local-ollama'] : ['local-ollama', ...('local-everyday' in providers ? ['local-everyday'] : [])];
   const catalogs = new Map();
@@ -34,6 +38,10 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
       requireRouterCapabilities(metadata, { browser: browser || (primaryBrowser && name === "local-ollama"), effort: (browser ? selected?.reasoningEffort : undefined) ?? provider.reasoning });
       const label = `${name}/${model.id}`;
       assert.equal(model.contextWindow, metadata.context_window, `${label} context is not synchronized`);
+      if (metadata.display_name) {
+        assert.equal(model.name, metadata.display_name, `${label} display name is not synchronized`);
+        assert.equal(provider.displayName, metadata.display_name, `${label} provider name is not synchronized`);
+      }
       assert.equal(model.maxTokens, metadata.max_output_tokens, `${label} output policy is not synchronized`);
       assert.equal(provider.maxConcurrency, metadata.active_request_limit, `${label} concurrency is not synchronized`);
       assert.deepEqual([...model.input].sort(), [...metadata.input_modalities].sort(), `${label} modalities are not synchronized`);

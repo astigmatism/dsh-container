@@ -245,6 +245,11 @@ while ! profile_output=$(compose exec -T harness node /opt/dsh-build/verify-rout
 done
 printf '%s\n' "$profile_output"
 
+if ! compose exec -T harness node /opt/dsh-build/verify-resident-client.mjs --live; then
+  echo "The resident model picker or application inference failed verification." >&2
+  exit "$application_health_exit"
+fi
+
 # Exercise the installed compaction policy and shared context classifier with
 # bounded in-memory fixtures, then resolve the live Web composition from its
 # bundle layers and require the route-specific automatic policy to be active.

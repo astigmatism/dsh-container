@@ -97,7 +97,6 @@ test('normal startup migration and the exact remote-direct verifier accept canon
   const primary = entry(PRIMARY), secondary = entry(SECONDARY);
   const f = await fixture(t, [primary, secondary]);
   const state = legacySettings(f.baseURL);
-  const unrelated = structuredClone(state['llm-pi-ai'].providers.custom);
   const mutations = [];
   await synchronizeRouterSettings(service(state, mutations));
   const providers = state['llm-pi-ai'].providers;
@@ -108,7 +107,7 @@ test('normal startup migration and the exact remote-direct verifier accept canon
   assert.equal(providers['local-everyday'].reasoning, 'medium');
   assert.equal(providers['local-ollama'].models[0].custom, 'retain');
   assert.equal(providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
-  assert.deepEqual(providers.custom, unrelated);
+  assert.deepEqual(Object.keys(providers).sort(), ['local-everyday', 'local-ollama']);
   assert.deepEqual(state['custom-setting'], { preserved: true });
   assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off', custom: 'retain' });
   assert.equal(providers['local-ollama-256k'], undefined);
@@ -127,16 +126,18 @@ test('normal startup migration and the exact remote-direct verifier accept canon
 
 test('legacy bounded alias and actual IDs remain valid while explicit effort choices survive migration', async t => {
   const primary = entry(PRIMARY, { unrestricted: false });
-  const f = await fixture(t, [alias(primary)]);
+  const f = await fixture(t, [alias(primary), entry(SECONDARY, { unrestricted: false })]);
   const state = legacySettings(f.baseURL);
   state['llm-pi-ai'].providers['local-ollama'].reasoning = 'low';
   await synchronizeRouterSettings(service(state));
   assert.equal(state['llm-pi-ai'].providers['local-ollama'].reasoning, 'low');
   assert.equal(state['llm-pi-ai'].providers['local-ollama'].models[0].maxTokens, 8192);
-  assert.equal(state['llm-pi-ai'].providers['local-everyday'], undefined);
+  assert.equal(state['llm-pi-ai'].providers['local-everyday'].models[0].id, SECONDARY);
   assert.match((await f.remote(state)).stdout, /Verified/);
-  f.state.data = [primary];
+  f.state.data = [primary, entry(SECONDARY, { unrestricted: false })];
   state['llm-pi-ai'].providers['local-ollama'].models[0].id = PRIMARY;
+  await assert.rejects(f.remote(state), error => error.code === 22);
+  await synchronizeRouterSettings(service(state));
   assert.match((await f.remote(state)).stdout, /Verified/);
 });
 
@@ -199,4 +200,52 @@ test('remote-direct readiness retains the primary vision/tools requirement witho
   await synchronizeRouterSettings(service(state));
   await verifyConfiguredRoutes(state);
   await assert.rejects(f.remote(state), error => error.code === 22 && /missing vision capability/.test(error.stderr));
+});
+
+test('Swift, raw aliases and extra providers converge to two choices with truthful contexts', async t => {
+  const primary = entry(PRIMARY), night = entry(SECONDARY);
+  primary.x_ollama_router.context_window = 163840;
+  primary.x_ollama_router.display_name = 'Daytime (160K)';
+  night.x_ollama_router.display_name = 'Nighttime (128K)';
+  const f = await fixture(t, [primary, night]);
+  const state = legacySettings(f.baseURL);
+  const day = state['llm-pi-ai'].providers['local-ollama'];
+  day.models = [{ id: 'daytime-swift', name: 'Daytime-Swift (128K)' }, { id: PRIMARY }, { id: 'local-active', custom: 'retain' }];
+  state['agent-default-model'] = { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max', custom: 'retain' };
+  state['credentials-fixture'] = { untouched: 'synthetic credential' };
+  await synchronizeRouterSettings(service(state));
+  await verifyConfiguredRoutes(state);
+  assert.deepEqual(Object.keys(state['llm-pi-ai'].providers).sort(), ['local-everyday', 'local-ollama']);
+  const model = state['llm-pi-ai'].providers['local-ollama'].models[0];
+  assert.equal(model.id, 'local-active');
+  assert.equal(model.name, 'Daytime (160K)');
+  assert.equal(model.contextWindow, 163840);
+  assert.equal(model.maxTokens, null);
+  assert.equal(model.reasoningEfforts.max, 'xhigh');
+  assert.equal(model.custom, 'retain');
+  assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'max', custom: 'retain' });
+  assert.deepEqual(state['credentials-fixture'], { untouched: 'synthetic credential' });
+});
+
+test('missing Nighttime leaves all persisted state unchanged', async t => {
+  const f = await fixture(t, [entry(PRIMARY)]);
+  const state = legacySettings(f.baseURL), before = structuredClone(state), mutations = [];
+  await assert.rejects(synchronizeRouterSettings(service(state, mutations)), /not advertised/);
+  assert.deepEqual(state, before);
+  assert.equal(mutations.length, 0);
+});
+
+test('web composition explicitly disables the built-in DeepSeek catalog', async () => {
+  const patch = await readFile(path.join(root, 'seed/profile/cordis.patch.yml'), 'utf8');
+  assert.match(patch, /- id: llm-deepseek\n\s+disabled: true/);
+});
+
+test('resolved defaults initialize providers when no user provider map is stored', async t => {
+  const f = await fixture(t, [entry(PRIMARY), entry(SECONDARY)]);
+  const state = legacySettings(f.baseURL);
+  const settings = service(state);
+  settings.describe = () => [{ ns: 'llm-pi-ai', user: {} }];
+  await synchronizeRouterSettings(settings);
+  await verifyConfiguredRoutes(state);
+  assert.equal(state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
 });

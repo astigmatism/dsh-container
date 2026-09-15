@@ -127,6 +127,10 @@ const { chromium } = require(`${process.env.DSH_PROFILE_ROOT}/node_modules/playw
   process.exit(1);
 });
 NODE
+  if [ "${DSH_VERIFY_RESIDENT_CATALOG:-false}" = true ]; then
+    DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+      node /opt/dsh-build/verify-resident-client.mjs || return 1
+  fi
   token=
 }
 

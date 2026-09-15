@@ -17,6 +17,11 @@
 - id: web-search-deepseek
   disabled: true
 
+# This deployment serves only the two local resident models. Disabling the
+# adapter prevents upstream's default DeepSeek catalog from entering the picker.
+- id: llm-deepseek
+  disabled: true
+
 - id: web
   config:
     searchProvider: duckduckgo

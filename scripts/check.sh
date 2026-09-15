@@ -101,6 +101,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/initialize-sidebar-settings.mjs
     node --check scripts/verify-sidebar-terminal.mjs
     node --check scripts/verify-sidebar-client.mjs
+    node --check scripts/verify-resident-client.mjs
     node --check scripts/migrate-resident-models.mjs
     node --check scripts/verify-router-contract.mjs
     node --check scripts/verify-router-startup.mjs
@@ -221,6 +222,13 @@ if [ "$build" -eq 1 ]; then
 
   docker run --rm --network none --env DSH_HOME=/opt/dsh-seed \
     --entrypoint /bin/sh "$harness_image" -eu -c '
+    dsh --profile web --dump-config | node --input-type=module -e '\''
+      import assert from "node:assert/strict";
+      import { loaderRow } from "/opt/dsh-build/verify-dsh-token-policy.mjs";
+      let source = ""; for await (const chunk of process.stdin) source += chunk;
+      assert.match(loaderRow(source, "llm-deepseek"), /^\s*disabled: true\s*$/m);
+      console.log("Built-in DeepSeek provider is disabled in the effective web profile.");
+    '\''
     dsh --profile web --dump-config \
       | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled
     DSH_TOKEN_ENABLED=true dsh --profile web --dump-config \
@@ -246,7 +254,9 @@ if [ "$build" -eq 1 ]; then
   # from the image seed in a throwaway DSH_HOME and require a stable HTTP
   # 200. The inventory grep above would pass a profile whose patched
   # dsh-playwright snapshot dropped its dependencies.
-  docker run --rm --entrypoint /bin/sh "$harness_image" -eu -c '
+  # Session UI needs Chromium to see an attached network interface; its host
+  # connection pauses when navigator.onLine is false in network-less builds.
+  docker run --rm --env DSH_VERIFY_RESIDENT_CATALOG=true --entrypoint /bin/sh "$harness_image" -eu -c '
     /usr/local/bin/dsh-verify-plugin-boot
   '
 

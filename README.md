@@ -28,6 +28,10 @@ needs the NVIDIA Container Toolkit.
 - Two resident OpenAI Responses models at `http://ai-router:11434/v1`:
   Daytime (160K) and Nighttime (128K), each with one independent generation slot
   and no inherited output ceiling.
+- The model picker exposes exactly those two resident choices. The built-in
+  DeepSeek adapter is disabled in the web profile. Startup and discovery refresh
+  remove obsolete provider/model choices after validating both residents, while
+  preserving credential storage, conversation history, and valid reasoning choices.
 - Explicit DSH medium reasoning by default; the raw router default remains
   template-defined. Off, low, medium, and xhigh are supported,
   while the existing minimal, high, and max selectors map to low, xhigh, and
@@ -267,18 +271,19 @@ independent generation slot. The former 256K selection is retired.
 
 The discovery plugin reads each model's router metadata, including
 `x_ollama_router.display_name`, context, concurrency, modalities and effort
-mappings. Daytime supports text, images, tools and reasoning; Nighttime supports
-text and reasoning. Stable API IDs remain separate from display names.
-Discovery provisions Nighttime and removes the obsolete 256K provider, moving
-a retired default back to Daytime. Existing deliberate effort choices remain.
+mappings. Both resident models advertise their actual input and tool capabilities.
+Stable API IDs remain separate from display names. Discovery converges the
+picker to Daytime and Nighttime, moving removed defaults back to Daytime while
+preserving supported reasoning choices.
 
 A normal image update atomically reconciles the known providers in the
 entrypoint before Harness launches; the refreshed plugin then maintains them
 through DSH's settings service. It validates the target metadata
 and inherited effort before provisioning Nighttime, applies each model's actual
-capacity and modalities, and removes only the recognized legacy 256K route.
-A default selecting that retired route moves to the primary while preserving
-its explicit effort. Unrelated providers, model properties and settings remain.
+capacity and modalities, and removes all other selectable provider/model rows.
+Model properties, credential storage, conversation history and unrelated
+non-model settings remain. The built-in DeepSeek adapter is disabled by the
+versioned profile, so updates cannot repopulate its default model menu.
 Discovery failure leaves the file unchanged and the application available;
 provider verification still fails until the contract is synchronized. No manual
 production settings migration is required. The optional

@@ -7,6 +7,10 @@ export const name = "router-model-discovery";
 const DSH_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const DSH_INPUT_MODALITIES = new Set(["text", "image"]);
 const DEFAULT_PROVIDERS = ["local-ollama", "local-everyday"];
+export const RESIDENT_MODELS = {
+  "local-ollama": "local-active",
+  "local-everyday": "qwen3.8-27b-abliterated-q6_k",
+};
 const PROVIDER_PRESENTATION = new Map([
   ["local-ollama", {
     displayName: "Daytime (160K)",
@@ -299,6 +303,9 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
 
 /** The same synchronization is used by startup and the optional offline migration. */
 export async function synchronizeRouterSettings(settingsService, providers = DEFAULT_PROVIDERS) {
+  if (providers.length === DEFAULT_PROVIDERS.length && DEFAULT_PROVIDERS.every(name => providers.includes(name))) {
+    return synchronizeResidentSettings(settingsService);
+  }
   const initial = settingsService.get("llm-pi-ai");
   if (!plainObject(initial)) throw new Error('DSH settings namespace "llm-pi-ai" is not registered yet');
   const catalogs = new Map();
@@ -352,6 +359,54 @@ export async function synchronizeRouterSettings(settingsService, providers = DEF
       ]);
     }
     if (ownedRetired) await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", "local-ollama-256k"] }]);
+  }
+}
+
+/** Validate both residents before atomically replacing the selectable catalog.
+ * Credential storage and all settings outside model/provider selection remain
+ * untouched. Stable local-active IDs keep existing Daytime sessions routable.
+ */
+async function synchronizeResidentSettings(settingsService) {
+  const initial = settingsService.get("llm-pi-ai");
+  if (!plainObject(initial?.providers?.["local-ollama"])) throw new Error("Missing local-ollama provider");
+  const stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user ?? initial;
+  const next = {};
+  const metadataByProvider = {};
+  const catalogs = new Map();
+  for (const [name, modelId] of Object.entries(RESIDENT_MODELS)) {
+    const resolved = initial.providers[name] ?? initial.providers["local-ollama"];
+    const source = stored.providers?.[name] ?? stored.providers?.["local-ollama"] ?? resolved;
+    const baseURL = resolved.baseURL;
+    if (!nonEmptyString(baseURL)) throw new Error(`provider ${name} has no baseURL`);
+    if (!catalogs.has(baseURL)) catalogs.set(baseURL, await fetchRouterCatalog(baseURL));
+    const metadata = routerMetadataOf(resolveRouterEntry(catalogs.get(baseURL), modelId));
+    requireRouterCapabilities(metadata, { effort: resolved.reasoning });
+    metadataByProvider[name] = metadata;
+    const previousModel = source.models?.find(model => model.id === modelId) ?? source.models?.[0] ?? {};
+    const proposed = { providers: { [name]: {
+      ...source, api: "openai-responses", baseURL,
+      models: [{ ...previousModel, id: modelId }],
+    } } };
+    for (const operation of capabilityOps(proposed, name, modelId, metadata)) applyOperation(proposed, operation);
+    next[name] = proposed.providers[name];
+  }
+  const selected = settingsService.get("agent-default-model");
+  let nextSelection;
+  if (plainObject(selected) && RESIDENT_MODELS[selected.provider] !== selected.model) {
+    const provider = selected.provider === "local-everyday" ? "local-everyday" : "local-ollama";
+    nextSelection = { ...selected, provider, model: RESIDENT_MODELS[provider] };
+    const efforts = dshReasoningEfforts(metadataByProvider[provider].reasoning);
+    if (nextSelection.reasoningEffort !== undefined && !efforts?.[nextSelection.reasoningEffort]) {
+      nextSelection.reasoningEffort = efforts?.medium ? "medium" : "off";
+    }
+  }
+  if (!sameJson(stored.providers, next)) {
+    await settingsService.mutate("llm-pi-ai", [{ op: "set", path: ["providers"], value: next }]);
+  }
+  if (nextSelection) {
+    await settingsService.mutate("agent-default-model", Object.entries(nextSelection)
+      .filter(([key, value]) => !sameJson(selected[key], value))
+      .map(([key, value]) => ({ op: "set", path: [key], value })));
   }
 }
 

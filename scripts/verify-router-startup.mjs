@@ -70,7 +70,7 @@ try {
       assert.ok(current['llm-pi-ai'].providers['local-everyday']);
       assert.equal(current['llm-pi-ai'].providers['local-ollama-256k'], undefined);
       assert.deepEqual(current['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off' });
-      assert.deepEqual(current['llm-pi-ai'].providers['unrelated-fixture'], settings['llm-pi-ai'].providers['unrelated-fixture']);
+      assert.deepEqual(Object.keys(current['llm-pi-ai'].providers).sort(), ['local-everyday', 'local-ollama']);
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].reasoning, 'medium');
       assert.equal(current['llm-pi-ai'].providers['local-everyday'].reasoning, 'medium');

@@ -1,6 +1,19 @@
 # Your patch layer for this dsh profile, applied after every bundle layer:
 # a top-level YAML array of loader patch entries (id-targeted config
 # overrides, disables, and insert lists; `!!js` expressions allowed).
+- id: better-sidebar
+  config:
+    shell: /bin/bash
+
+- id: system-prompt
+  config:
+    personaSuffix: >-
+      When terminal_create and its related terminal tools are available, prefer
+      them for long-running commands so the user can watch live output in the
+      sidebar. Read the output and verify completion; use terminal_wait_for for
+      completion cues instead of busy-polling. Close terminals when no longer
+      needed. Ordinary shell and file tools remain appropriate for quick work.
+
 - id: web-search-deepseek
   disabled: true
 

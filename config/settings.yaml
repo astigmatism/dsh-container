@@ -6,6 +6,16 @@ agent-default-model:
 permission:
   defaultPreset: danger-full-access
 
+# Seeded once per missing field; later user choices survive image recreation.
+dsh-better-sidebar:
+  agentTerminalTools: true
+  browserInterceptLinks: false
+  tabsEnabled:
+    terminal: true
+    subagent: true
+    sidechat: false
+    browser: false
+
 # DSH saves this acknowledgement atomically at runtime. Keeping the captured
 # version in the seeded writable settings file prevents a fresh deployment
 # from being trapped behind the internal-testing notice.

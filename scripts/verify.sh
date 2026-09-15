@@ -113,6 +113,7 @@ if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
 fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
+  'dsh-better-sidebar@0.19.1' \
   'dsh-context@0.52.0' \
   'dsh-favicon-status@0.1.0-rc.6' \
   'dsh-local-speech-input@link:' \
@@ -127,6 +128,15 @@ do
     exit "$configuration_exit"
   }
 done
+
+# Exercise the installed PTY as the service UID and the mounted sidebar API.
+# The read-only client probe also works when the user has disabled agent tools.
+if ! compose exec -T -e DSH_PROFILE_ROOT=/data/dsh/profiles/web harness \
+  node /opt/dsh-build/verify-sidebar-terminal.mjs --native \
+  || ! compose exec -T harness node /opt/dsh-build/verify-sidebar-client.mjs; then
+  echo "The live-console terminal or browser integration failed verification." >&2
+  exit "$application_health_exit"
+fi
 
 # Import the patched dsh-playwright loader entry from the live runtime
 # profile. The image build's boot smoke check proves the seed at build time;

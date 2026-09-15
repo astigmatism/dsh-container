@@ -4,6 +4,11 @@ packages:
 nodeLinker: hoisted
 autoInstallPeers: false
 
+# The live console requires the platform-specific PTY binary. Do not grant
+# blanket build-script approval to the rest of the plugin dependency tree.
+allowBuilds:
+  node-pty: true
+
 patchedDependencies:
   dsh-loop-detector@1.0.0: patches/dsh-loop-detector@1.0.0.patch
   dsh-playwright@0.1.0: patches/dsh-playwright@0.1.0.patch

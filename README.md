@@ -44,7 +44,7 @@ needs the NVIDIA Container Toolkit.
   captured voice host, with separate file-based keys and locked deployment
   metadata in `config/speech.lock.json`.
 
-The locked web profile contains these nine plugins:
+The locked web profile contains these ten plugins:
 
 1. `@zoytown/dsh-token` 0.1.3 with a narrowly anchored session-format-v3
    compatibility patch, installed but disabled by default because its
@@ -63,6 +63,8 @@ The locked web profile contains these nine plugins:
 8. `dsh-ui-appearance` 0.1.10
 9. `dsh-favicon-status` 0.1.0-rc.6 with its manifest UTF-8 BOM removed at
    image build time so the upstream profile loader can parse it
+10. `dsh-better-sidebar` 0.19.1 with live agent terminals, task views, and
+    session file activity, pinned to its DSH 0.1.5-rc.2-compatible release
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
@@ -87,6 +89,60 @@ the 52-artifact fixture, samples the Harness Node RSS at startup and across
 three 35-second boundaries (longer than the plugin's 30-second refresh), and
 fails on monotonic growth, excessive RSS/growth, an OOM flag, a restart or
 recreation, or any write to the disabled plugin's durable index.
+
+## Live console
+
+Deploy this feature through the Service Portal's **Update and Restart** action
+for Harness. The existing updater pulls `origin/main`, rebuilds the images,
+and verifies the recreated containers. Startup installs the canonical plugin
+profile and fills missing console preferences while retaining conversations
+and existing settings. Refresh the Harness browser page after the update.
+
+Open a conversation and use the **bottom-panel toggle in the session header**
+to open the terminal workbench. Agent-created terminals appear automatically
+alongside the conversation. Ask, for example: "Run this build in a visible
+terminal so I can watch its output."
+
+Better Sidebar provides `terminal_create`, `terminal_list`, `terminal_send`,
+`terminal_read`, `terminal_wait_for`, `terminal_resize`, `terminal_signal`, and
+`terminal_close`. Long commands using these tools stream their actual terminal
+output to the browser as it arrives. Ordinary shell calls retain their existing
+chat-card behavior; background-task output reflects what the agent has read.
+The Changes tab's **This Session** view shows file reads and edits.
+
+The terminal runs `/bin/bash` **inside the Harness container**, in the session's
+workspace. It uses the existing authenticated gateway and WebSocket forwarding;
+no additional listener is exposed. A browser refresh reattaches to an agent's
+terminal and replays its retained transcript. Closing its tab terminates that
+terminal; terminals do not survive a Harness restart.
+
+New preferences enable agent terminal tools and task views, disable Side Chat
+and the extra Browser tab, and leave external-link handling with the existing
+application. The Playwright **Browser Use** panel is retained. Change these
+preferences under **Settings → Side card**. Startup fills only absent fields
+in the `dsh-better-sidebar` namespace and preserves explicit choices, including
+turning terminal tools off. It never replaces other settings or user instructions.
+
+The image compiles `node-pty` with explicitly approved build scripts and removes
+the compiler afterward. Its build check spawns a real PTY and verifies output
+arrives before process completion; web boot also checks client module loading.
+`scripts/verify.sh` checks the deployed terminal and sidebar API without creating
+a model task. For an explicit local end-to-end test, run:
+
+```sh
+docker exec deepseek-harness node /opt/dsh-build/verify-sidebar-client.mjs --live
+```
+
+This creates isolated verification conversations and exercises a real model
+tool call, live rendering, reconnect replay, input, interruption, session
+isolation, and terminal cleanup. Set `DSH_VERIFY_URL` plus
+`DSH_VERIFY_GATEWAY_USERNAME`/`DSH_VERIFY_GATEWAY_PASSWORD` privately to exercise
+the authenticated HTTPS gateway instead of the backend. Do not print credentials
+or include them in test reports.
+
+Rollback uses the previous image and its canonical profile through the normal
+local Compose workflow. Keep `data/dsh` intact: conversations and preferences
+are retained, and the unused sidebar preference namespace can remain in place.
 
 ## Shared browser and visual validation
 

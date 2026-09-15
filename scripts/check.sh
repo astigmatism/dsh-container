@@ -98,6 +98,9 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-unrestricted-policy.mjs
     node --check scripts/verify-unrestricted-wire.mjs
     node --check scripts/verify-dsh-session-control.mjs
+    node --check scripts/initialize-sidebar-settings.mjs
+    node --check scripts/verify-sidebar-terminal.mjs
+    node --check scripts/verify-sidebar-client.mjs
     node --check scripts/migrate-resident-models.mjs
     node --check scripts/verify-router-contract.mjs
     node --check scripts/verify-router-startup.mjs
@@ -144,11 +147,16 @@ if [ "$build" -eq 1 ]; then
     -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.5-rc.2") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
 
+  docker run --rm --network none --user 12345:12345 --entrypoint node \
+    --env DSH_TEST_HARNESS=1 --volume "$project_dir:/src:ro" "$harness_image" \
+    --test /src/tests/sidebar-settings.test.mjs
+
   # Verify the image with a UID unrelated to the base image's `node` user.
   inventory=$(docker run --rm --user 12345:12345 --entrypoint dsh \
     --env DSH_HOME=/opt/dsh-seed "$harness_image" plugin --profile web list)
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
+    'dsh-better-sidebar@0.19.1' \
     'dsh-context@0.52.0' \
     'dsh-favicon-status@0.1.0-rc.6' \
     'dsh-local-speech-input@link:' \

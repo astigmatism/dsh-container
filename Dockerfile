@@ -54,6 +54,9 @@ COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inferen
 COPY scripts/verify-local-model-profiles.mjs /opt/dsh-build/verify-local-model-profiles.mjs
 COPY scripts/verify-router-contract.mjs /opt/dsh-build/verify-router-contract.mjs
 COPY scripts/verify-router-startup.mjs /opt/dsh-build/verify-router-startup.mjs
+COPY scripts/initialize-sidebar-settings.mjs /opt/dsh-build/initialize-sidebar-settings.mjs
+COPY scripts/verify-sidebar-terminal.mjs /opt/dsh-build/verify-sidebar-terminal.mjs
+COPY scripts/verify-sidebar-client.mjs /opt/dsh-build/verify-sidebar-client.mjs
 COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
@@ -116,8 +119,13 @@ COPY seed/plugins/ /opt/dsh-seed/.dsh-plugins/
 
 # Compose runs this image with the host's numeric UID, which may not match the
 # base image's `node` user. pnpm opens its store index even for read operations.
-RUN cd /opt/dsh-seed/profiles/web \
+# node-pty has no Linux prebuild for every supported architecture. Compile it
+# here, then discard the compiler; the runtime smoke test requires a real PTY.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends make g++ \
+    && cd /opt/dsh-seed/profiles/web \
     && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store \
+    && node /opt/dsh-build/verify-sidebar-terminal.mjs --native \
     # dsh-favicon-status rc.6 ships a UTF-8 BOM that DSH's JSON loader rejects.
     && node -e 'const fs = require("node:fs"); const p = "node_modules/dsh-favicon-status/package.json"; const s = fs.readFileSync(p, "utf8").replace(/^\uFEFF/, ""); if (JSON.parse(s).version !== "0.1.0-rc.6") throw Error("favicon manifest version drift"); fs.writeFileSync(p, s)' \
     && node /opt/dsh-build/patch-dsh-token-session-format.mjs \
@@ -130,6 +138,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
+    && grep -Fq 'dsh-better-sidebar@0.19.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-context@0.52.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.6' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
@@ -142,7 +151,9 @@ RUN cd /opt/dsh-seed/profiles/web \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
-    && chmod -R a+rwX /opt/dsh-pnpm-store
+    && chmod -R a+rwX /opt/dsh-pnpm-store \
+    && apt-get purge -y --auto-remove make g++ \
+    && rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp
 
 # Boot smoke check: start the web profile in a throwaway DSH_HOME and require
 # a stable authenticated HTTP 200. Booting imports the full plugin tree (every bundle's

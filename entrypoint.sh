@@ -21,6 +21,12 @@ DSH_SETTINGS_UID=$(id -u) \
 DSH_SETTINGS_GID=$(id -g) \
   "$settings_initializer" --replace-empty --preserve-divergent
 
+# Fill missing console defaults before the settings service starts.
+sidebar_initializer=${DSH_SIDEBAR_SETTINGS_INITIALIZER:-/opt/dsh-build/initialize-sidebar-settings.mjs}
+if [ -f "$sidebar_initializer" ]; then
+  node "$sidebar_initializer" "$runtime_home/settings.yaml"
+fi
+
 # Reconcile known router capabilities before any lazy agent/settings scope can
 # read the persisted file. Invalid/unavailable discovery never changes settings;
 # keep the application available and let provider verification report the cause.

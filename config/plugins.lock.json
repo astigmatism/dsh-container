@@ -11,11 +11,13 @@
     "dsh-playwright": "0.1.0 (local panel patch; complete web-transport scopes integration v5)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-session-pin": "0.7.11",
-    "dsh-ui-appearance": "0.1.10"
+    "dsh-ui-appearance": "0.1.10",
+    "dsh-better-sidebar": "0.19.1"
   },
   "sourceHeads": {
     "@zoytown/dsh-token": "https://github.com/zoyluoblue/deepseek-harness-token@8b75452985fc47bdc00b914053cf4c5c1cbe4898",
-    "dsh-playwright": "https://github.com/JeremyGuo/dsh-playwright@9e8faf48cdcd479a777e52f5600899206a77f8af"
+    "dsh-playwright": "https://github.com/JeremyGuo/dsh-playwright@9e8faf48cdcd479a777e52f5600899206a77f8af",
+    "dsh-better-sidebar": "https://github.com/omdsh-dev/DSH-better-sidebar@8753096a583ff2891d57a0074f1ac71cd5c6003e"
   },
   "policies": {
     "@zoytown/dsh-token": {

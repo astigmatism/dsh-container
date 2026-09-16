@@ -13,9 +13,9 @@ export const RESIDENT_MODELS = {
 };
 const PROVIDER_PRESENTATION = new Map([
   ["local-ollama", {
-    displayName: "Daytime (160K)",
-    modelName: "Daytime (160K)",
-    contextWindow: 163840,
+    displayName: "Daytime (128K)",
+    modelName: "Daytime (128K)",
+    contextWindow: 131072,
     maxConcurrency: 1,
   }],
   ["local-everyday", {

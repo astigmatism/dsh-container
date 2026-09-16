@@ -7,7 +7,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadRouterContract, verifyConfiguredRoutes } from '../scripts/verify-router-contract.mjs';
+import { loadRouterContract, verifyConfiguredRoutes, residentClientExpectations } from '../scripts/verify-router-contract.mjs';
 const run = promisify(execFile);
 const root = fileURLToPath(new URL('..', import.meta.url));
 const contract = await loadRouterContract();
@@ -233,6 +233,51 @@ test('missing Nighttime leaves all persisted state unchanged', async t => {
   await assert.rejects(synchronizeRouterSettings(service(state, mutations)), /not advertised/);
   assert.deepEqual(state, before);
   assert.equal(mutations.length, 0);
+});
+
+test('live picker verification follows Flash 128K and the 27B 160K recovery profile', async t => {
+  const flash = 'qwen3.8-flash-next-ad4.27';
+  const night = entry(SECONDARY);
+  night.x_ollama_router.display_name = 'Nighttime (128K)';
+  const f = await fixture(t, [entry(PRIMARY), night]);
+  const state = legacySettings(f.baseURL);
+  for (const [id, capacity, name] of [
+    [PRIMARY, 163840, 'Daytime (160K)'],
+    [flash, 131072, 'Daytime (128K)'],
+    [PRIMARY, 163840, 'Daytime (160K)'],
+  ]) {
+    const primary = entry(id, { primary: true });
+    Object.assign(primary.x_ollama_router, { context_window: capacity, display_name: name });
+    f.state.data = [primary, night, alias(primary)];
+    await synchronizeRouterSettings(service(state));
+    const expected = await residentClientExpectations(state);
+    assert.deepEqual(expected, [
+      { provider: 'local-ollama', model: 'local-active', name, contextWindow: capacity, reasoningEffort: 'medium' },
+      { provider: 'local-everyday', model: SECONDARY, name: 'Nighttime (128K)', contextWindow: 131072, reasoningEffort: 'medium' },
+    ]);
+    assert.match((await f.remote(state)).stdout, /Verified/);
+  }
+  // A live gate must not accept stale settings merely because its UI agrees.
+  state['llm-pi-ai'].providers['local-ollama'].models[0].contextWindow = 131072;
+  await assert.rejects(residentClientExpectations(state), /context is not synchronized/);
+  state['llm-pi-ai'].providers['local-ollama'].models[0].contextWindow = 163840;
+  state['llm-pi-ai'].providers['local-ollama'].models[0].name = 'Daytime (128K)';
+  await assert.rejects(residentClientExpectations(state), /display name is not synchronized/);
+});
+
+test('offline picker checks use isolated settings without contacting a router', async t => {
+  const primary = entry(PRIMARY), night = entry(SECONDARY);
+  const f = await fixture(t, [primary, night]);
+  const state = legacySettings(f.baseURL);
+  await synchronizeRouterSettings(service(state));
+  for (const provider of Object.values(state['llm-pi-ai'].providers)) provider.baseURL = 'invalid://offline';
+  state['llm-pi-ai'].providers['local-ollama'].reasoning = 'low';
+  const expected = await residentClientExpectations(state, { live: false });
+  assert.equal(expected[0].name, 'Primary');
+  assert.equal(expected[0].contextWindow, 131072);
+  assert.equal(expected[0].reasoningEffort, 'low');
+  state['llm-pi-ai'].providers.extra = {};
+  await assert.rejects(residentClientExpectations(state, { live: false }));
 });
 
 test('web composition explicitly disables the built-in DeepSeek catalog', async () => {

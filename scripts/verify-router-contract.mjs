@@ -57,6 +57,24 @@ export async function readSettings(file) {
   return require('yaml').parse(text);
 }
 
+/** Independent expected UI contract: validate live settings against discovery
+ * before using them, or use the isolated seed during an offline image build. */
+export async function residentClientExpectations(settings, { live = true } = {}) {
+  if (live) await verifyConfiguredRoutes(settings, { primaryBrowser: true });
+  const { RESIDENT_MODELS } = await loadRouterContract();
+  const providers = settings?.['llm-pi-ai']?.providers;
+  assert.deepEqual(Object.keys(providers ?? {}).sort(), Object.keys(RESIDENT_MODELS).sort());
+  return Object.entries(RESIDENT_MODELS).map(([provider, model]) => {
+    const source = providers[provider];
+    assert.deepEqual(source.models?.map(row => row.id), [model]);
+    const configured = source.models[0];
+    assert.ok(typeof configured.name === 'string' && configured.name.length > 0);
+    assert.ok(Number.isSafeInteger(configured.contextWindow) && configured.contextWindow > 0);
+    return { provider, model, name: configured.name, contextWindow: configured.contextWindow,
+      reasoningEffort: source.reasoning };
+  });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const args = process.argv.slice(2);

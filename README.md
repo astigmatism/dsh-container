@@ -26,7 +26,7 @@ needs the NVIDIA Container Toolkit.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
 - Two resident OpenAI Responses models at `http://ai-router:11434/v1`:
-  Daytime (160K) and Nighttime (128K), each with one independent generation slot
+  Daytime (128K) and Nighttime (128K), each with one independent generation slot
   and no inherited output ceiling.
 - The model picker exposes exactly those two resident choices. The built-in
   DeepSeek adapter is disabled in the web profile. Startup and discovery refresh
@@ -264,7 +264,7 @@ is supplied explicitly.
 
 ## Persisted settings lifecycle
 
-`config/settings.yaml` seeds **Daytime (160K)** through
+`config/settings.yaml` seeds **Daytime (128K)** through
 `local-ollama/local-active` and **Nighttime (128K)** through
 `local-everyday/qwen3.8-27b-abliterated-q6_k`. Each resident model has one
 independent generation slot. The former 256K selection is retired.
@@ -272,6 +272,12 @@ independent generation slot. The former 256K selection is retired.
 The discovery plugin reads each model's router metadata, including
 `x_ollama_router.display_name`, context, concurrency, modalities and effort
 mappings. Both resident models advertise their actual input and tool capabilities.
+Daytime currently selects Qwen3.8-Flash-Next AD-4.27 at 128K. Switching the
+model host to `daytime-27b` advertises the original 27B model at 160K; discovery
+and the Update and Restart verifier follow that advertised label and capacity.
+The live picker and context meter are checked against validated router metadata,
+while offline image checks use their isolated seed settings. No Harness source
+edit is needed when switching between these profiles.
 Stable API IDs remain separate from display names. Discovery converges the
 picker to Daytime and Nighttime, moving removed defaults back to Daytime while
 preserving supported reasoning choices.

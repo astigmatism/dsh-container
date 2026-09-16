@@ -4,16 +4,16 @@ import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { resolve } from 'node:path';
+import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
 const require = createRequire(`${profile}/package.json`);
 const { chromium } = require('playwright-core');
 const secret = process.env.DSH_BOOT_TOKEN ?? (await readFile('/run/dsh-backend-auth/launch-token', 'utf8')).trim();
-const expected = [
-  { provider: 'local-ollama', model: 'local-active', name: 'Daytime (160K)' },
-  { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k', name: 'Nighttime (128K)' },
-];
+const live = process.argv.includes('--live');
+const settingsPath = process.env.DSH_VERIFY_SETTINGS ?? resolve(profile, '../../settings.yaml');
 const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true,
   args: ['--no-sandbox', '--disable-dev-shm-usage'], env: { ...process.env, HOME: '/tmp' } });
 const context = await browser.newContext();
@@ -34,14 +34,16 @@ async function rpc(name, request = {}) {
   return result.value;
 }
 try {
+  const expected = await residentClientExpectations(await readSettings(settingsPath), { live });
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
   const catalog = await rpc('modelCatalog');
   originalDefault = catalog.default;
   assert.deepEqual(catalog.failures, []);
   assert.deepEqual(catalog.routableProviders.sort(), expected.map(row => row.provider).sort());
-  assert.deepEqual(catalog.groups.flatMap(group => group.models.map(model => ({ provider: group.id, model: model.id, name: model.name }))), expected);
+  assert.deepEqual(catalog.groups.flatMap(group => group.models.map(model => ({ provider: group.id, model: model.id, name: model.name }))),
+    expected.map(({ provider, model, name }) => ({ provider, model, name })));
   for (const group of catalog.groups) {
-    assert.equal(group.models[0].reasoning.defaultEffort, 'medium');
+    assert.equal(group.models[0].reasoning.defaultEffort, expected.find(row => row.provider === group.id).reasoningEffort);
     assert.ok(group.models[0].reasoning.efforts.some(effort => effort.id === 'xhigh'));
   }
   fixture = await mkdtemp('/tmp/dsh-resident-verification-');
@@ -53,7 +55,7 @@ try {
   // intentionally have no inference endpoint; only live mode requires replies.
   await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
     'Text-only verification. Do not use tools or access files. Reply with READY.' }] });
-  const readyDeadline = Date.now() + (process.argv.includes('--live') ? 600000 : 90000);
+  const readyDeadline = Date.now() + (live ? 600000 : 90000);
   while ((await rpc('list')).items.find(item => item.sessionId === sessionId)?.running) {
     assert.ok(Date.now() < readyDeadline, 'verification session reached idle');
     await delay(1000);
@@ -85,8 +87,8 @@ try {
   await page.getByRole('menuitem', { name: /^Effort/ }).click();
   assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
   await trigger.click();
-  console.log('Live Harness catalog and rendered picker contain exactly Daytime (160K) and Nighttime (128K), with a separate effort control.');
-  if (process.argv.includes('--live')) {
+  console.log(`Live Harness catalog and rendered picker contain exactly ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
+  if (live) {
     for (const [index, choice] of expected.entries()) {
       await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' });
       const marker = `RESIDENT_${index}_${randomUUID().slice(0, 8)}`;
@@ -108,7 +110,7 @@ try {
       assert.ok(passed, `${choice.name} produced its expected reply through the application`);
       const meter = page.getByRole('button', { name: /% of context used/ });
       await meter.click();
-      const capacity = index === 0 ? '164K' : '131K'; // Upstream meter uses decimal K.
+      const capacity = `${Math.round(choice.contextWindow / 1000)}K`; // Upstream meter uses decimal K.
       await page.getByRole('dialog').filter({ hasText: new RegExp(`/ ${capacity}`) }).waitFor();
       await page.keyboard.press('Escape');
       console.log(`${choice.name}: live application inference and durable session continuation passed.`);

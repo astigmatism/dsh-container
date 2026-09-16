@@ -263,6 +263,11 @@ if ! compose exec -T harness env DSH_PROFILE_ROOT=/data/dsh/profiles/web \
   exit "$configuration_exit"
 fi
 if ! compose exec -T harness dsh --profile web --dump-config \
+  | compose exec -T harness node /opt/dsh-build/verify-dsh-semantic-progress.mjs --effective-config; then
+  echo "The effective shell deadline and repeated-test-timeout policy is incomplete." >&2
+  exit "$configuration_exit"
+fi
+if ! compose exec -T harness dsh --profile web --dump-config \
   | compose exec -T harness node /opt/dsh-build/verify-dsh-context-compaction.mjs --effective-config; then
   echo "The effective Web composition does not mount the required compaction policy." >&2
   exit "$configuration_exit"

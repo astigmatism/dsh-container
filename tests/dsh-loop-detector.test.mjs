@@ -140,7 +140,7 @@ function contractHarness(apply, config = {}) {
     async tool(name, args, result = { isError: false, value: {}, content: [] }) {
       const controller = new AbortController();
       let dispatched = false;
-      const execution = { name, arguments: args, agent, signal: controller.signal };
+      const execution = Object.freeze({ name, arguments: args, agent, signal: controller.signal });
       const output = await onTool(
         execution,
         async () => {
@@ -606,24 +606,141 @@ test('background tests are rejected before dispatch; background servers remain a
   assert.equal((await h.tool('bash', { command: 'npm run dev', run_in_background: true })).dispatched, true);
 });
 
-test('hung tests abort cooperatively and repeated target timeouts pause the turn', async () => {
+function nativeTimeout(timeoutMs = 115000) {
+  return {
+    isError: false,
+    value: {
+      kind: 'foreground', timedOut: true, timeoutMs, exitCode: null, signal: 'SIGTERM',
+      stdout: { text: '2 passed in 40s', truncated: true, spillPath: '/tmp/test-output.txt' },
+      stderr: { text: 'remaining module still running', truncated: false },
+    },
+    content: [
+      { type: 'text', text: '2 passed in 40s\n[Full output](/tmp/test-output.txt)' },
+      { type: 'text', text: '[stderr]\nremaining module still running' },
+    ],
+  };
+}
+
+const incidentBatch = 'for f in test_gallery_query_performance test_gallery_recall_preferences test_gallery_selection test_generation_activity; do pytest backend/tests/integration/$f.py -q 2>&1 | tail -1; done';
+const narrowedIncidentBatch = 'for f in test_gallery_recall_preferences test_gallery_selection test_generation_activity; do pytest backend/tests/integration/$f.py -q 2>&1 | tail -1; done';
+
+test('incident: a completed module and narrowed dynamic batch do not falsely cancel', async () => {
   const { apply } = await loadGeneratedPlugin();
-  const h = contractHarness(apply, { testTimeoutMs: 15 });
+  const h = contractHarness(apply);
+  h.begin('Fix and test the gallery');
+  const first = await h.tool('bash', { command: incidentBatch, timeoutMs: 115000 }, nativeTimeout());
+  assert.equal(first.result.error.info.code, 'TEST_TIMEOUT');
+  await h.tool('bash', { command: 'pytest backend/tests/integration/test_gallery_query_performance.py -q' }, {
+    isError: false, value: { timedOut: false, exitCode: 0 }, content: [{ type: 'text', text: '8 passed in 48s' }],
+  });
+  const second = await h.tool('bash', { command: narrowedIncidentBatch, timeoutMs: 115000 }, nativeTimeout());
+  assert.equal(second.result.error.info.code, 'TEST_TIMEOUT');
+  assert.deepEqual(h.cancels, []);
+});
+
+test('different dynamic batches remain distinct even without an intervening completed test', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Diagnose slow tests');
+  for (const command of [incidentBatch, narrowedIncidentBatch]) {
+    assert.equal((await h.tool('bash', { command }, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
+  }
+  assert.deepEqual(h.cancels, []);
+  assert.equal((await h.tool('bash', { command: narrowedIncidentBatch }, nativeTimeout())).result.error.info.code, 'REPEATED_TEST_TIMEOUT');
+  assert.equal(h.cancels.length, 1);
+});
+
+test('native timeouts for the same supported pytest invocation survive compaction and pause the turn', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
   h.begin('Fix the test');
-  const hung = ({ signal }) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ isError: true, error: { message: 'aborted' }, content: [] }), { once: true }));
-  const first = await h.tool('bash', { command: 'python -m pytest tests/test_sse.py -v' }, hung);
+  const first = await h.tool('bash', { command: 'pytest tests/test_sse.py -vv' }, nativeTimeout());
   assert.equal(first.result.error.info.code, 'TEST_TIMEOUT');
   h.compact();
-  const second = await h.tool('bash', { command: 'timeout 300 python -m pytest tests/test_sse.py -q' }, hung);
+  const second = await h.tool('bash', { command: 'timeout 300 python -m pytest tests/test_sse.py -q' }, nativeTimeout(300000));
   assert.equal(second.result.error.info.code, 'REPEATED_TEST_TIMEOUT');
   assert.match(h.cancels[0].reason, /guard=repeated_test_timeout/);
+  assert.match(h.cancels[0].reason, /300000ms/);
+});
+
+test('supported runner paths and relative workdirs canonicalize without merging different environments', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Diagnose tests');
+  for (const args of [
+    { command: '.venv/bin/pytest tests/test_sse.py --verbose', workdir: 'backend' },
+    { command: 'other-venv/bin/pytest tests/test_sse.py --quiet', workdir: '/workspace/backend' },
+    { command: '.venv/bin/pytest tests/test_sse.py --quiet', workdir: '/workspace/other' },
+  ]) {
+    assert.equal((await h.tool('bash', args, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
+  }
+  const duplicate = await h.tool('bash', {
+    command: '/usr/bin/timeout 2m .venv/bin/python -m pytest tests/test_sse.py --quiet', workdir: '/workspace/backend',
+  }, nativeTimeout());
+  assert.equal(duplicate.result.error.info.code, 'REPEATED_TEST_TIMEOUT');
+});
+
+test('explicit Python interpreter versions remain distinct test environments', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Compare test environments');
+  for (const runner of ['python2 -m pytest', 'python3 -m pytest', 'pytest', '/usr/bin/python3.11 -m pytest', '/usr/bin/python3.12 -m pytest']) {
+    assert.equal((await h.tool('bash', { command: `${runner} tests/a.py` }, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
+  }
+  assert.deepEqual(h.cancels, []);
+  assert.equal((await h.tool('bash', { command: 'timeout 2m /usr/bin/python3.12 -m pytest tests/a.py -q' }, nativeTimeout())).result.error.info.code, 'REPEATED_TEST_TIMEOUT');
+});
+
+test('selection, configuration, positional order and unknown option values retain distinct identities', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const pairs = [
+    ['tests/a.py::first', 'tests/a.py::second'],
+    ['tests/a.py -k alpha', 'tests/a.py -k beta'],
+    ['tests/a.py -m fast', 'tests/a.py -m slow'],
+    ['tests/a.py --deselect=tests/a.py::first', 'tests/a.py --deselect=tests/a.py::second'],
+    ['tests/a.py -c first.ini', 'tests/a.py -c second.ini'],
+    ['tests/a.py --lf', 'tests/a.py'],
+    ['tests/a.py tests/b.py', 'tests/b.py tests/a.py'],
+    ['tests/a.py -k "-q"', 'tests/a.py -k "-v"'],
+    ['tests/a.py --plugin-filter "-q"', 'tests/a.py --plugin-filter "-v"'],
+    ['-- tests/a.py -q', '-- tests/a.py -v'],
+  ];
+  for (const [left, right] of pairs) {
+    const h = contractHarness(apply);
+    h.begin('Diagnose tests');
+    for (const args of [left, right]) {
+      const result = await h.tool('bash', { command: `pytest ${args}` }, nativeTimeout());
+      assert.equal(result.result.error.info.code, 'TEST_TIMEOUT', args);
+    }
+    assert.deepEqual(h.cancels, [], `${left} differs from ${right}`);
+  }
+});
+
+test('compound and dynamic invocations use exact commands instead of extracting incidental python filenames', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Diagnose tests');
+  const commands = [
+    'pytest tests/$f.py',
+    'pytest  tests/$f.py',
+    'pytest tests/${f}.py',
+    'pytest "$(cat target.txt)"',
+    'pytest tests/a.py | tail -1',
+    'pytest tests/a.py | tail -2',
+    'cd first && pytest tests/a.py',
+    'cd second && pytest tests/a.py',
+  ];
+  for (const command of commands) {
+    assert.equal((await h.tool('bash', { command }, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
+  }
+  assert.deepEqual(h.cancels, []);
 });
 
 test('different test targets and source edits permit further diagnostics', async () => {
   const { apply } = await loadGeneratedPlugin();
   const h = contractHarness(apply);
   h.begin('Fix tests');
-  const timeout = { isError: false, value: { timedOut: true }, content: [] };
+  const timeout = nativeTimeout();
   for (const file of ['first', 'second']) {
     assert.equal((await h.tool('bash', { command: `pytest tests/test_${file}.py` }, timeout)).result.error.info.code, 'TEST_TIMEOUT');
   }
@@ -632,11 +749,80 @@ test('different test targets and source edits permit further diagnostics', async
   assert.equal(h.cancels.length, 0);
 });
 
+test('a new completed test or normal assertion failure clears earlier timeout strikes', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  for (const exitCode of [0, 1]) {
+    const h = contractHarness(apply);
+    h.begin('Diagnose tests');
+    assert.equal((await h.tool('bash', { command: incidentBatch }, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
+    await h.tool('bash', { command: 'pytest tests/independent.py' }, {
+      isError: false, value: { timedOut: false, exitCode }, content: [{ type: 'text', text: exitCode === 0 ? '1 passed' : '1 failed: assertion mismatch' }],
+    });
+    assert.equal((await h.tool('bash', { command: incidentBatch }, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
+    assert.deepEqual(h.cancels, []);
+  }
+});
+
+test('an identical completed result is not repeatedly credited as new progress', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Diagnose tests');
+  const completed = { isError: false, value: { timedOut: false, exitCode: 0 }, content: [{ type: 'text', text: '1 passed' }] };
+  await h.tool('bash', { command: 'pytest tests/independent.py' }, completed);
+  await h.tool('bash', { command: 'pytest tests/slow.py' }, nativeTimeout());
+  await h.tool('bash', { command: 'pytest tests/independent.py' }, completed);
+  assert.equal((await h.tool('bash', { command: 'pytest tests/slow.py' }, nativeTimeout())).result.error.info.code, 'REPEATED_TEST_TIMEOUT');
+});
+
+test('native timeout output, spill links, value and duration survive both timeout policy errors', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Diagnose tests');
+  for (const [index, timeoutMs] of [115000, 420000].entries()) {
+    const original = nativeTimeout(timeoutMs);
+    const { result } = await h.tool('bash', Object.freeze({ command: 'pytest tests/slow.py', timeoutMs: 600000 }), original);
+    assert.equal(result.error.info.code, index === 0 ? 'TEST_TIMEOUT' : 'REPEATED_TEST_TIMEOUT');
+    assert.equal(result.value, original.value);
+    assert.deepEqual(result.content.slice(0, original.content.length), original.content);
+    assert.match(result.content.at(-1).text, new RegExp(`${timeoutMs}ms`));
+    assert.doesNotMatch(result.content.at(-1).text, /deadlock|600000ms/);
+  }
+});
+
+test('native TOOL_TIMEOUT is recognized without inventing an unavailable duration', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply);
+  h.begin('Diagnose tests');
+  const native = { isError: true, error: { message: 'native deadline', info: { code: 'TOOL_TIMEOUT' } }, content: [{ type: 'text', text: 'partial failure output' }] };
+  const { result } = await h.tool('bash', { command: 'pytest tests/slow.py', timeoutMs: 500000 }, native);
+  assert.equal(result.error.info.code, 'TEST_TIMEOUT');
+  assert.equal(result.content[0], native.content[0]);
+  assert.doesNotMatch(result.content.at(-1).text, /\d+ms|deadlock/);
+});
+
+test('native execution owns the deadline and signal; obsolete plugin limits cannot abort a test', async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const h = contractHarness(apply, { testTimeoutMs: 1 });
+  h.begin('Diagnose tests');
+  const args = Object.freeze({ command: 'pytest tests/slow.py', timeoutMs: 420000 });
+  const completed = { isError: false, value: { timedOut: false, exitCode: 0 }, content: [] };
+  const { result } = await h.tool('bash', args, async (execution, caller) => {
+    assert.equal(execution.signal, caller.signal);
+    assert.equal(execution.arguments, args);
+    assert.equal(execution.arguments.timeoutMs, 420000);
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(execution.signal.aborted, false);
+    return completed;
+  });
+  assert.equal(result, completed);
+  assert.deepEqual(h.cancels, []);
+});
+
 test('caller Stop is preserved and does not count as a test timeout', async () => {
   const { apply } = await loadGeneratedPlugin();
-  const h = contractHarness(apply, { testTimeoutMs: 1000 });
+  const h = contractHarness(apply);
   h.begin('Fix tests');
-  const stopped = { isError: true, error: { message: 'user stop' }, content: [] };
+  const stopped = { ...nativeTimeout(), isError: true, error: { message: 'user stop' } };
   for (let i = 0; i < 2; i++) {
     const result = await h.tool('bash', { command: 'pytest tests/test_sse.py' }, (exec, caller) => {
       caller.abort('user');
@@ -645,5 +831,7 @@ test('caller Stop is preserved and does not count as a test timeout', async () =
     });
     assert.deepEqual(result.result, stopped);
   }
+  assert.equal(h.cancels.length, 0);
+  assert.equal((await h.tool('bash', { command: 'pytest tests/test_sse.py' }, nativeTimeout())).result.error.info.code, 'TEST_TIMEOUT');
   assert.equal(h.cancels.length, 0);
 });

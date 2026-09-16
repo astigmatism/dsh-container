@@ -112,6 +112,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node scripts/verify-local-model-profiles.mjs config/settings.yaml
     node --check scripts/verify-dsh-context-compaction.mjs
     node --check scripts/verify-dsh-semantic-progress.mjs
+    node --check tests/dsh-native-shell-lifecycle.mjs
     node --check scripts/verify-dsh-token-policy.mjs
     node --check scripts/verify-dsh-playwright-stream.mjs
     node --check scripts/qualify-dsh-read-schema.mjs
@@ -147,6 +148,13 @@ if [ "$build" -eq 1 ]; then
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.5-rc.2") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
+
+  # Use the packaged native executor for deadlines, output capture and actual
+  # process-tree cleanup; mock plugin tests alone cannot verify these contracts.
+  docker run --rm --network none --read-only --tmpfs /tmp --entrypoint node \
+    --env DSH_RUNTIME_ROOT=/usr/local/lib/node_modules/@deepseek-ai/dsh \
+    --volume "$project_dir:/src:ro" "$harness_image" \
+    /src/tests/dsh-native-shell-lifecycle.mjs
 
   docker run --rm --network none --user 12345:12345 --entrypoint node \
     --env DSH_TEST_HARNESS=1 --volume "$project_dir:/src:ro" "$harness_image" \

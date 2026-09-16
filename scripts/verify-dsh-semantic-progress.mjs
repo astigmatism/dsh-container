@@ -3,6 +3,20 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { loaderRow } from "./verify-dsh-token-policy.mjs";
+
+if (process.argv.includes("--effective-config")) {
+  let effective = "";
+  for await (const chunk of process.stdin) effective += chunk;
+  const shell = loaderRow(effective, "bash-sandbox");
+  assert.match(shell, /^\s*timeoutMs: 120000\s*$/m, "foreground shell default must be two minutes");
+  assert.match(shell, /^\s*maxTimeoutMs: 600000\s*$/m, "explicit shell timeouts must allow up to ten minutes");
+  const loop = loaderRow(effective, "loop-detector");
+  assert.doesNotMatch(loop, /^\s*testTimeoutMs:/m, "the loop detector must not configure a competing execution deadline");
+  assert.match(loop, /^\s*repeatedTestTimeouts: 2\s*$/m);
+  console.log("Verified native shell deadline policy: 120-second default, 600-second maximum, and two repeated test timeouts.");
+  process.exit(0);
+}
 
 const profileRoot = process.env.DSH_PROFILE_ROOT ?? "/opt/dsh-seed/profiles/web";
 const pluginPath = path.join(profileRoot, "node_modules/dsh-loop-detector/lib/index.js");
@@ -17,7 +31,6 @@ assert.deepEqual(DEFAULT_PROGRESS_LIMITS, {
   reasoningHardOccurrence: 3,
   readDefaultOffset: 1,
   readDefaultLimit: 2000,
-  testTimeoutMs: 120000,
   repeatedTestTimeouts: 2,
 });
 
@@ -77,13 +90,13 @@ function begin(turn, text) {
   });
 }
 
-async function runTool(name, args) {
+async function runTool(name, args, outcome = { isError: false, value: {}, content: [] }) {
   let dispatched = false;
   const result = await execute(
     { name, arguments: args, agent, signal: new AbortController().signal },
     async () => {
       dispatched = true;
-      return { isError: false, value: {}, content: [] };
+      return outcome;
     },
   );
   return { dispatched, result };
@@ -132,4 +145,21 @@ assert.equal(repeated.result.error.info.code, "SEMANTIC_DUPLICATE_READ_LOOP");
 assert.match(cancels.at(-1).reason, /guard=duplicate_read_repeated/);
 
 assert.ok(warnings.some((message) => /injected semantic progress correction/.test(message)));
-console.log("Verified advisory implementation checkpoint, unrestricted distinct discovery, accurate mutation accounting, and duplicate suppression/termination.");
+begin(3, "Implement the fix and verify it.");
+const timedOut = {
+  isError: false,
+  value: { timedOut: true, timeoutMs: 115000 },
+  content: [{ type: "text", text: "Partial results: 3 passed; output saved to /tmp/test-output.log" }],
+};
+const loop = (files) => `for f in ${files}; do python -m pytest backend/tests/integration/$f.py -q; done`;
+assert.equal((await runTool("bash", { command: loop("test_first test_second") }, timedOut)).result.error.info.code, "TEST_TIMEOUT");
+assert.equal((await runTool("bash", { command: "python -m pytest backend/tests/integration/test_first.py -q" })).result.isError, false);
+const remaining = await runTool("bash", { command: loop("test_second") }, timedOut);
+assert.equal(remaining.result.error.info.code, "TEST_TIMEOUT");
+assert.match(JSON.stringify(remaining.result.content), /Partial results: 3 passed/);
+assert.equal(cancels.length, 1, "narrowed test batches after completed tests must not cancel");
+const retry = await runTool("bash", { command: loop("test_second") }, timedOut);
+assert.equal(retry.result.error.info.code, "REPEATED_TEST_TIMEOUT");
+assert.match(JSON.stringify(retry.result.content), /test-output\.log/);
+assert.match(cancels.at(-1).reason, /guard=repeated_test_timeout/);
+console.log("Verified semantic progress, incident test-batch recovery, timeout output preservation, and repeated-timeout containment.");

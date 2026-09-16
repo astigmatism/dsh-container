@@ -1,9 +1,9 @@
 diff --git a/lib/index.js b/lib/index.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b420583821147c6781845c94aeb1bf5e6f435004
+index 0000000000000000000000000000000000000000..273b02d080f572549bf12a2bf8717d64658948ff
 --- /dev/null
 +++ b/lib/index.js
-@@ -0,0 +1,743 @@
+@@ -0,0 +1,797 @@
 +import { createHash } from 'node:crypto'
 +import { resolve as resolvePath } from 'node:path'
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -18,7 +18,6 @@ index 0000000000000000000000000000000000000000..b420583821147c6781845c94aeb1bf5e
 +  reasoningHardOccurrence: 3,
 +  readDefaultOffset: 1,
 +  readDefaultLimit: 2000,
-+  testTimeoutMs: 120000,
 +  repeatedTestTimeouts: 2,
 +})
 +
@@ -143,10 +142,8 @@ index 0000000000000000000000000000000000000000..b420583821147c6781845c94aeb1bf5e
 +    reasoningHardOccurrence: positiveInteger(config.reasoningHardOccurrence, DEFAULT_PROGRESS_LIMITS.reasoningHardOccurrence, 'reasoningHardOccurrence'),
 +    readDefaultOffset: positiveInteger(config.readDefaultOffset, DEFAULT_PROGRESS_LIMITS.readDefaultOffset, 'readDefaultOffset'),
 +    readDefaultLimit: positiveInteger(config.readDefaultLimit, DEFAULT_PROGRESS_LIMITS.readDefaultLimit, 'readDefaultLimit'),
-+    testTimeoutMs: positiveInteger(config.testTimeoutMs, DEFAULT_PROGRESS_LIMITS.testTimeoutMs, 'testTimeoutMs'),
 +    repeatedTestTimeouts: positiveInteger(config.repeatedTestTimeouts, DEFAULT_PROGRESS_LIMITS.repeatedTestTimeouts, 'repeatedTestTimeouts'),
 +  }
-+  if (limits.testTimeoutMs > 2147483647) throw new Error('[loop-detector] testTimeoutMs exceeds the timer maximum')
 +  if (limits.reasoningDirectiveOccurrence >= limits.reasoningHardOccurrence) {
 +    throw new Error('[loop-detector] reasoningDirectiveOccurrence must be lower than reasoningHardOccurrence')
 +  }
@@ -230,6 +227,7 @@ index 0000000000000000000000000000000000000000..b420583821147c6781845c94aeb1bf5e
 +    state.mutationGeneration += 1
 +    state.totalMutations += 1
 +  } else if (kind === 'test') {
++    state.testTimeouts.clear()
 +    state.totalTests += 1
 +  } else if (kind === 'blocker') {
 +    state.verifiedBlocker = true
@@ -640,43 +638,99 @@ index 0000000000000000000000000000000000000000..b420583821147c6781845c94aeb1bf5e
 +    }
 +  }
 +
++  // Canonicalize only a deliberately small shell grammar. Dynamic commands,
++  // pipelines, loops, redirections and unsupported options retain their exact
++  // command identity; never interpret an unresolved $file.py as a test path.
++  function simplePytestInvocation(command, cwd) {
++    if (/[\r\n$`\\]/u.test(command)) return undefined
++    const tokens = []
++    let word = ''
++    let quote
++    let started = false
++    for (const character of command) {
++      if (quote !== undefined) {
++        if (character === quote) quote = undefined
++        else word += character
++      } else if (character === '"' || character === "'") {
++        quote = character
++        started = true
++      } else if (/\s/u.test(character)) {
++        if (started) tokens.push(word)
++        word = ''
++        started = false
++      } else {
++        if (/[;&|<>(){}*?\[\]~#]/u.test(character)) return undefined
++        word += character
++        started = true
++      }
++    }
++    if (quote !== undefined) return undefined
++    if (started) tokens.push(word)
++    const executable = value => value?.split('/').at(-1)
++    if (/^(?:g?timeout)$/u.test(executable(tokens[0]) ?? '')) {
++      if (!/^\d+(?:\.\d+)?[smhd]?$/u.test(tokens[1] ?? '')) return undefined
++      tokens.splice(0, 2)
++    }
++    const runner = tokens.shift()
++    let pythonVersion
++    if (/^python[\d.]*$/u.test(executable(runner) ?? '')) {
++      if (tokens[0] !== '-m' || tokens[1] !== 'pytest') return undefined
++      pythonVersion = executable(runner).slice('python'.length) || undefined
++      tokens.splice(0, 2)
++    } else if (!/^(?:pytest|py\.test)$/u.test(executable(runner) ?? '')) return undefined
++    const values = new Set(['-k', '-m', '-c', '-o', '-p', '--deselect', '--ignore', '--ignore-glob', '--override-ini', '--rootdir', '--confcutdir', '--maxfail', '--tb', '--capture', '--import-mode'])
++    const flags = new Set(['-x', '--exitfirst', '--lf', '--last-failed', '--ff', '--failed-first', '--nf', '--new-first', '--sw', '--stepwise', '--sw-skip', '--stepwise-skip', '--collect-only', '--co', '--continue-on-collection-errors', '--pyargs', '-s'])
++    const args = []
++    for (let index = 0; index < tokens.length; index++) {
++      const token = tokens[index]
++      if (token === '--') {
++        args.push(...tokens.slice(index))
++        break
++      }
++      if (/^-(?:q+|v+)$/u.test(token) || token === '--quiet' || token === '--verbose') continue
++      args.push(token)
++      if (values.has(token)) {
++        if (tokens[index + 1] === undefined) return undefined
++        args.push(tokens[++index])
++      } else if (token.startsWith('-') && !flags.has(token) && !/^--[\w-]+=/u.test(token)) {
++        // An unknown option may consume the next token, including '-q'.
++        return undefined
++      }
++    }
++    const slash = runner.lastIndexOf('/')
++    return { runnerDirectory: slash < 0 ? 'PATH' : resolvePath(cwd, runner.slice(0, slash) || '/'), ...(pythonVersion === undefined ? {} : { pythonVersion }), args }
++  }
++
++  function testIdentity(execution) {
++    const command = execution.arguments?.command ?? ''
++    const cwd = resolvePath(execution.agent?.session?.header?.cwd ?? process.cwd(), execution.arguments?.workdir ?? '.')
++    const invocation = simplePytestInvocation(command, cwd)
++    return hash(stableJson({ cwd, ...(invocation === undefined ? { command } : { pytest: invocation }) }))
++  }
++
++  function withTestEvidence(result, policy) {
++    return { ...result, ...policy, content: [...(result.content ?? []), ...policy.content] }
++  }
++
 +  async function boundedTest(execution, next, state, sessionId) {
 +    if (execution.arguments?.run_in_background === true) {
 +      return semanticError('UNBOUNDED_TEST_REJECTED', 'Test commands must run in the foreground with a bounded timeout so Stop cancels their process tree. Retry with run_in_background=false. Long-lived development servers are unaffected.')
 +    }
-+    const command = execution.arguments?.command ?? ''
-+    // Group the same pytest target across timeout/verbosity wrappers. Retain
-+    // selectors; distinct tests are independent. Do not retain command text.
-+    const targets = [...command.matchAll(/(?:[\w./-]+\.py)(?:::[\w.[\]-]+)*/gu)].map(match => match[0]).sort()
-+    const key = hash(stableJson({ cwd: execution.arguments?.workdir ?? execution.agent?.session?.header?.cwd, target: targets.length ? targets : command.trim().replace(/\s+/gu, ' ') }))
-+    const upstream = execution.signal
-+    const controller = new AbortController()
-+    let expired = false
-+    const timeoutMs = Math.min(limits.testTimeoutMs, execution.arguments?.timeoutMs > 0 ? execution.arguments.timeoutMs : limits.testTimeoutMs)
-+    const timer = setTimeout(() => { expired = true; controller.abort('bounded test timeout') }, timeoutMs)
-+    execution.signal = AbortSignal.any([upstream, controller.signal])
-+    let result
-+    try {
-+      result = await next()
-+    } finally {
-+      clearTimeout(timer)
-+      execution.signal = upstream
-+    }
++    const key = testIdentity(execution)
++    const result = await next()
 +    // Caller Stop remains caller cancellation, never a timeout strike.
-+    if (upstream.aborted) return result
-+    const timedOut = expired || result.value?.timedOut === true || result.error?.info?.code === 'TOOL_TIMEOUT'
-+    if (!timedOut) {
-+      // Successful completion (including a normal failing assertion) is new
-+      // evidence and permits another diagnostic attempt at this target.
-+      if (!result.isError) state.testTimeouts.delete(key)
-+      return result
-+    }
++    if (execution.signal.aborted) return result
++    // The native shell alone owns deadlines and process-tree quiescence.
++    const timedOut = result.value?.timedOut === true || result.error?.info?.code === 'TOOL_TIMEOUT'
++    if (!timedOut) return result
++    const timeoutMs = result.value?.timeoutMs ?? result.error?.info?.timeoutMs
++    const duration = Number.isFinite(timeoutMs) && timeoutMs > 0 ? ` after ${timeoutMs}ms` : ''
 +    const count = (state.testTimeouts.get(key) ?? 0) + 1
 +    state.testTimeouts.set(key, count)
 +    if (count >= limits.repeatedTestTimeouts) {
-+      return cancelSemantic(ctx, sessionId, state, 'repeated_test_timeout', `${count} timeouts for the same test target without an intervening source mutation or completed test. Fix the test lifecycle before retrying; completed files and session history are preserved.`, 'REPEATED_TEST_TIMEOUT')
++      return withTestEvidence(result, cancelSemantic(ctx, sessionId, state, 'repeated_test_timeout', `${count} native timeouts for the same test invocation without an intervening source mutation or new completed-test result; the latest timeout occurred${duration}. Narrow the test run or select a suitable native timeoutMs before retrying; completed files and session history are preserved.`, 'REPEATED_TEST_TIMEOUT'))
 +    }
-+    return semanticError('TEST_TIMEOUT', `Test command timed out after ${timeoutMs}ms and its foreground process was stopped. Investigate cleanup or deadlock before retrying. Another timeout for this target without progress will pause the turn.`)
++    return withTestEvidence(result, semanticError('TEST_TIMEOUT', `Test command reached its native timeout${duration}. Inspect any retained output to narrow the next test run or select a suitable timeoutMs. Another timeout for the same invocation without intervening progress will pause the turn.`))
 +  }
 +
 +  ctx.on('tools/execute', async (execution, next) => {

@@ -136,6 +136,7 @@ RUN apt-get update \
     && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled \
     && DSH_TOKEN_ENABLED=true dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config enabled \
     && node /opt/dsh-build/verify-dsh-semantic-progress.mjs \
+    && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-semantic-progress.mjs --effective-config \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \

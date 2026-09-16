@@ -368,15 +368,32 @@ or concurrency.
 Recognized shell test commands (`pytest`, `python -m pytest`, npm/pnpm/yarn/bun
 `test`, `node --test`, and the common Go/Rust/Java/.NET test runners) must run
 in the foreground. Background test requests receive an actionable error before
-spawning a job. Foreground tests inherit user cancellation and a configurable
-120-second deadline; their process tree must reach quiescence before the
-result returns. Two timeouts for the same test target without a source mutation
-or completed test pause the turn with `repeated_test_timeout`. A normal failed
-assertion is useful evidence, not a timeout. The guard survives transcript
-compaction and resets on a new human turn. Build commands and development
-servers keep their existing execution policy. Indirect shell scripts and
-arbitrary custom runners cannot always be recognized; explicitly bound those
-commands when diagnosing a hang.
+spawning a job. The native shell executor owns the deadline and process-tree
+cleanup: `bash-sandbox` defaults foreground commands to 120 seconds and honors
+explicit `timeoutMs` requests up to 600 seconds. This default also applies to
+other foreground shell commands. The loop detector does not add another timer
+or shorten an explicit deadline. Timeout results retain partial stdout/stderr
+and spill-file references, with the actual timeout and recovery guidance.
+User Stop remains caller cancellation and never counts as a timeout strike.
+
+Two timeouts for the same test invocation without a source mutation or a new
+completed-test milestone pause the turn with `repeated_test_timeout`. Simple
+pytest invocations normalize runner/verbosity wrappers while retaining test
+selectors. Dynamic or compound shell commands use their complete invocation
+and working directory; `$f.py` is never mistaken for a literal test filename.
+A normal failed assertion provides evidence. The guard survives transcript
+compaction and resets on a new human turn. Background development servers keep
+their existing policy. Indirect shell scripts and arbitrary custom runners
+cannot always be recognized; explicitly bound those commands when diagnosing
+a hang. A timeout alone does not establish a deadlock.
+
+These corrections live in this repository's maintained plugin patch and Web
+profile, not in manually edited installed packages or upstream Harness source.
+Release the committed integration source through the normal update workflow
+to every Harness installation: validate the Mac build first, then update the
+production installations on `192.168.1.5` and `192.168.1.21`. The frozen plugin
+lock and image qualification verify that subsequent builds retain the patch;
+upstream upgrades must refresh and requalify it when necessary.
 
 The running status now shows the current step number, time in that step, and
 total turn duration. A long turn with advancing steps is distinguishable from

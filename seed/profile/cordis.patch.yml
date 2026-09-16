@@ -5,6 +5,14 @@
   config:
     shell: /bin/bash
 
+# Let the native executor own the one deadline and preserve timed-out output.
+# Explicit requests may extend a foreground command to ten minutes; Stop still
+# cancels its process tree. This profile is shipped to every deployment.
+- id: bash-sandbox
+  config:
+    timeoutMs: 120000
+    maxTimeoutMs: 600000
+
 - id: system-prompt
   config:
     personaSuffix: >-
@@ -94,7 +102,6 @@
     - id: loop-detector
       name: 'dsh-loop-detector'
       config:
-        testTimeoutMs: 120000
         repeatedTestTimeouts: 2
         minLen: 512
         maxRetries: 1

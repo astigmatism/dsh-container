@@ -137,16 +137,16 @@ if [ "$build" -eq 1 ]; then
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
 
-  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.5-rc.2 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.6-alpha.1 ] || {
     echo "Built image has the wrong Harness version label." >&2
     exit 1
   }
-  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = fb2c4b9e698e30edb738bca4cf0618587db7d203 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d ] || {
     echo "Built image has the wrong upstream commit label." >&2
     exit 1
   }
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
-    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.5-rc.2") process.exit(1)'
+    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.6-alpha.1") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
 
   # Use the packaged native executor for deadlines, output capture and actual
@@ -208,9 +208,13 @@ if [ "$build" -eq 1 ]; then
       ]],
       ["deliverables", deliverables, [
         "dsh-native-file-opening-v1",
+        // 0.1.6-alpha.1 redesign: produced-file chips unconditionally call
+        // the in-app resource opener of the chat view; the legacy
+        // owner/opener branches no longer exist, and the patch verifies
+        // them upstream.
+        "function producedFileMentions(paths, openFile, label)",
         "function ProducedFiles({ matched: paths, openFile, t })",
-        "if (file === void 0) owner.openFile(path);",
-        "else opener.open(sessionId, file.seq, file.index);",
+        "verified produced-file actions use the chat resource opener",
       ]],
     ]) {
       for (const marker of markers) {

@@ -85,9 +85,9 @@ while :; do
 done
 
 expected_dsh_version=$(get_env DSH_VERSION)
-[ -n "$expected_dsh_version" ] || expected_dsh_version=0.1.5-rc.2
+[ -n "$expected_dsh_version" ] || expected_dsh_version=0.1.6-alpha.1
 expected_upstream_commit=$(get_env DSH_UPSTREAM_COMMIT)
-[ -n "$expected_upstream_commit" ] || expected_upstream_commit=fb2c4b9e698e30edb738bca4cf0618587db7d203
+[ -n "$expected_upstream_commit" ] || expected_upstream_commit=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
 deployed_dsh_version=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' deepseek-harness 2>/dev/null || true)
 deployed_upstream_commit=$(docker inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' deepseek-harness 2>/dev/null || true)
 if [ "$deployed_dsh_version" != "$expected_dsh_version" ] \
@@ -318,9 +318,13 @@ if ! compose exec -T harness node --input-type=module -e '
   Function(deliverables);
   for (const marker of [
     "dsh-native-file-opening-v1",
+    // 0.1.6-alpha.1 redesign: produced-file chips unconditionally call
+    // the in-app resource opener of the chat view; the legacy
+    // owner/opener branches no longer exist, and the patch verifies
+    // them upstream.
+    "function producedFileMentions(paths, openFile, label)",
     "function ProducedFiles({ matched: paths, openFile, t })",
-    "if (file === void 0) owner.openFile(path);",
-    "else opener.open(sessionId, file.seq, file.index);",
+    "verified produced-file actions use the chat resource opener",
   ]) {
     if (!deliverables.includes(marker)) throw new Error(`deployed deliverables browser module is missing ${marker}`);
   }
@@ -441,4 +445,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.1.5-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.1.6-alpha.1, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

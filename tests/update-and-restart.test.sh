@@ -328,11 +328,11 @@ make_fixture legacy-harness-pins matching
 } >>"$fixture/.env"
 run_update "$fixture" --external-ollama
 [ "$update_status" -eq 0 ] || fail "exact legacy Harness pins blocked maintenance"
-grep -Fxq 'DSH_VERSION=0.1.5-rc.2' "$fixture/.env" \
+grep -Fxq 'DSH_VERSION=0.1.6-alpha.1' "$fixture/.env" \
   || fail "legacy DSH version was not migrated"
-grep -Fxq 'DSH_UPSTREAM_COMMIT=fb2c4b9e698e30edb738bca4cf0618587db7d203' "$fixture/.env" \
+grep -Fxq 'DSH_UPSTREAM_COMMIT=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d' "$fixture/.env" \
   || fail "upstream commit provenance was not added"
-grep -Fxq 'HARNESS_IMAGE=local/deepseek-harness:0.1.5-rc.2-portable' "$fixture/.env" \
+grep -Fxq 'HARNESS_IMAGE=local/deepseek-harness:0.1.6-alpha.1-portable' "$fixture/.env" \
   || fail "legacy Harness image was not migrated"
 if grep -Fq '0.1.1-rc.2' "$fixture/.env"; then
   fail "legacy Harness pin remained after migration"
@@ -342,15 +342,15 @@ grep -Fq 'Migrated exact legacy Harness pins' "$fixture/output.log" \
 
 make_fixture previous-harness-pins matching
 {
-  printf '%s\n' 'DSH_VERSION=0.1.5-alpha.1'
-  printf '%s\n' 'DSH_UPSTREAM_COMMIT=5dda764ed3aa172535a7967b06ff95d9cbfe536a'
-  printf '%s\n' 'HARNESS_IMAGE=local/deepseek-harness:0.1.5-alpha.1-portable'
+  printf '%s\n' 'DSH_VERSION=0.1.5-rc.2'
+  printf '%s\n' 'DSH_UPSTREAM_COMMIT=fb2c4b9e698e30edb738bca4cf0618587db7d203'
+  printf '%s\n' 'HARNESS_IMAGE=local/deepseek-harness:0.1.5-rc.2-portable'
 } >>"$fixture/.env"
 run_update "$fixture" --external-ollama
 [ "$update_status" -eq 0 ] || fail "previous Harness pins blocked maintenance"
-grep -Fxq 'DSH_VERSION=0.1.5-rc.2' "$fixture/.env" || fail "previous version was not migrated"
-grep -Fxq 'DSH_UPSTREAM_COMMIT=fb2c4b9e698e30edb738bca4cf0618587db7d203' "$fixture/.env" || fail "previous commit was not migrated"
-grep -Fxq 'HARNESS_IMAGE=local/deepseek-harness:0.1.5-rc.2-portable' "$fixture/.env" || fail "previous image was not migrated"
+grep -Fxq 'DSH_VERSION=0.1.6-alpha.1' "$fixture/.env" || fail "previous version was not migrated"
+grep -Fxq 'DSH_UPSTREAM_COMMIT=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d' "$fixture/.env" || fail "previous commit was not migrated"
+grep -Fxq 'HARNESS_IMAGE=local/deepseek-harness:0.1.6-alpha.1-portable' "$fixture/.env" || fail "previous image was not migrated"
 
 make_fixture custom-harness-pins matching
 {

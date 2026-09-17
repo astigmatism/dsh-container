@@ -13,6 +13,10 @@ secrets/*
 !secrets/.gitkeep
 !secrets/stt_api_key
 
+# Live-Docker test staging (created under the project tree so an outer
+# Docker daemon can see it); removed by the test's cleanup trap.
+.dsh-delegated-gateway.*/
+
 *.tar
 *.tar.gz
 *.tgz

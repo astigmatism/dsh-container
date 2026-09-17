@@ -68,11 +68,18 @@ if awk '
   fail "verify.sh still probes the gateway itself instead of using verify-gateway-tls.sh"
 fi
 
-temporary_root=$(mktemp -d)
+# Stage under the project tree instead of the default mktemp root: when this
+# suite runs inside a container whose Docker daemon runs on an outer host,
+# bind-mounted staging paths must be visible to that daemon, and the project
+# directory is the shared location this test already relies on (the runner
+# mounts it).
+temporary_root=$(mktemp -d "$source_root/.dsh-delegated-gateway.XXXXXX")
 certdir=$temporary_root/certs
 mkdir "$certdir"
 suffix=$$
 runner_image=dsh-delegated-verify-runner:local
+host_probe_image=dsh-host-verify-probe:local
+host_probe_built=0
 names=
 add_name() { names="$names $1"; }
 
@@ -81,6 +88,9 @@ cleanup() {
     docker rm -f "$name" >/dev/null 2>&1 || true
   done
   docker rmi "$runner_image" >/dev/null 2>&1 || true
+  if [ "$host_probe_built" = 1 ]; then
+    docker rmi "$host_probe_image" >/dev/null 2>&1 || true
+  fi
   rm -rf "$temporary_root"
 }
 trap cleanup EXIT HUP INT TERM
@@ -284,11 +294,58 @@ expect_status 1 "the maintenance runner must NOT reach the gateway through its o
 
 # --- Host mode (unchanged behavior) -------------------------------------------
 
-expect_status 0 "host-mode trusted TLS verification from the host" \
-  sh "$helper" --container "$gw_ok" --ca "$certdir/ca.crt" --ip 127.0.0.1 --port "$gateway_port"
+# Host mode verifies from the Docker host's network namespace. Natively the
+# caller is that namespace. When this suite runs inside a container whose
+# Docker daemon lives on an outer host, the published port is not on the
+# caller's loopback, so the same helper runs in a throwaway --network host
+# container instead — which IS the Docker host's namespace.
+caller_reaches_published_port=1
+node -e '
+  const socket = require("node:net").connect({ host: "127.0.0.1", port: Number(process.argv[1]) });
+  socket.on("connect", () => process.exit(0));
+  socket.on("error", () => process.exit(1));
+  setTimeout(() => process.exit(1), 1500);
+' "$gateway_port" 2>/dev/null || caller_reaches_published_port=0
 
-expect_status 23 "host-mode verification fails closed when the gateway is unreachable" \
-  sh "$helper" --ca "$certdir/ca.crt" --ip 127.0.0.1 --port "$dead_port"
+if [ "$caller_reaches_published_port" = 1 ]; then
+  expect_status 0 "host-mode trusted TLS verification from the host" \
+    sh "$helper" --container "$gw_ok" --ca "$certdir/ca.crt" --ip 127.0.0.1 --port "$gateway_port"
+  expect_status 23 "host-mode verification fails closed when the gateway is unreachable" \
+    sh "$helper" --ca "$certdir/ca.crt" --ip 127.0.0.1 --port "$dead_port"
+else
+  mkdir "$temporary_root/host-probe"
+  cat >"$temporary_root/host-probe/Dockerfile" <<EOF
+FROM $node_image
+COPY --from=$docker_cli_image /usr/local/bin/docker /usr/local/bin/docker
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+EOF
+  docker build --quiet -t "$host_probe_image" "$temporary_root/host-probe" >/dev/null \
+    || fail "could not build the host-namespace TLS probe image"
+  host_probe_built=1
+  # The probe runs the real helper from the Docker host's network namespace;
+  # it mounts the Docker socket because the helper classifies a failed probe
+  # (exit 20 vs 23) through docker info.
+  expect_status 0 "host-mode trusted TLS verification from the Docker host namespace" \
+    docker run --rm --pull=never --network host \
+      --group-add "$(socket_group_id)" \
+      --volume /var/run/docker.sock:/var/run/docker.sock \
+      --volume "$source_root:$source_root:ro" \
+      --volume "$certdir:/dsh-test-certs:ro" \
+      --entrypoint sh \
+      "$host_probe_image" \
+      "$source_root/scripts/verify-gateway-tls.sh" --container "$gw_ok" \
+      --ca /dsh-test-certs/ca.crt --ip 127.0.0.1 --port "$gateway_port"
+  expect_status 23 "host-mode verification fails closed when the gateway is unreachable" \
+    docker run --rm --pull=never --network host \
+      --group-add "$(socket_group_id)" \
+      --volume /var/run/docker.sock:/var/run/docker.sock \
+      --volume "$source_root:$source_root:ro" \
+      --volume "$certdir:/dsh-test-certs:ro" \
+      --entrypoint sh \
+      "$host_probe_image" \
+      "$source_root/scripts/verify-gateway-tls.sh" --ca /dsh-test-certs/ca.crt \
+      --ip 127.0.0.1 --port "$dead_port"
+fi
 
 # --- Delegated mode from the maintenance runner --------------------------------
 

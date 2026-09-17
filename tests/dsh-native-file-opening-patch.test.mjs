@@ -71,6 +71,38 @@ const deliverablesFixture = `
 		}
 `;
 
+// 0.1.6-alpha.1's produced-file UI: chips always call the chat view's in-app
+// resource opener (sidebar preview) and the Host-capability parameters are gone.
+const deliverablesUpstreamFixture = `
+		function producedFileMentions(paths, openFile, label) {
+			return (0, react_jsx_runtime.jsxs)("span", {
+				children: [paths.map((path) => (0, react_jsx_runtime.jsx)("button", {
+					type: "button",
+					"aria-label": label(path),
+					onClick: () => {
+						openFile(path);
+					},
+					children: basename(path)
+				}, path))]
+			});
+		}
+		function ProducedFiles({ matched: paths, openFile, t }) {
+			const shown = paths.slice(0, 6);
+			return (0, react_jsx_runtime.jsxs)("div", {
+				children: [(0, react_jsx_runtime.jsx)("div", {
+					children: shown.map((path) => (0, react_jsx_runtime.jsx)("button", {
+						type: "button",
+						"aria-label": t("produced.open", { name: path }),
+						onClick: () => {
+							openFile(path);
+						},
+						children: basename(path)
+					}, path))
+				})]
+			});
+		}
+`;
+
 function source(initialDescription) {
   let current = initialDescription;
   return {
@@ -137,6 +169,21 @@ test("production patches gate Markdown, produced-file, and folder affordances an
   assert.match(deliverables, /hidden > 0 && isLoopback && canOpenPath/);
   assert.equal(patchConversationSource(conversation), conversation, "conversation patch is idempotent");
   assert.equal(patchDeliverablesSource(deliverables), deliverables, "deliverables patch is idempotent");
+});
+
+test("0.1.6-alpha.1's in-app produced-file opener is verified upstream and marker-only", () => {
+  const patched = patchDeliverablesSource(deliverablesUpstreamFixture);
+
+  assert.match(patched, /dsh-native-file-opening-v1/);
+  assert.ok(
+    !/isLoopback/.test(patched) && !/useHostDescription/.test(patched),
+    "verified upstream shape must not gain native gating",
+  );
+  assert.equal(
+    patchDeliverablesSource(patched),
+    patched,
+    "upstream deliverables verification is idempotent",
+  );
 });
 
 test("upstream anchor drift fails with a clear diagnostic", () => {

@@ -25,14 +25,14 @@ token_policy_temporary=
 unset DSH_UPDATE_RESUME
 export GIT_TERMINAL_PROMPT=0
 
-previous_dsh_version=0.1.5-alpha.1
-previous_upstream_commit=5dda764ed3aa172535a7967b06ff95d9cbfe536a
-previous_harness_image=local/deepseek-harness:0.1.5-alpha.1-portable
+previous_dsh_version=0.1.5-rc.2
+previous_upstream_commit=fb2c4b9e698e30edb738bca4cf0618587db7d203
+previous_harness_image=local/deepseek-harness:0.1.5-rc.2-portable
 legacy_dsh_version=0.1.1-rc.2
 legacy_harness_image=local/deepseek-harness:0.1.1-rc.2-portable
-current_dsh_version=0.1.5-rc.2
-current_upstream_commit=fb2c4b9e698e30edb738bca4cf0618587db7d203
-current_harness_image=local/deepseek-harness:0.1.5-rc.2-portable
+current_dsh_version=0.1.6-alpha.1
+current_upstream_commit=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
+current_harness_image=local/deepseek-harness:0.1.6-alpha.1-portable
 
 case "$resume" in
   0|1) ;;
@@ -298,7 +298,7 @@ migrate_upstream_pins() {
 
 delegate_from_harness() {
   helper_image=${HOST_EXEC_IMAGE:-$(get_env HARNESS_IMAGE)}
-  [ -n "$helper_image" ] || helper_image=local/deepseek-harness:0.1.5-rc.2-portable
+  [ -n "$helper_image" ] || helper_image=local/deepseek-harness:0.1.6-alpha.1-portable
   docker_gid=$(stat -c '%g' /var/run/docker.sock)
   maintenance_name=deepseek-harness-maintenance-$(date -u +%Y%m%d%H%M%S)-$$
 
@@ -1034,7 +1034,7 @@ remove_obsolete_images() {
 
 if [ -n "$obsolete_image_ids" ] && [ "${DSH_UPDATE_DELEGATED:-0}" = 1 ]; then
   cleanup_image=$(get_env HARNESS_IMAGE)
-  [ -n "$cleanup_image" ] || cleanup_image=local/deepseek-harness:0.1.5-rc.2-portable
+  [ -n "$cleanup_image" ] || cleanup_image=local/deepseek-harness:0.1.6-alpha.1-portable
   docker_gid=$(stat -c '%g' /var/run/docker.sock)
   cleanup_name=deepseek-harness-image-cleanup-$(date -u +%Y%m%d%H%M%S)-$$
   # This helper uses the newly deployed image, waits for the updater container

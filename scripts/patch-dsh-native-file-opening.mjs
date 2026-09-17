@@ -110,10 +110,15 @@ export function patchConversationSource(input) {
 /** Make produced-file and folder affordances obey the same Host capability. */
 export function patchDeliverablesSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
+  // Upstream shapes whose produced-file chips call the chat view's in-app
+  // resource opener (sidebar preview) instead of dispatching to a native host.
+  // 0.1.6-alpha.1's redesign keeps that behavior while dropping the
+  // isLoopback/useHostDescription parameters, so it is marker-only here.
   if (
     input.includes('function ProducedFiles({ matched: paths, openFile, t })') &&
     input.includes('openFile(path);') &&
     (input.includes('producedFileMentions(paths, owner.openFile') ||
+      input.includes('function producedFileMentions(paths, openFile, label)') ||
       (input.includes('if (file === void 0) owner.openFile(path);') && input.includes('else opener.open(sessionId, file.seq, file.index);')))
   ) {
     return `${input}\n// ${PATCH_MARKER}: verified produced-file actions use the chat resource opener.\n`;

@@ -17,9 +17,9 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-- DeepSeek Harness `0.1.5-rc.2`, the official package built from GitHub tag
-  `dsh-v0.1.5-rc.2` at commit
-  `fb2c4b9e698e30edb738bca4cf0618587db7d203`; pnpm `11.7.0`; Docker CLI
+- DeepSeek Harness `0.1.6-alpha.1`, the official package built from GitHub tag
+  `dsh-v0.1.6-alpha.1` at commit
+  `0a15e36e7f82b6ed45af6fa9759f29b40dcd965d`; pnpm `11.7.0`; Docker CLI
   `29.6.0`. The release and commit are immutable build inputs rather than a
   moving `master` reference.
 - Node 22 base pinned to the digest used by the source image.
@@ -68,7 +68,7 @@ The locked web profile contains these ten plugins:
 9. `dsh-favicon-status` 0.1.0-rc.6 with its manifest UTF-8 BOM removed at
    image build time so the upstream profile loader can parse it
 10. `dsh-better-sidebar` 0.19.1 with live agent terminals, task views, and
-    session file activity, pinned to its DSH 0.1.5-rc.2-compatible release
+    session file activity, pinned to its DSH 0.1.6-alpha.1-compatible release
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
@@ -466,7 +466,7 @@ session cookie after the stored gateway credentials are accepted. HTTP Basic
 Auth remains available for non-browser clients. Sessions last up to 12 hours
 and are invalidated when the gateway restarts.
 
-Harness `0.1.5-rc.2` also authenticates its own browser and RPC carrier.
+Harness `0.1.6-alpha.1` also authenticates its own browser and RPC carrier.
 The container entrypoint generates a fresh 32-byte launch token on every
 start, stores it as `data/backend-auth/launch-token` with mode `0600`, and supplies
 the same value to Harness. The gateway sees that file through a read-only
@@ -687,8 +687,8 @@ before fetch. After fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
 before it can change services. During this handoff, exact legacy
-`0.1.1-rc.2` and `0.1.5-alpha.1` package/image pins are atomically migrated to the qualified
-`0.1.5-rc.2` tag and its recorded upstream commit; deliberately customized
+`0.1.1-rc.2` and `0.1.5-rc.2` package/image pins are atomically migrated to the qualified
+`0.1.6-alpha.1` tag and its recorded upstream commit; deliberately customized
 pins are left unchanged, and dry-run reports the migration without editing
 `.env`. The fetched updater also records `DSH_TOKEN_ENABLED=false` when an
 older `.env` has no token-plugin policy, while preserving an existing exact

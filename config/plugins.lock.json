@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-09-13",
-  "dsh": "0.1.5-rc.2 (dsh-v0.1.5-rc.2; fb2c4b9e698e30edb738bca4cf0618587db7d203)",
+  "capturedAt": "2026-09-17",
+  "dsh": "0.1.6-alpha.1 (dsh-v0.1.6-alpha.1; 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d)",
   "profile": "web",
   "plugins": {
     "@zoytown/dsh-token": "0.1.3",

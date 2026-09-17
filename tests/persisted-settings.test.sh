@@ -130,10 +130,16 @@ run_entrypoint() {
   fixture_path=$1
   : >"$fixture_path/dsh.log"
   cp "$source_root/tests/fixtures/deploy-stub.sh" "$fixture_path/profile-sync"
+  # Pin the optional build-script hooks to absent paths so the entrypoint
+  # stays hermetic: hosts with a populated /opt/dsh-build and a routable
+  # ai-router name would otherwise let live router discovery rewrite the
+  # fixture's persisted settings.
   set +e
   PATH="$source_root/tests/fixtures/settings-bin:$PATH" \
     FAKE_DSH_LOG="$fixture_path/dsh.log" \
     DSH_HOME="$fixture_path/data/dsh" \
+    DSH_SIDEBAR_SETTINGS_INITIALIZER="$fixture_path/absent-sidebar-initializer" \
+    DSH_ROUTER_SETTINGS_MIGRATOR="$fixture_path/absent-router-migrator" \
     DSH_CANONICAL_SETTINGS="$fixture_path/config/settings.yaml" \
     DSH_RUNTIME_PROFILE_SYNC="$fixture_path/profile-sync" \
     DSH_SETTINGS_INITIALIZER="$initializer" \

@@ -9,8 +9,8 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 FROM ${NODE_IMAGE} AS harness
 
-ARG DSH_VERSION=0.1.5-rc.2
-ARG DSH_UPSTREAM_COMMIT=fb2c4b9e698e30edb738bca4cf0618587db7d203
+ARG DSH_VERSION=0.1.6-alpha.1
+ARG DSH_UPSTREAM_COMMIT=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
 ARG PNPM_VERSION=11.7.0
 
 LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-container" \

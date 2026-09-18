@@ -647,10 +647,10 @@ deployment once the network is actually up:
   attachment. When either is missing it recreates the harness for the recorded
   `DSH_DEPLOYMENT_MODE` with
   `docker compose up -d --force-recreate --no-deps harness`, waits up to
-  420 seconds for the harness healthcheck, covering Compose's three-minute
+  900 seconds for the harness healthcheck, covering Compose's ten-minute
   startup grace for cold profile copies and its retry window — exiting 1 with
-  a clear message on timeout so a broken image fails the unit visibly instead of hanging the
-  boot — then recreates the gateway and re-verifies binding, attachment, and
+  a clear message on timeout so a broken image fails the unit visibly instead
+  of hanging the boot — then recreates the gateway and re-verifies binding, attachment, and
   gateway status. A healthy deployment is a fast no-op that exits 0.
 - `deploy/deepseek-harness-after-network.service` — the canonical user unit
   template (`Type=oneshot`, `RemainAfterExit=yes`, `Restart=on-failure`,

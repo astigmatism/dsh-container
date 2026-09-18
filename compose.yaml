@@ -72,7 +72,10 @@ services:
       interval: 15s
       timeout: 5s
       retries: 12
-      start_period: 45s
+      # The canonical profile is copied to the host bind mount before the web
+      # server starts. Allow cold Docker Desktop starts to finish that copy;
+      # a successful check still makes Harness ready immediately.
+      start_period: 3m
 
   gateway:
     build:

@@ -12,7 +12,7 @@ set -eu
 # This script waits for the Docker daemon, the LAN address, the local-ai
 # bootstrap service, and (in external mode) the shared network; verifies the
 # harness port binding and network attachment; when either is missing it
-# recreates the harness for the recorded DSH_DEPLOYMENT_MODE, waits up to 240s
+# recreates the harness for the recorded DSH_DEPLOYMENT_MODE, waits up to 420s
 # for the harness healthcheck (exiting 1 with a clear message on timeout so a
 # broken image fails the unit visibly instead of hanging the boot), then
 # recreates the gateway and re-verifies binding, attachment, and gateway
@@ -24,7 +24,8 @@ env_file=$project_dir/.env
 unit_name=deepseek-harness-after-network
 harness_container=deepseek-harness
 gateway_container=deepseek-harness-gateway
-health_timeout=240
+# Cover Compose's startup grace plus its bounded health-check retry window.
+health_timeout=420
 configuration_exit=78
 
 fail() {

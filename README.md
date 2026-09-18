@@ -414,11 +414,13 @@ Busy/rate-limit, server, transport, and empty-response failures retain at most
 two bounded Harness retries; the underlying SDK retry loop is disabled.
 Timeout and context-overflow failures are not in that retry set. Unrestricted
 local generation has no total client deadline or implicit output quota. The
-Harness now honors `streamIdleTimeoutMs` even for unrestricted models (ten
+Harness now honors `streamIdleTimeoutMs` even for unrestricted models (fifteen
 minutes in the seeded settings), independently of the router's backend-progress
 watchdog. Inactivity expiry and user Stop close the HTTP request and response
 body, release the provider slot, and preserve the durable task history. A
 stream that continues producing model events resets the inactivity timer.
+Existing installations preserve their provider settings; set each provider's
+`streamIdleTimeoutMs` to `900000` through Harness settings to adopt this allowance.
 Both routes set `cacheRetention: none` so pi-ai omits an unnecessary OpenAI
 `prompt_cache_key` field; the production backend still performs its own
 volatile slot-prefix caching. Reasoning summaries and opaque signatures are

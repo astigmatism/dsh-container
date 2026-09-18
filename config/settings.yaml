@@ -29,7 +29,7 @@ llm-pi-ai:
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
-      streamIdleTimeoutMs: 600000
+      streamIdleTimeoutMs: 900000
       maxConcurrency: 1
       reasoning: medium
       # Medium is a DSH choice; the router raw default remains template-defined.
@@ -59,7 +59,7 @@ llm-pi-ai:
       apiKeyEnv: OLLAMA_DSH_API_KEY
       api: openai-responses
       baseURL: http://ai-router:11434/v1
-      streamIdleTimeoutMs: 600000
+      streamIdleTimeoutMs: 900000
       maxConcurrency: 1
       reasoning: medium
       # Medium is a DSH choice; the router raw default remains template-defined.

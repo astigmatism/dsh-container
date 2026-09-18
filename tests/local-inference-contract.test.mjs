@@ -45,7 +45,7 @@ test("Daytime 128K and Nighttime 128K selections expose independent request cont
 test("busy retries stay bounded while context and timeout failures are not blindly retried", () => {
   for (const block of [canonical, expanded]) {
     assert.doesNotMatch(block, /^      timeoutMs:/m);
-    assert.match(block, /streamIdleTimeoutMs: 600000/);
+    assert.match(block, /streamIdleTimeoutMs: 900000/);
     assert.match(block, /maxRetries: 2/);
     assert.match(block, /retryableCodes: \[\s*EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT\s*\]/);
     const retryable = block.match(/retryableCodes: \[([^\]]+)\]/)?.[1] ?? "";

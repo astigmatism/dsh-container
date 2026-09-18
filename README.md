@@ -595,6 +595,18 @@ generation used by deployed revision `6c119f7`; regenerate and review it with an
 Harness upgrade. The initial lock resolves the published graph as of that
 deployment's build on 2026-09-17 at 05:27:47 UTC.
 
+Ordinary `docker compose build` uses the Harness version and upstream commit
+pinned in `Dockerfile` on Windows, macOS, and Linux. Legacy `DSH_VERSION` and
+`DSH_UPSTREAM_COMMIT` values in `.env` or the calling shell are ignored, so an
+older deployment configuration cannot select a runtime incompatible with the
+checked-in dependency lock. Keep host-specific `.env` settings when pulling
+updates; there is no need to regenerate that file. `HARNESS_IMAGE` remains a
+customizable image name/tag, not a runtime version selector. The updater retains
+its existing migration of recognized legacy image tags. Deployment verification
+checks the installed version and image provenance against the repository pins.
+Deliberate Harness upgrades must update the Dockerfile pins, runtime/profile
+locks, and version-specific patches together.
+
 Browser access to localhost, container addresses, and LAN destinations is controlled
 separately by `DSH_BROWSER_ALLOW_PRIVATE_HOSTS` in the deployment's `.env`.
 Set it to `true` for deployments that need to browse their own services, then run

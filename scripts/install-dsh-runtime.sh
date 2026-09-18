@@ -11,7 +11,10 @@ const fs = require('node:fs');
 const lock = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const expected = process.argv[3];
 if (lock.name !== '@deepseek-ai/dsh' || lock.version !== expected) {
-  throw new Error('Regenerate the reviewed runtime lock before changing DSH_VERSION');
+  throw new Error(`Requested DSH_VERSION=${JSON.stringify(expected)}, but the reviewed runtime lock is ${lock.name}@${lock.version}. Use the repository Dockerfile pins; a Harness upgrade requires a matching reviewed runtime lock.`);
+}
+if (lock.packages?.['']?.name !== lock.name || lock.packages?.['']?.version !== expected) {
+  throw new Error('Runtime lock root package does not match its reviewed Harness version');
 }
 for (const [path, entry] of Object.entries(lock.packages)) {
   if (/(?:^|\/)node_modules\/@deepseek-ai\/dsh(?:-[^/]+)?$/.test(path) && entry.version !== expected) {

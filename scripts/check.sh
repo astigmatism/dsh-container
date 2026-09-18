@@ -38,6 +38,7 @@ fi
 "$project_dir/tests/deployment-mode.test.sh"
 "$project_dir/tests/service-portal.test.sh"
 "$project_dir/tests/compose-topology.test.sh"
+python3 "$project_dir/tests/runtime-release.test.py"
 "$project_dir/tests/delegated-gateway.test.sh"
 "$project_dir/tests/dictation-validation.test.sh"
 "$project_dir/tests/profile-lockfile.test.sh"

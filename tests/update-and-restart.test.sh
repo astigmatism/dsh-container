@@ -4,6 +4,13 @@ set -eu
 test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source_root=$(CDPATH= cd -- "$test_dir/.." && pwd)
 legacy_updater_commit=05f68939f5f3c81e1ef54464fd80281c953d5dc4
+# CI's shallow checkout omits the historical compatibility fixture. Fetch
+# only that reviewed commit, without moving HEAD or changing the worktree.
+if [ "$(git -C "$source_root" rev-parse --is-shallow-repository)" = true ] \
+  && ! git -C "$source_root" cat-file -e "$legacy_updater_commit:scripts/update-and-restart.sh" 2>/dev/null; then
+  GIT_TERMINAL_PROMPT=0 git -C "$source_root" fetch --quiet --no-tags --depth=1 \
+    https://github.com/astigmatism/dsh-container.git "$legacy_updater_commit"
+fi
 temporary_root=$(mktemp -d)
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
 

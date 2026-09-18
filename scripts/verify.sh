@@ -84,15 +84,26 @@ while :; do
   sleep 2
 done
 
-expected_dsh_version=$(get_env DSH_VERSION)
-[ -n "$expected_dsh_version" ] || expected_dsh_version=0.1.6-alpha.1
-expected_upstream_commit=$(get_env DSH_UPSTREAM_COMMIT)
-[ -n "$expected_upstream_commit" ] || expected_upstream_commit=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
+# Match the source used by Compose builds, including deployments whose .env
+# still contains obsolete version/provenance values. Image tags are user-owned
+# names and do not select the runtime version.
+get_release_arg() {
+  awk -F= -v wanted="ARG $1" '
+    $1 == wanted { sub(/\r$/, ""); print substr($0, index($0, "=") + 1); count++ }
+    END { if (count != 1) exit 1 }
+  ' "$project_dir/Dockerfile"
+}
+if ! expected_dsh_version=$(get_release_arg DSH_VERSION) \
+  || ! expected_upstream_commit=$(get_release_arg DSH_UPSTREAM_COMMIT) \
+  || [ -z "$expected_dsh_version" ] || [ -z "$expected_upstream_commit" ]; then
+  echo "Could not read the reviewed Harness version/provenance from Dockerfile." >&2
+  exit "$configuration_exit"
+fi
 deployed_dsh_version=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' deepseek-harness 2>/dev/null || true)
 deployed_upstream_commit=$(docker inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' deepseek-harness 2>/dev/null || true)
 if [ "$deployed_dsh_version" != "$expected_dsh_version" ] \
   || [ "$deployed_upstream_commit" != "$expected_upstream_commit" ]; then
-  echo "The deployed Harness image provenance does not match .env." >&2
+  echo "The deployed Harness image provenance does not match the repository Dockerfile." >&2
   exit "$configuration_exit"
 fi
 if ! compose exec -T harness node -e \

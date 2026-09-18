@@ -42,7 +42,10 @@ RUN apt-get update \
 
 COPY config/dsh-runtime.package-lock.json /opt/dsh-build/dsh-runtime.package-lock.json
 COPY scripts/install-dsh-runtime.sh /opt/dsh-build/install-dsh-runtime.sh
-RUN npm install --global "pnpm@${PNPM_VERSION}" \
+# Include the build-time installer in the CRLF defense for older Windows
+# checkouts, before executing it (runtime entrypoints are normalized below).
+RUN sed -i 's/\r$//' /opt/dsh-build/install-dsh-runtime.sh \
+    && npm install --global "pnpm@${PNPM_VERSION}" \
     && sh /opt/dsh-build/install-dsh-runtime.sh "${DSH_VERSION}" \
     && test "$(node -p "require('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json').version")" = "${DSH_VERSION}"
 

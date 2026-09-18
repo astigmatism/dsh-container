@@ -169,6 +169,9 @@ RUN apt-get update \
 # lockfile's patched-dependency state drops a plugin's dependency graph -
 # exactly the state `--dump-config` and `plugin list` above would pass.
 COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
+# The maintenance checkout uses a restrictive umask. Runtime verification runs
+# as the service UID, so new non-executable helpers must remain readable.
+RUN chmod 0644 /opt/dsh-build/patch-dsh-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 RUN /usr/local/bin/dsh-verify-plugin-boot
 
 ENV DSH_HOME=/data/dsh \

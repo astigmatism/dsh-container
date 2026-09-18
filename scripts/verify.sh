@@ -129,6 +129,12 @@ do
   }
 done
 
+if ! compose exec -T harness node /opt/dsh-build/patch-dsh-file-previews.mjs \
+  --check --profile /data/dsh/profiles/web; then
+  echo "The deployed file preview compatibility patch is missing." >&2
+  exit "$configuration_exit"
+fi
+
 # Exercise the installed PTY as the service UID and the mounted sidebar API.
 # The read-only client probe also works when the user has disabled agent tools.
 if ! compose exec -T -e DSH_PROFILE_ROOT=/data/dsh/profiles/web harness \

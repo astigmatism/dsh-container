@@ -51,6 +51,7 @@ import sys
 root = Path(sys.argv[1])
 for relative in (
     "config/active-model.json",
+    "config/dsh-runtime.package-lock.json",
     "config/plugins.lock.json",
     "config/speech.lock.json",
     "seed/profile/package.json",
@@ -101,6 +102,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/initialize-sidebar-settings.mjs
     node --check scripts/verify-sidebar-terminal.mjs
     node --check scripts/verify-sidebar-client.mjs
+    node --check scripts/verify-file-previews.mjs
     node --check scripts/verify-resident-client.mjs
     node --check scripts/migrate-resident-models.mjs
     node --check scripts/verify-router-contract.mjs
@@ -119,6 +121,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-progress-status.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
+    node --check scripts/patch-dsh-file-previews.mjs
     node --check scripts/patch-dsh-web-auth.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
     node --check scripts/patch-dsh-playwright-webserver.mjs
@@ -148,6 +151,8 @@ if [ "$build" -eq 1 ]; then
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.6-alpha.1") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
+    /opt/dsh-build/patch-dsh-file-previews.mjs --check
 
   # Use the packaged native executor for deadlines, output capture and actual
   # process-tree cleanup; mock plugin tests alone cannot verify these contracts.

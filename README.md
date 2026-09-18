@@ -568,6 +568,32 @@ image build verifies that contract against the exact pinned browser bundles;
 an upstream layout or behavior change fails the build rather than silently
 restoring native host dispatch.
 
+The pinned `dsh-better-sidebar` 0.19.1 viewer also receives a version-checked
+build patch. Session-relative resources resolve against the referenced session's
+working directory before entering the shared image, text, HTML, PDF, and download
+adapter. Restored tabs wait for the session directory to load; absolute paths and
+server-side filesystem containment remain unchanged. Image failures display an
+error with Retry. Headless hosts keep native application actions disabled without
+showing a desktop warning on working in-app preview cards. The build and deployment
+checks verify this patch; an upstream version or bundle change requires review.
+HTML documents retain the existing opaque-origin sandbox, whose request fence
+rejects linked local assets. Full local sites with assets can run in Browser Use
+when private hosts are enabled.
+
+The CLI's dependency graph is also locked in `config/dsh-runtime.package-lock.json`
+and installed with `npm ci`. Pinning only the top-level CLI admits newer internal
+prereleases through upstream caret ranges. This lock retains the 0.1.6-alpha.1
+generation used by deployed revision `6c119f7`; regenerate and review it with any
+Harness upgrade. The initial lock resolves the published graph as of that
+deployment's build on 2026-09-17 at 05:27:47 UTC.
+
+Browser access to localhost, container addresses, and LAN destinations is controlled
+separately by `DSH_BROWSER_ALLOW_PRIVATE_HOSTS` in the deployment's `.env`.
+Set it to `true` for deployments that need to browse their own services, then run
+the normal update workflow to recreate the container. This also permits private
+subresources. The repository default remains `false`; this switch does not provide
+a native desktop or change file-viewer permissions.
+
 Docker Desktop's Linux VM is not the Windows kernel. On Windows, Harness can
 manage the mounted Windows files and Docker resources, but `host-exec` cannot
 run native Windows programs or administer Windows services. That requires a

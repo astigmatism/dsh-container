@@ -40,7 +40,10 @@ RUN apt-get update \
       util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install --global "pnpm@${PNPM_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}" \
+COPY config/dsh-runtime.package-lock.json /opt/dsh-build/dsh-runtime.package-lock.json
+COPY scripts/install-dsh-runtime.sh /opt/dsh-build/install-dsh-runtime.sh
+RUN npm install --global "pnpm@${PNPM_VERSION}" \
+    && sh /opt/dsh-build/install-dsh-runtime.sh "${DSH_VERSION}" \
     && test "$(node -p "require('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json').version")" = "${DSH_VERSION}"
 
 # DSH is pinned above. Apply the router discovery/error/concurrency boundary,
@@ -66,6 +69,7 @@ COPY scripts/verify-dsh-playwright-stream.mjs /opt/dsh-build/verify-dsh-playwrig
 COPY scripts/patch-dsh-progress-status.mjs /opt/dsh-build/patch-dsh-progress-status.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
+COPY scripts/patch-dsh-file-previews.mjs /opt/dsh-build/patch-dsh-file-previews.mjs
 COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
 COPY scripts/patch-dsh-playwright-webserver.mjs /opt/dsh-build/patch-dsh-playwright-webserver.mjs
@@ -126,6 +130,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends make g++ \
     && cd /opt/dsh-seed/profiles/web \
     && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store \
+    && node /opt/dsh-build/patch-dsh-file-previews.mjs \
     && node /opt/dsh-build/verify-sidebar-terminal.mjs --native \
     # dsh-favicon-status rc.6 ships a UTF-8 BOM that DSH's JSON loader rejects.
     && node -e 'const fs = require("node:fs"); const p = "node_modules/dsh-favicon-status/package.json"; const s = fs.readFileSync(p, "utf8").replace(/^\uFEFF/, ""); if (JSON.parse(s).version !== "0.1.0-rc.6") throw Error("favicon manifest version drift"); fs.writeFileSync(p, s)' \
@@ -163,6 +168,7 @@ RUN apt-get update \
 # playwright-core, pngjs, and ws), so this fails the build when the seed
 # lockfile's patched-dependency state drops a plugin's dependency graph -
 # exactly the state `--dump-config` and `plugin list` above would pass.
+COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 RUN /usr/local/bin/dsh-verify-plugin-boot
 
 ENV DSH_HOME=/data/dsh \

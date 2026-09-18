@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3999';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/opt/dsh-seed/profiles/web';
@@ -20,6 +21,18 @@ const archive = Buffer.from('504b0506000000000000000000000000000000000000', 'hex
 const sessions = [];
 const workspaces = [];
 const errors = [];
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
+let privateAssetRequests = 0;
+const localSite = createServer((request, response) => {
+  if (request.url === '/asset.png') {
+    privateAssetRequests += 1;
+    response.setHeader('Content-Type', 'image/png');
+    response.end(png);
+  } else {
+    response.setHeader('Content-Type', 'text/html');
+    response.end('<!doctype html><title>Local browser verification</title><body style="margin:0;background:rgb(19,90,150)"><h1 style="margin:40px">LOCAL_BROWSER_OK</h1><img src="/asset.png">');
+  }
+});
 page.on('pageerror', error => errors.push(error.message));
 async function rpc(method, request) {
   const response = await context.request.post(`${base}/api/${method}`, { data: {
@@ -60,7 +73,8 @@ function blankPdf() {
   return pdf;
 }
 try {
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
+  await new Promise(resolve => localSite.listen(0, '127.0.0.1', resolve));
+  const localUrl = `http://127.0.0.1:${localSite.address().port}/`;
   for (const folder of ['one', 'two']) {
     await mkdir(`${root}/${folder}`);
     await writeFile(`${root}/${folder}/image #?% ü.png`, png);
@@ -99,6 +113,27 @@ try {
   await page.waitForFunction(id => !!window.__previewTestContext.sessions.list.getSnapshot().byId[id]?.cwd, sessions[0]);
   await select(sessions[0]);
   console.log('Loaded the installed sidebar and referenced session directories.');
+  const browserState = await page.evaluate(sessionId => window.__previewTestContext.connection.rpc.call(
+    '/dsh-playwright', 'state', { sessionId },
+  ), sessions[0]);
+  assert.equal(browserState.ok, true, browserState.error?.message);
+  await page.getByRole('textbox', { name: 'Browser Use address' }).fill(localUrl);
+  const navigation = page.waitForResponse(response => response.url().endsWith('/dsh-playwright/navigate'));
+  await page.getByRole('button', { name: 'Go', exact: true }).click();
+  const navigationResponse = await navigation;
+  assert.equal(navigationResponse.status(), 200);
+  const navigationResult = (await navigationResponse.json()).result;
+  assert.equal(navigationResult.ok, true, navigationResult.error?.message);
+  assert.equal(navigationResult.value.url, localUrl);
+  assert.ok(navigationResult.value.image.length > 1000, 'live browser screenshot');
+  await page.waitForFunction(url => {
+    const canvas = document.querySelector(`canvas[aria-label="Live screenshot of ${url}"]`);
+    if (!canvas) return false;
+    const pixel = canvas.getContext('2d').getImageData(5, 5, 1, 1).data;
+    return Math.abs(pixel[0] - 19) < 10 && Math.abs(pixel[1] - 90) < 10 && Math.abs(pixel[2] - 150) < 10;
+  }, localUrl);
+  assert.ok(privateAssetRequests > 0, 'private subresource loaded');
+  console.log('Verified local HTTP navigation, private subresources, screenshots, and the shared Browser Use control panel.');
   await open(sessions[0], 'image #?% ü.png');
   await image().waitFor();
   assert.equal(await image().evaluate(img => img.naturalWidth), 1);
@@ -161,5 +196,6 @@ try {
   for (const sessionId of sessions) await rpc('workspace/archiveSession', { sessionId }).catch(() => {});
   for (const workspaceId of workspaces) await rpc('workspace/delete', { workspaceId }).catch(() => {});
   await browser.close();
+  await new Promise(resolve => localSite.close(resolve));
   await rm(root, { recursive: true, force: true });
 }

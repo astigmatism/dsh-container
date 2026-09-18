@@ -229,7 +229,7 @@ if [ "$build" -eq 1 ]; then
     if (!token.includes("dsh-token-session-format-v3-compat-v1")) {
       throw new Error("dsh-token is missing format v3 compatibility");
     }
-    if (!playwright.includes("dsh-playwright-web-transport-scope-v5")) {
+    if (!playwright.includes("dsh-playwright-web-transport-scope-v6")) {
       throw new Error("dsh-playwright is missing scoped web transport compatibility");
     }
     if (!connection.includes("dsh-container-web-launch-token-v1")) {

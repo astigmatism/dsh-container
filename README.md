@@ -157,6 +157,12 @@ PNG screenshots through DSH's native image-attachment path. Both local model
 routes declare image input, and the production Responses router accepts
 image-bearing function-call results directly.
 
+The pinned alpha.1 Connection registry needs the plugin's web context passed
+explicitly when registering Browser Use controls. The version-checked build
+patch retains the existing authentication and request checks. The disposable
+browser gate exercises the panel's control RPC, local HTTP navigation, private
+subresources, and rendered screenshot, as well as the stream upgrade route.
+
 Chromium is installed at `/usr/bin/chromium` in the Harness image. Public web
 targets work with the secure default. To validate an application on localhost,
 a Docker network, or a trusted LAN, set this deployment-local value in `.env`

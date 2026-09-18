@@ -151,7 +151,7 @@ RUN apt-get update \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-playwright-web-transport-scope-v5' node_modules/dsh-playwright/lib/index.js \
+    && grep -Fq 'dsh-playwright-web-transport-scope-v6' node_modules/dsh-playwright/lib/index.js \
     && grep -Fq 'dsh-session-pin@0.7.11' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ui-appearance@0.1.10' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \

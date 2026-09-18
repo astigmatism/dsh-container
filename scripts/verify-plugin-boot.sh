@@ -19,7 +19,8 @@ canonical_settings=${DSH_CANONICAL_SETTINGS:-/opt/dsh-defaults/settings.yaml}
 local_speech_source=${DSH_LOCAL_SPEECH_SOURCE:-/opt/dsh-local-speech}
 port=${DSH_PLUGIN_BOOT_PORT:-3999}
 stable=5
-timeout_seconds=90
+# Cold ARM builds can spend over 90 seconds importing the complete plugin graph.
+timeout_seconds=180
 
 [ -d "$seed_home/profiles/web" ] || {
   echo "Canonical web profile is missing: $seed_home/profiles/web" >&2
@@ -60,7 +61,8 @@ cd "$parent"
 
 (
   unset DISPLAY WAYLAND_DISPLAY
-  DSH_HOME=$home DSH_TELEMETRY_DISABLED=1 \
+  # The disposable browser fixture verifies local pages and private subresources.
+  DSH_HOME=$home DSH_TELEMETRY_DISABLED=1 DSH_BROWSER_ALLOW_PRIVATE_HOSTS=true \
     exec dsh web --no-open --port "$port"
 ) >"$boot_log" 2>&1 &
 boot_pid=$!
@@ -107,7 +109,8 @@ const { chromium } = require(`${process.env.DSH_PROFILE_ROOT}/node_modules/playw
     `http://127.0.0.1:${process.env.DSH_BOOT_PORT}/?token=${token}`,
     { waitUntil: "networkidle", timeout: 30000 },
   );
-  await page.waitForTimeout(2000);
+  await page.locator("[data-composer-input]").first().waitFor({ timeout: 30000 });
+  await page.locator("[data-local-speech-button]").first().waitFor({ timeout: 30000 });
   const state = await page.evaluate(() => ({
     bodyChars: (document.body?.innerText ?? "").trim().length,
     composerInputs: document.querySelectorAll("[data-composer-input]").length,

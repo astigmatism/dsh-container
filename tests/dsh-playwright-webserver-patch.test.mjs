@@ -16,12 +16,13 @@ function apply(ctx, config) {
 
 test("mounts each HTTP-backed transport in its complete service scope", () => {
   const patched = patchSource(fixture);
-  assert.match(patched, /dsh-playwright-web-transport-scope-v5/);
+  assert.match(patched, /dsh-playwright-web-transport-scope-v6/);
   assert.match(patched, /ctx\.inject\(\["webServer"\], \(webCtx\) => \{/);
   assert.match(patched, /registerStreamRoute\(webCtx, browser\)/);
   assert.match(patched, /\n\t\}\);\n\tctx\.systemPrompt\.section/);
   assert.match(patched, /ctx\.systemPrompt\.section[\s\S]*ctx\.inject\(\["webServer", "connection"\]/);
-  assert.match(patched, /webCtx\.connection\.rpc\.handle/);
+  assert.match(patched, /webCtx\.connection\.register\(webCtx, RPC_CHANNEL/);
+  assert.doesNotMatch(patched, /webCtx\.connection\.rpc\.handle/);
   assert.equal(patchSource(patched), patched);
 });
 

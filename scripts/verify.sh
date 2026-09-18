@@ -216,7 +216,7 @@ if ! compose exec -T harness node --input-type=module -e '
   import { readFile } from "node:fs/promises";
   const path = "/data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js";
   const source = await readFile(path, "utf8");
-  if (!source.includes("dsh-playwright-web-transport-scope-v5")) {
+  if (!source.includes("dsh-playwright-web-transport-scope-v6")) {
     throw new Error("deployed dsh-playwright is missing scoped web transport compatibility");
   }
   console.log("Verified dsh-playwright scoped web transport compatibility.");

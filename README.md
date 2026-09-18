@@ -823,7 +823,13 @@ That helper and its Docker logs remove themselves afterward. See
 `docs/maintenance-agent-prompt.md` for a reusable agent prompt.
 
 The rebuild refreshes the canonical profile in the image, and container start
-atomically replaces the runtime software-managed profile from that image.
+synchronizes the runtime software-managed profile from that image. It compares
+file contents, repairs changed or missing files, and removes obsolete plugins
+while leaving matching dependencies in place. This avoids copying and deleting
+thousands of unchanged files on Docker Desktop host mounts at every restart.
+Changed files are replaced atomically, and Harness starts only after the full
+synchronization succeeds. Saved settings and sessions are outside these managed
+directories and remain intact.
 
 Verify a running external, remote, or managed deployment:
 

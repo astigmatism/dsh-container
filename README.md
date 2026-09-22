@@ -457,11 +457,6 @@ blocking or replacing machine-specific runtime settings.
 The gateway uses the intentionally tracked, source-managed home-network login
 on every deployment:
 
-```text
-username: astigmatism
-password: ICar12..
-```
-
 On startup, the gateway replaces any divergent persisted login hash with these
 credentials, while continuing to store only the PBKDF2 hash in runtime data.
 The plaintext default is public repository configuration by design; do not

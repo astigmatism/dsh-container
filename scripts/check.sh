@@ -5,6 +5,10 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 build=0
 
+# Synthetic values for offline Compose validation only; never deploy these.
+export HARNESS_AUTH_USERNAME=compose-check-user
+export HARNESS_AUTH_PASSWORD=compose-check-password
+
 case "${1:-}" in
   '') ;;
   --build) build=1 ;;
@@ -38,6 +42,7 @@ fi
 "$project_dir/tests/deployment-mode.test.sh"
 "$project_dir/tests/service-portal.test.sh"
 "$project_dir/tests/compose-topology.test.sh"
+python3 "$project_dir/tests/gateway-credentials.test.py"
 python3 "$project_dir/tests/runtime-release.test.py"
 python3 "$project_dir/tests/runtime-profile-sync.test.py"
 "$project_dir/tests/delegated-gateway.test.sh"

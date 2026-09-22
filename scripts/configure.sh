@@ -127,6 +127,8 @@ else
   echo "Wrote $env_file for $host_username (UID:GID $host_uid:$host_gid)."
 fi
 
+python3 "$script_dir/gateway-credentials.py" --initialize "$env_file" --username "$host_username"
+
 mkdir -p \
   "$project_dir/data/backend-auth" \
   "$project_dir/data/dsh" \

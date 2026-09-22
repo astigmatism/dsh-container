@@ -34,4 +34,4 @@ grep -Fq "input.matches('[data-composer-input][role=\"textbox\"]')" \
   "$project_dir/plugin/dsh-local-speech/client.js" \
   || fail "speech plugin no longer supports the current Harness composer"
 
-echo "ok - dictation is mandatory at image build and post-deployment runtime validation"
+echo "ok - dictation controls and configured speech policy are verified at deployment"

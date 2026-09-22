@@ -14,6 +14,16 @@ render() {
     >"$temporary_root/$name.json"
 }
 
+# Missing private credentials fail Compose validation before any service changes.
+if env -u HARNESS_AUTH_USERNAME -u HARNESS_AUTH_PASSWORD docker compose \
+  --env-file "$project_dir/.env.example" -f "$project_dir/compose.yaml" \
+  config --quiet >"$temporary_root/missing.log" 2>&1; then
+  echo "Missing gateway credentials unexpectedly passed Compose validation" >&2
+  exit 1
+fi
+export HARNESS_AUTH_USERNAME=compose-fixture-user
+export HARNESS_AUTH_PASSWORD=compose-fixture-password
+
 render default
 render remote -f "$project_dir/compose.remote-ollama.yaml"
 render external -f "$project_dir/compose.external-ollama.yaml"
@@ -97,10 +107,8 @@ if "ai-router" in remote["services"]["harness"].get("depends_on", {}):
 
 for name, config in (("default", default), ("remote", remote), ("external", external), ("managed", managed)):
     environment = config["services"]["gateway"]["environment"]
-    if environment.get("HARNESS_AUTH_USERNAME") != "astigmatism":
-        raise SystemExit(f"{name}: source-managed gateway username changed")
-    if environment.get("HARNESS_AUTH_PASSWORD") != "ICar12..":
-        raise SystemExit(f"{name}: source-managed gateway password changed")
+    if environment.get("HARNESS_AUTH_USERNAME") != "compose-fixture-user" or environment.get("HARNESS_AUTH_PASSWORD") != "compose-fixture-password":
+        raise SystemExit(f"{name}: gateway does not use deployment-local credentials")
     if environment.get("HARNESS_BACKEND_TOKEN_FILE") != "/run/dsh-backend-auth/launch-token":
         raise SystemExit(f"{name}: gateway does not consume the private Harness launch token")
     gateway_token_volume = next(

@@ -23,6 +23,15 @@ export function credentialsValid(auth, username, password) {
     && timingSafeEqual(expectedHash, receivedHash)
 }
 
+export function deploymentCredentials(env) {
+  const username = env.HARNESS_AUTH_USERNAME || ''
+  const password = env.HARNESS_AUTH_PASSWORD || ''
+  if (!username || /[:\r\n\0]/.test(username) || password.length < 8 || /[\r\n\0]/.test(password)) {
+    throw new Error('Configure a gateway username and password of at least 8 characters in the private deployment .env; no shared login is provided')
+  }
+  return { username, password }
+}
+
 export function sourceManagedCredentials(existing, username, password, options = {}) {
   try {
     if (existing && credentialsValid(existing, username, password)) {

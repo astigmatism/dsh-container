@@ -427,8 +427,8 @@ if ! compose exec -T gateway node --input-type=module -e '
 fi
 echo "Verified authenticated gateway-to-Harness browser proxying."
 
-# Require the authenticated public dictation route, source-managed STT model,
-# non-empty private key, and the configured speech service to remain healthy.
+# Verify the authenticated dictation route. Explicitly disabled speech must
+# report disabled; a configured service still requires its key and health.
 if ! compose exec -T gateway node /opt/dsh-gateway/verify-dictation-backend.mjs; then
   if ! docker info >/dev/null 2>&1; then
     echo "Docker Engine became unavailable during dictation backend verification." >&2

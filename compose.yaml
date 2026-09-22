@@ -92,8 +92,8 @@ services:
         condition: service_healthy
         restart: true
     environment:
-      HARNESS_AUTH_USERNAME: astigmatism
-      HARNESS_AUTH_PASSWORD: ICar12..
+      HARNESS_AUTH_USERNAME: "${HARNESS_AUTH_USERNAME:?Run configure.sh or change-password.py to provision private credentials}"
+      HARNESS_AUTH_PASSWORD: "${HARNESS_AUTH_PASSWORD:?Run configure.sh or change-password.py to provision private credentials}"
       HARNESS_TLS_IP: "${HARNESS_TLS_IP:-127.0.0.1}"
       HARNESS_TLS_DNS: "${HARNESS_TLS_DNS:-deepseek-harness.local}"
       HARNESS_BACKEND_URL: http://127.0.0.1:3080

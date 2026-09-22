@@ -9,6 +9,7 @@ import { appendBackendCookie, createBackendAuthenticator } from './backend-auth.
 import {
   createSessionAuthenticator,
   credentialsValid,
+  deploymentCredentials,
   sourceManagedCredentials,
   withoutSessionCookie,
 } from './session-auth.mjs'
@@ -50,14 +51,13 @@ function atomicJson(path, value) {
 }
 
 function loadAuth() {
-  const username = process.env.HARNESS_AUTH_USERNAME || 'astigmatism'
-  const password = process.env.HARNESS_AUTH_PASSWORD || 'ICar12..'
+  const { username, password } = deploymentCredentials(process.env)
   let existing = null
   try { existing = JSON.parse(readFileSync(authPath, 'utf8')) } catch {}
   const { auth, changed } = sourceManagedCredentials(existing, username, password)
   if (changed) {
     atomicJson(authPath, auth)
-    process.stdout.write(`Activated the source-managed gateway identity for ${username}.\n`)
+    process.stdout.write(`Activated the deployment-local gateway identity for ${username}.\n`)
   }
   return auth
 }

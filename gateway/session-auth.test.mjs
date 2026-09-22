@@ -6,6 +6,7 @@ import {
   createCredentialRecord,
   createSessionAuthenticator,
   credentialsValid,
+  deploymentCredentials,
   sourceManagedCredentials,
   withoutSessionCookie,
 } from './session-auth.mjs'
@@ -23,27 +24,27 @@ test('validates the stored PBKDF2 identity', () => {
   assert.equal(credentialsValid(auth, 'someone-else', 'correct horse'), false)
 })
 
-test('converges an existing identity to the source-managed credentials', () => {
-  const replacement = sourceManagedCredentials(auth, 'astigmatism', 'ICar12..', {
+test('converges an existing identity to the deployment-local credentials', () => {
+  const replacement = sourceManagedCredentials(auth, 'test-operator', 'test-only-password', {
     salt: 'ffeeddccbbaa99887766554433221100',
     iterations: 1,
   })
   assert.equal(replacement.changed, true)
-  assert.equal(credentialsValid(replacement.auth, 'astigmatism', 'ICar12..'), true)
+  assert.equal(credentialsValid(replacement.auth, 'test-operator', 'test-only-password'), true)
 
   const unchanged = sourceManagedCredentials(
     replacement.auth,
-    'astigmatism',
-    'ICar12..',
+    'test-operator',
+    'test-only-password',
   )
   assert.equal(unchanged.changed, false)
   assert.equal(unchanged.auth, replacement.auth)
 
-  const direct = createCredentialRecord('astigmatism', 'ICar12..', {
+  const direct = createCredentialRecord('test-operator', 'test-only-password', {
     salt: '00112233445566778899aabbccddeeff',
     iterations: 1,
   })
-  assert.equal(credentialsValid(direct, 'astigmatism', 'ICar12..'), true)
+  assert.equal(credentialsValid(direct, 'test-operator', 'test-only-password'), true)
 })
 
 test('accepts Basic Auth and issued browser sessions', () => {
@@ -65,4 +66,12 @@ test('removes only the gateway session cookie before proxying', () => {
   assert.equal(withoutSessionCookie(`${SESSION_COOKIE_NAME}=secret; theme=dark`), 'theme=dark')
   assert.equal(withoutSessionCookie(`theme=dark; ${SESSION_COOKIE_NAME}=secret; layout=wide`), 'theme=dark; layout=wide')
   assert.equal(withoutSessionCookie(`${SESSION_COOKIE_NAME}=secret`), null)
+})
+
+
+test('gateway requires explicit private credentials and accepts eight characters', () => {
+  assert.throws(() => deploymentCredentials({}), /Configure a gateway username/)
+  assert.throws(() => deploymentCredentials({ HARNESS_AUTH_USERNAME: 'test', HARNESS_AUTH_PASSWORD: 'short' }), /at least 8/)
+  assert.throws(() => deploymentCredentials({ HARNESS_AUTH_USERNAME: 'bad:name', HARNESS_AUTH_PASSWORD: 'testpass' }), /Configure/)
+  assert.deepEqual(deploymentCredentials({ HARNESS_AUTH_USERNAME: 'test', HARNESS_AUTH_PASSWORD: 'testpass' }), { username: 'test', password: 'testpass' })
 })

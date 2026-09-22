@@ -454,14 +454,19 @@ blocking or replacing machine-specific runtime settings.
 
 ## First login and TLS
 
-The gateway uses the intentionally tracked, source-managed home-network login
-on every deployment:
+The gateway requires a deployment-local username and password. On first setup,
+`configure.sh` generates a random password and records it only in the ignored,
+mode-0600 `.env` file. It never prints the value. Inspect that file privately
+when signing in. No shared login or fallback password is built into the gateway.
 
-On startup, the gateway replaces any divergent persisted login hash with these
-credentials, while continuing to store only the PBKDF2 hash in runtime data.
-The plaintext default is public repository configuration by design; do not
-expose the gateway outside the trusted home network without replacing this
-policy.
+Existing deployments must explicitly provision their login before adopting this
+release. Run `./scripts/change-password.py --username YOUR_USER`, which accepts
+passwords of at least eight characters, updates only the private `.env`, and
+never places the password in shell history. Recreate the gateway with your
+normal mode's Compose files (`up -d --no-deps gateway`) to activate the change;
+`docker compose restart` alone does not reload environment variables. Startup
+converges the private PBKDF2 hash to the configured login, preserving a matching
+hash across restarts. Other deployment settings and conversation data remain.
 
 Open `http://HOST:3081/` for the portable, no-certificate-install login. Browser
 navigation opens a normal sign-in page and creates an HTTP-only, same-site
@@ -498,7 +503,9 @@ deployment has working dictation. The distinct TTS token remains ignored:
 - `secrets/stt_api_key` — tracked home-network configuration
 - `secrets/tts_api_key` — ignored deployment-local configuration
 
-An empty URL or key disables only that speech service. The Docker build context
+An empty URL or key disables only that speech service. Deployment verification
+checks the authenticated disabled response when the STT URL is empty; a
+configured URL still requires its key and a healthy backend. The Docker build context
 excludes `secrets/`, so neither key is built into an image, returned in the
 `/local-stt/config` or `/local-tts/config` responses, sent to the browser, or
 mounted into Harness. Compose mounts the required key only into the gateway.

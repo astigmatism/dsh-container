@@ -46,8 +46,8 @@ importers:
         specifier: 0.7.11
         version: 0.7.11(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/schemastery@3.18.2)
       dsh-ui-appearance:
-        specifier: 0.1.10
-        version: 0.1.10(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/schemastery@3.18.2)
+        specifier: 0.1.11
+        version: 0.1.11(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/schemastery@3.18.2)
 
 packages:
 
@@ -639,8 +639,8 @@ packages:
       '@deepseek-ai/dsh-client-ui-sidebar':
         optional: true
 
-  dsh-ui-appearance@0.1.10:
-    resolution: {integrity: sha512-8FtEdGqbxPIOs0RG4ZGPEaV2A7GNm5e4ao91sul9AAulyf0u4Enu82OGDFCFqLS3Q+c44KsHzO4jS9M9SW9hkQ==}
+  dsh-ui-appearance@0.1.11:
+    resolution: {integrity: sha512-Ynvz6NBm6lgfRLZK49MWSKMei054gVbcI+cwRwcdl727yyHwTofzbAG3Al+7aZepuo657fKAv68Rz5zqAtHiug==}
     engines: {node: '>=18'}
     peerDependencies:
       '@deepseek-ai/cordis': '*'
@@ -1600,7 +1600,7 @@ snapshots:
       '@deepseek-ai/cordis': 4.0.2
       '@deepseek-ai/schemastery': 3.18.2
 
-  dsh-ui-appearance@0.1.10(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/schemastery@3.18.2):
+  dsh-ui-appearance@0.1.11(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/schemastery@3.18.2):
     dependencies:
       clsx: 2.1.1
     optionalDependencies:

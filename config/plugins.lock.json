@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-17",
+  "capturedAt": "2026-09-22",
   "dsh": "0.1.6-alpha.1 (dsh-v0.1.6-alpha.1; 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d)",
   "profile": "web",
   "plugins": {
@@ -11,7 +11,7 @@
     "dsh-playwright": "0.1.0 (local panel patch; complete web-transport scopes integration v5)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-session-pin": "0.7.11",
-    "dsh-ui-appearance": "0.1.10",
+    "dsh-ui-appearance": "0.1.11",
     "dsh-better-sidebar": "0.19.1"
   },
   "sourceHeads": {

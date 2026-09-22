@@ -156,7 +156,7 @@ RUN apt-get update \
     && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-playwright-web-transport-scope-v6' node_modules/dsh-playwright/lib/index.js \
     && grep -Fq 'dsh-session-pin@0.7.11' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ui-appearance@0.1.10' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ui-appearance@0.1.11' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \

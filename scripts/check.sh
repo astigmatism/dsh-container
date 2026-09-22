@@ -185,7 +185,7 @@ if [ "$build" -eq 1 ]; then
     'dsh-plugin-task-notification@0.2.1' \
     'dsh-playwright@0.1.0' \
     'dsh-session-pin@0.7.11' \
-    'dsh-ui-appearance@0.1.10'
+    'dsh-ui-appearance@0.1.11'
   do
     printf '%s\n' "$inventory" | grep -Fq "$expected" || {
       echo "Built image is missing: $expected" >&2

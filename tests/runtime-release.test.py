@@ -15,6 +15,7 @@ PINS = dict(re.findall(r"^ARG (DSH_VERSION|DSH_UPSTREAM_COMMIT|NODE_IMAGE)=(.+)$
 LOCK = json.loads((ROOT / "config/dsh-runtime.package-lock.json").read_text())
 ENV = {key: value for key, value in os.environ.items()
        if key not in ("DSH_VERSION", "DSH_UPSTREAM_COMMIT", "HARNESS_IMAGE",
+                      "HARNESS_AUTH_USERNAME", "HARNESS_AUTH_PASSWORD",
                       "COMPOSE_FILE", "COMPOSE_ENV_FILES")}
 
 
@@ -42,6 +43,8 @@ class RuntimeReleaseTests(unittest.TestCase):
             env_file = Path(temporary) / "test.env"
             for kind in ("fresh", "current", "legacy-lf", "legacy-crlf", "shell"):
                 values = ["HARNESS_IMAGE=local/custom-harness:retained",
+                          "HARNESS_AUTH_USERNAME=release-fixture-user",
+                          "HARNESS_AUTH_PASSWORD=release-fixture-password",
                           "HARNESS_HTTPS_PORT=43443", "HOST_UID=12345"]
                 if kind.startswith("legacy"):
                     values += ["DSH_VERSION=0.1.1-rc.2", "DSH_UPSTREAM_COMMIT=stale-commit"]

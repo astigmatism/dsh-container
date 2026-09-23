@@ -5,9 +5,12 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 build=0
 
-# Synthetic values for offline Compose validation only; never deploy these.
-export HARNESS_AUTH_USERNAME=compose-check-user
-export HARNESS_AUTH_PASSWORD=compose-check-password
+# Synthetic credentials belong only to static configuration checks. Do not
+# let them conceal missing private credentials in upgrade/recovery tests.
+compose_check() {
+  HARNESS_AUTH_USERNAME=compose-check-user HARNESS_AUTH_PASSWORD=compose-check-password \
+    docker compose "$@"
+}
 
 case "${1:-}" in
   '') ;;
@@ -77,21 +80,21 @@ for relative in (
     compile(source, relative, "exec")
 PY
 
-docker compose --env-file "$project_dir/.env.example" \
+compose_check --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" config --quiet
-docker compose --env-file "$project_dir/.env.example" \
+compose_check --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.external-ollama.yaml" \
   config --quiet
-docker compose --env-file "$project_dir/.env.example" \
+compose_check --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.remote-ollama.yaml" \
   config --quiet
-docker compose --env-file "$project_dir/.env.example" \
+compose_check --env-file "$project_dir/.env.example" \
   -f "$project_dir/compose.yaml" \
   -f "$project_dir/compose.managed-ollama.yaml" \
   config --quiet
-docker compose --env-file "$project_dir/speech/.env.example" \
+compose_check --env-file "$project_dir/speech/.env.example" \
   -f "$project_dir/speech/compose.yaml" config --quiet
 
 node_image=node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436

@@ -3,14 +3,21 @@ set -eu
 
 test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source_root=$(CDPATH= cd -- "$test_dir/.." && pwd)
+real_docker=$(command -v docker)
+real_docker_config=${DOCKER_CONFIG:-$HOME/.docker}
+# Maintenance tests must not inherit the synthetic credentials used for
+# unrelated static Compose checks.
+unset HARNESS_AUTH_USERNAME HARNESS_AUTH_PASSWORD
 legacy_updater_commit=05f68939f5f3c81e1ef54464fd80281c953d5dc4
 # CI's shallow checkout omits the historical compatibility fixture. Fetch
 # only that reviewed commit, without moving HEAD or changing the worktree.
-if [ "$(git -C "$source_root" rev-parse --is-shallow-repository)" = true ] \
-  && ! git -C "$source_root" cat-file -e "$legacy_updater_commit:scripts/update-and-restart.sh" 2>/dev/null; then
-  GIT_TERMINAL_PROMPT=0 git -C "$source_root" fetch --quiet --no-tags --depth=1 \
-    https://github.com/astigmatism/dsh-container.git "$legacy_updater_commit"
-fi
+for historical_commit in "$legacy_updater_commit" 01c27f686ff3b1a28440114b2645c66d27f5e1c6 b6a85b44e5f6d2c218dbdfc266665bb4d08527e9; do
+  if [ "$(git -C "$source_root" rev-parse --is-shallow-repository)" = true ] \
+    && ! git -C "$source_root" cat-file -e "$historical_commit:scripts/update-and-restart.sh" 2>/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git -C "$source_root" fetch --quiet --no-tags --depth=1 \
+      https://github.com/astigmatism/dsh-container.git "$historical_commit"
+  fi
+done
 temporary_root=$(mktemp -d)
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
 
@@ -81,6 +88,7 @@ make_fixture() {
     printf 'HOST_GID=%s\n' "$(id -g)"
     printf 'HOST_HOME=%s\n' "$fixture/home"
     printf '%s\n' 'DSH_TOKEN_ENABLED=false'
+    printf '%s\n' 'HARNESS_AUTH_USERNAME=fixture-user' 'HARNESS_AUTH_PASSWORD=fixture-password'
   } >"$fixture/.env"
   : >"$fixture/git.log"
   : >"$fixture/docker.log"
@@ -119,6 +127,8 @@ run_update() {
     FAKE_GIT_ORIGIN_URL="${TEST_GIT_ORIGIN_URL:-https://github.com/astigmatism/dsh-container.git}" \
     FAKE_GIT_MERGE_BASE_EXIT="${TEST_GIT_MERGE_BASE_EXIT:-0}" \
     FAKE_DOCKER_LOG="$fixture_path/docker.log" \
+    FAKE_REAL_COMPOSE="${TEST_REAL_COMPOSE:-}" \
+    FAKE_REAL_DOCKER_CONFIG="$real_docker_config" \
     FAKE_DEPLOY_LOG="$fixture_path/docker.log" \
     FAKE_GIT_DIRTY="${TEST_GIT_DIRTY:-}" \
     FAKE_DOCKER_INFO_EXIT="${TEST_DOCKER_INFO_EXIT:-0}" \
@@ -613,6 +623,7 @@ assert_status "$fixture" 'failure_type=deployment-mode-inference'
 
 make_fixture portable-base-label matching
 {
+  printf '%s\n' 'HARNESS_AUTH_USERNAME=fixture-user' 'HARNESS_AUTH_PASSWORD=fixture-password'
   printf '%s\n' 'DSH_DEPLOYMENT_MODE=remote'
   printf 'HOST_UID=%s\n' "$(id -u)"
   printf 'HOST_GID=%s\n' "$(id -g)"
@@ -759,6 +770,7 @@ do
   selected_flag=${mode_mapping#* }
   make_fixture "mode-$selected_mode" matching
   {
+    printf '%s\n' 'HARNESS_AUTH_USERNAME=fixture-user' 'HARNESS_AUTH_PASSWORD=fixture-password'
     printf 'DSH_DEPLOYMENT_MODE=%s\n' "$selected_mode"
     printf 'HOST_UID=%s\n' "$(id -u)"
     printf 'HOST_GID=%s\n' "$(id -g)"
@@ -900,4 +912,89 @@ unset TEST_DEPLOY_EXIT TEST_COMPOSE_START_EXIT
 [ "$update_status" -eq 20 ] || fail "failed recovery changed the deployment failure exit"
 assert_status "$fixture" 'recovery=failed'
 
-echo "ok - updater preflights, ordering, modes, locking, recovery, and scoped cleanup are safe"
+# Exercise the actual current Compose model, with no ambient credentials,
+# across the original updater, the last pre-credential release, and the
+# broken release. Only lifecycle operations and the synthetic gateway's
+# Docker inspection are stubbed; config interpolation is real.
+for historical_commit in "$legacy_updater_commit" 01c27f686ff3b1a28440114b2645c66d27f5e1c6 b6a85b44e5f6d2c218dbdfc266665bb4d08527e9; do
+  for selected_mode in external remote managed; do
+    make_legacy_fixture "credentials-$historical_commit-$selected_mode" matching
+    git -C "$source_root" show "$historical_commit:scripts/update-and-restart.sh" >"$fixture/scripts/update-and-restart.sh"
+    git -C "$source_root" show "$historical_commit:scripts/configure.sh" >"$fixture/scripts/configure.sh"
+    sed "s/^DSH_DEPLOYMENT_MODE=.*/DSH_DEPLOYMENT_MODE=$selected_mode/" "$fixture/.env" >"$fixture/.env.mode"
+    mv "$fixture/.env.mode" "$fixture/.env"
+    cp "$source_root"/compose*.yaml "$fixture/"
+    python3 "$source_root/tests/fixtures/gateway-identity.py" "$fixture"
+    auth_before=$(cksum "$fixture/data/gateway/auth.json")
+    settings_before=$(cksum "$fixture/data/dsh/settings.yaml")
+    TEST_FAST_FORWARD_SOURCE=$fixture/target
+    TEST_REAL_COMPOSE=$real_docker
+    TEST_UPDATE_DELEGATED=1
+    TEST_SERVICE_PORTAL_HOST_HOME=$fixture/home
+    TEST_SERVICE_PORTAL_JOB_ID=credential-migration-fixture
+    run_update "$fixture" "--$selected_mode-ollama"
+    unset TEST_FAST_FORWARD_SOURCE TEST_REAL_COMPOSE TEST_UPDATE_DELEGATED TEST_SERVICE_PORTAL_HOST_HOME TEST_SERVICE_PORTAL_JOB_ID
+    if [ "$update_status" -ne 0 ]; then
+      cat "$fixture/output.log" >&2
+      fail "legacy credential upgrade failed for $historical_commit / $selected_mode"
+    fi
+    [ "$auth_before" = "$(cksum "$fixture/data/gateway/auth.json")" ] || fail "migration changed the login hash"
+    [ "$settings_before" = "$(cksum "$fixture/data/dsh/settings.yaml")" ] || fail "migration changed runtime settings"
+    grep -Fq 'login preserved' "$fixture/output.log" || fail "migration did not run"
+    if grep -Fq 'migration-fixture-' "$fixture/output.log" "$fixture/docker.log" "$fixture/data/maintenance-status"; then
+      fail "migration leaked private credentials"
+    fi
+    env_before=$(cksum "$fixture/.env")
+    TEST_REAL_COMPOSE=$real_docker
+    run_update "$fixture" "--$selected_mode-ollama"
+    unset TEST_REAL_COMPOSE
+    [ "$update_status" -eq 0 ] || fail "repeated credential upgrade failed"
+    [ "$env_before" = "$(cksum "$fixture/.env")" ] || fail "repeated upgrade rewrote credentials"
+  done
+done
+
+make_fixture credentials-dry-run matching
+python3 "$source_root/tests/fixtures/gateway-identity.py" "$fixture"
+env_before=$(cksum "$fixture/.env")
+run_update "$fixture" --dry-run
+[ "$update_status" -eq 0 ] || fail "recoverable credentials failed dry-run"
+[ "$env_before" = "$(cksum "$fixture/.env")" ] || fail "dry-run wrote credentials"
+assert_no_fetch_or_mutation "$fixture"
+grep -Fq 'would be migrated' "$fixture/output.log" || fail "dry-run skipped recovery verification"
+
+make_legacy_fixture legacy-unrecoverable-credentials matching
+python3 "$source_root/tests/fixtures/gateway-identity.py" "$fixture"
+rm "$fixture/gateway-inspect.json"
+env_before=$(cksum "$fixture/.env")
+TEST_FAST_FORWARD_SOURCE=$fixture/target
+run_update "$fixture"
+unset TEST_FAST_FORWARD_SOURCE
+[ "$update_status" -ne 0 ] || fail "historical configure generated replacement credentials"
+[ "$env_before" = "$(cksum "$fixture/.env")" ] || fail "historical configure changed unrecoverable credentials"
+assert_no_interruption "$fixture"
+
+for credential_failure in absent wrong-project conflict invalid-hash; do
+  make_fixture "credential-failure-$credential_failure" matching
+  python3 "$source_root/tests/fixtures/gateway-identity.py" "$fixture"
+  case "$credential_failure" in
+    absent) rm "$fixture/gateway-inspect.json" ;;
+    wrong-project)
+      sed 's/"deepseek-harness"/"unrelated"/' "$fixture/gateway-inspect.json" >"$fixture/wrong.json"
+      mv "$fixture/wrong.json" "$fixture/gateway-inspect.json"
+      ;;
+    conflict) echo 'HARNESS_AUTH_USERNAME=different-user' >>"$fixture/.env" ;;
+    invalid-hash) echo '{}' >"$fixture/data/gateway/auth.json" ;;
+  esac
+  env_before=$(cksum "$fixture/.env")
+  run_update "$fixture"
+  [ "$update_status" -ne 0 ] || fail "accepted $credential_failure credentials"
+  [ "$env_before" = "$(cksum "$fixture/.env")" ] || fail "rejected credential migration wrote .env"
+  assert_status "$fixture" 'failure_type=configuration-verification'
+  assert_status "$fixture" 'failure_stage=gateway-credentials'
+  assert_no_interruption "$fixture"
+  if grep -Eq ' config | pull | build |^deploy ' "$fixture/docker.log"; then
+    fail "credential failure reached Compose validation or deployment"
+  fi
+done
+
+echo "ok - updater preflights, legacy credential migrations, real Compose validation, modes, locking, recovery, and scoped cleanup are safe"

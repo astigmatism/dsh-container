@@ -8,6 +8,10 @@ case "${1:-}" in
     exit "${FAKE_DOCKER_INFO_EXIT:-0}"
     ;;
   inspect)
+    if [ "${2:-}" = aaaaaaaaaaaa ]; then
+      cat "${FAKE_DOCKER_LOG%/*}/gateway-inspect.json"
+      exit 0
+    fi
     if [ "${2:-}" = "${FAKE_COMPOSE_CONTAINER_ID:-__no_compose_container__}" ]; then
       [ "${FAKE_CONTAINER_IMAGE_INSPECT_EXIT:-0}" -eq 0 ] || exit "$FAKE_CONTAINER_IMAGE_INSPECT_EXIT"
       printf '%s\n' "${FAKE_CONTAINER_IMAGE_ID:?}"
@@ -52,7 +56,14 @@ case "${1:-}" in
     for argument do
       case "$argument" in
         version) exit "${FAKE_COMPOSE_VERSION_EXIT:-0}" ;;
-        config) exit "${FAKE_COMPOSE_CONFIG_EXIT:-0}" ;;
+        config)
+          if [ -n "${FAKE_REAL_COMPOSE:-}" ]; then
+            env -u HARNESS_AUTH_USERNAME -u HARNESS_AUTH_PASSWORD \
+              DOCKER_CONFIG="$FAKE_REAL_DOCKER_CONFIG" "$FAKE_REAL_COMPOSE" "$@"
+            exit $?
+          fi
+          exit "${FAKE_COMPOSE_CONFIG_EXIT:-0}"
+          ;;
         ps)
           [ -z "${FAKE_COMPOSE_CONTAINER_ID:-}" ] || printf '%s\n' "$FAKE_COMPOSE_CONTAINER_ID"
           exit "${FAKE_COMPOSE_PS_EXIT:-0}"
@@ -77,6 +88,12 @@ case "${1:-}" in
     ;;
   container)
     case "${2:-}" in
+      ls)
+        if [ -f "${FAKE_DOCKER_LOG%/*}/gateway-inspect.json" ]; then
+          echo aaaaaaaaaaaa
+        fi
+        exit 0
+        ;;
       rm) exit "${FAKE_CONTAINER_RM_EXIT:-0}" ;;
     esac
     exit 99

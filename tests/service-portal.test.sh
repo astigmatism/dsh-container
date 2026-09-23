@@ -5,6 +5,9 @@ test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$test_dir/.." && pwd)
 temporary_root=$(mktemp -d)
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
+# This suite only renders Compose metadata; it never starts services.
+export HARNESS_AUTH_USERNAME=compose-fixture-user
+export HARNESS_AUTH_PASSWORD=compose-fixture-password
 
 grep -Fq 'COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx' "$project_dir/Dockerfile" \
   || { echo "Harness image does not include the Buildx plugin required by delegated updates." >&2; exit 1; }

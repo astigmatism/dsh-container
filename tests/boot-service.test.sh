@@ -349,6 +349,8 @@ runtime_project=$temporary_root/runtime-project
 runtime_bin=$temporary_root/runtime-bin
 runtime_state=$temporary_root/runtime-state
 mkdir "$runtime_project" "$runtime_bin" "$runtime_state"
+mkdir "$runtime_project/scripts"
+cp "$source_root/scripts/gateway-credentials.py" "$runtime_project/scripts/"
 cp "$boot_script" "$runtime_project/start-after-network.sh"
 chmod +x "$runtime_project/start-after-network.sh"
 touch "$runtime_project/compose.yaml" "$runtime_project/compose.external-ollama.yaml"
@@ -358,6 +360,8 @@ HARNESS_BIND_ADDRESS=192.0.2.21
 HARNESS_HTTPS_PORT=3443
 HARNESS_CA_PORT=3081
 OLLAMA_NETWORK=test-ollama
+HARNESS_AUTH_USERNAME=fixture-user
+HARNESS_AUTH_PASSWORD=fixture-password
 EOF
 
 cat >"$runtime_bin/ip" <<'EOF'
@@ -407,6 +411,9 @@ case "${1:-}" in
     esac
     ;;
   info) ;;
+  container)
+    if [ -f "$MOCK_PROJECT/gateway-inspect.json" ]; then echo aaaaaaaaaaaa; fi
+    ;;
   network) ;;
   port)
     if [ "$MOCK_SCENARIO" = healthy ] \
@@ -416,6 +423,10 @@ case "${1:-}" in
     fi
     ;;
   inspect)
+    if [ "${2:-}" = aaaaaaaaaaaa ]; then
+      cat "$MOCK_PROJECT/gateway-inspect.json"
+      exit 0
+    fi
     case "$*" in
       *'{{if .State.Health}}'*) echo healthy ;;
       *'{{.State.Status}}'*)
@@ -439,6 +450,7 @@ run_boot_script() {
   docker_log=$3
   rm -f "$runtime_state/harness-recreated" "$runtime_state/address-ready" "$docker_log"
   MOCK_SCENARIO=$scenario \
+    MOCK_PROJECT=$runtime_project \
     MOCK_RUNTIME_STATE=$runtime_state \
     MOCK_DOCKER_LOG=$docker_log \
     PATH="$runtime_bin:$PATH" \
@@ -511,4 +523,20 @@ set -e
   || fail "invalid .env exited $invalid_env_status instead of permanent-configuration status 78"
 mv "$runtime_project/.env.valid" "$runtime_project/.env"
 
-echo "ok - boot service rendering, install, root resolution, no-op, and repair paths are safe"
+python3 "$source_root/tests/fixtures/gateway-identity.py" "$runtime_project"
+auth_before=$(cksum "$runtime_project/data/gateway/auth.json")
+run_boot_script missing-ports "$repair_output" "$repair_docker_log" || fail "boot credential migration failed"
+grep -Fq 'login preserved' "$repair_output" || fail "boot did not migrate legacy credentials"
+[ "$auth_before" = "$(cksum "$runtime_project/data/gateway/auth.json")" ] || fail "boot changed the login hash"
+python3 "$source_root/tests/fixtures/gateway-identity.py" "$runtime_project"
+rm "$runtime_project/gateway-inspect.json"
+env_before=$(cksum "$runtime_project/.env")
+set +e
+run_boot_script missing-ports "$repair_output" "$repair_docker_log"
+credential_status=$?
+set -e
+[ "$credential_status" -eq 78 ] || fail "boot accepted unrecoverable credentials"
+[ "$env_before" = "$(cksum "$runtime_project/.env")" ] || fail "failed boot migration changed .env"
+if grep -Eq ' config | up ' "$repair_docker_log"; then fail "boot credential failure reached Compose"; fi
+
+echo "ok - boot service rendering, install, root resolution, credential migration, no-op, and repair paths are safe"

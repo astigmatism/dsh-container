@@ -172,14 +172,17 @@ command -v ip >/dev/null 2>&1 || config_fail "ip (iproute2) is required"
 if ! docker compose version >/dev/null 2>&1; then
   config_fail "the Docker Compose plugin is required"
 fi
-if ! compose config --quiet; then
-  config_fail "invalid .env or Compose configuration for the recorded $mode topology"
-fi
-
 echo "Waiting for the Docker daemon..."
 while ! docker info >/dev/null 2>&1; do
   sleep 5
 done
+
+if ! python3 "$project_dir/scripts/gateway-credentials.py" --ensure "$env_file"; then
+  config_fail "gateway credential preflight failed; services were not changed"
+fi
+if ! compose config --quiet; then
+  config_fail "invalid .env or Compose configuration for the recorded $mode topology"
+fi
 
 have_address() {
   ip -o addr show 2>/dev/null | awk '{ print $4 }' | grep -Fq "${bind_address}/"

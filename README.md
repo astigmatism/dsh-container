@@ -459,8 +459,17 @@ The gateway requires a deployment-local username and password. On first setup,
 mode-0600 `.env` file. It never prints the value. Inspect that file privately
 when signing in. No shared login or fallback password is built into the gateway.
 
-Existing deployments must explicitly provision their login before adopting this
-release. Run `./scripts/change-password.py --username YOUR_USER`, which accepts
+Updates automatically migrate an existing gateway login into the private `.env`
+before Compose validation. The updater verifies the container's project, checkout,
+gateway data mount, and persisted login hash, then saves the same credentials
+without printing or rotating them. Configuration, deployment, and boot recovery
+use the same preflight. Valid private credentials are retained unchanged.
+`python3 scripts/gateway-credentials.py --check .env` checks migration feasibility
+without writing anything; the updater's `--dry-run` includes this check.
+
+If the existing gateway cannot be verified or credentials conflict, maintenance
+stops before changing services. Provision the login privately with
+`./scripts/change-password.py --username YOUR_USER`, which accepts
 passwords of at least eight characters, updates only the private `.env`, and
 never places the password in shell history. Recreate the gateway with your
 normal mode's Compose files (`up -d --no-deps gateway`) to activate the change;

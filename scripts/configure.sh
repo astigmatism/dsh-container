@@ -127,7 +127,14 @@ else
   echo "Wrote $env_file for $host_username (UID:GID $host_uid:$host_gid)."
 fi
 
-python3 "$script_dir/gateway-credentials.py" --initialize "$env_file" --username "$host_username"
+if [ -f "$maintenance_lock/pid" ] && [ -f "$maintenance_status" ] \
+  && grep -Fxq 'state=running' "$maintenance_status"; then
+  # Historical updaters call the newly fetched configure script. They must
+  # migrate the deployed login, never generate a new one during maintenance.
+  python3 "$script_dir/gateway-credentials.py" --ensure "$env_file"
+else
+  python3 "$script_dir/gateway-credentials.py" --initialize "$env_file" --username "$host_username"
+fi
 
 mkdir -p \
   "$project_dir/data/backend-auth" \

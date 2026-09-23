@@ -49,8 +49,11 @@ make_env() {
   initial_mode=$2
   fixture=$temporary_root/$fixture_name
   mkdir -p "$fixture"
+  mkdir -p "$fixture/scripts"
+  cp "$source_root/scripts/gateway-credentials.py" "$fixture/scripts/"
   {
     printf '%s\n' 'PRESERVED_PREFIX=unchanged'
+    printf '%s\n' 'HARNESS_AUTH_USERNAME=fixture-user' 'HARNESS_AUTH_PASSWORD=fixture-password'
     if [ "$initial_mode" != missing ]; then
       printf 'DSH_DEPLOYMENT_MODE=%s\n' "$initial_mode"
     fi
@@ -264,4 +267,34 @@ set -e
 [ ! -s "$fixture/docker.log" ] \
   || fail "standalone deployment changed services after boot convergence failed"
 
-echo "ok - deployment mode recording is atomic and remote mode safely cuts over to the direct production router"
+for selected_mode in external remote managed; do
+  make_env "credential-migration-$selected_mode" "$selected_mode"
+  mkdir -p "$fixture/fake-bin"
+  cp "$source_root/scripts/deploy.sh" "$source_root/scripts/record-deployment-mode.py" "$fixture/scripts/"
+  cp "$source_root/tests/fixtures/update-bin/docker" "$fixture/fake-bin/"
+  write_boot_installer "$fixture"
+  python3 "$source_root/tests/fixtures/gateway-identity.py" "$fixture"
+  auth_before=$(cksum "$fixture/data/gateway/auth.json")
+  set +e
+  PATH="$fixture/fake-bin:$PATH" FAKE_DOCKER_LOG="$fixture/docker.log" FAKE_COMPOSE_UP_EXIT=1 \
+    sh "$fixture/scripts/deploy.sh" "--$selected_mode-ollama" >"$fixture/deploy.log" 2>&1
+  deploy_status=$?
+  set -e
+  [ "$deploy_status" -eq 20 ] || fail "migrated $selected_mode deployment did not reach Compose"
+  grep -Fq 'login preserved' "$fixture/deploy.log" || fail "standalone deploy skipped credential migration"
+  [ "$auth_before" = "$(cksum "$fixture/data/gateway/auth.json")" ] || fail "deploy changed the login hash"
+  python3 "$source_root/tests/fixtures/gateway-identity.py" "$fixture"
+  rm "$fixture/gateway-inspect.json"
+  : >"$fixture/docker.log"
+  env_before=$(cksum "$fixture/.env")
+  set +e
+  PATH="$fixture/fake-bin:$PATH" FAKE_DOCKER_LOG="$fixture/docker.log" \
+    sh "$fixture/scripts/deploy.sh" "--$selected_mode-ollama" >"$fixture/deploy.log" 2>&1
+  deploy_status=$?
+  set -e
+  [ "$deploy_status" -eq 21 ] || fail "deploy accepted unrecoverable credentials"
+  [ "$env_before" = "$(cksum "$fixture/.env")" ] || fail "failed deploy preflight modified .env"
+  if grep -Fq 'compose ' "$fixture/docker.log"; then fail "credential failure reached Compose"; fi
+done
+
+echo "ok - deployment mode recording and credential migration are atomic; remote mode safely cuts over to the direct production router"

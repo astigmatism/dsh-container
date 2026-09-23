@@ -38,6 +38,11 @@ if [ ! -f "$project_dir/.env" ]; then
   "$script_dir/configure.sh"
 fi
 
+if ! python3 "$script_dir/gateway-credentials.py" --ensure "$project_dir/.env"; then
+  echo "Gateway credential preflight failed; services were not changed." >&2
+  exit 21
+fi
+
 # Boot integration is a deployment invariant. Converge its on-disk unit and
 # enablement before Compose can build or change services. The updater performs
 # this same preflight itself so it can record the result in maintenance-status.

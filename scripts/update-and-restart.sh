@@ -871,6 +871,16 @@ if ! "$script_dir/verify-persisted-settings.sh"; then
   exit 1
 fi
 
+failure_type=configuration-verification
+failure_stage=gateway-credentials
+if [ "$resume" -eq 1 ]; then
+  python3 "$script_dir/gateway-credentials.py" --ensure "$env_file"
+else
+  # Check before boot convergence can record HOST_HOME. The fetched updater
+  # performs the atomic migration under the transferred maintenance lock.
+  python3 "$script_dir/gateway-credentials.py" --check "$env_file"
+fi
+
 if ! converge_boot_service preflight; then
   if [ "$resume" -eq 1 ]; then
     echo "Required boot-service convergence failed after fast-forward and before rebuild or service changes." >&2

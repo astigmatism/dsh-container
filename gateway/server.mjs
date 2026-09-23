@@ -36,6 +36,7 @@ const ttsBaseUrl = (process.env.TTS_BASE_URL || '').replace(/\/+$/, '')
 const ttsModel = process.env.TTS_MODEL || 'tts-1'
 const ttsVoice = process.env.TTS_VOICE || 'af_heart'
 const ttsKeyFile = process.env.TTS_API_KEY_FILE || '/run/secrets/tts_api_key'
+const sessionTtlSeconds = integer('HARNESS_SESSION_TTL_SECONDS', 30 * 24 * 60 * 60)
 const LOGIN_PATH = '/__harness/login'
 
 function integer(name, fallback) {
@@ -387,7 +388,10 @@ function proxyUpgrade(req, socket, head, forwardedProtocol, backendCookie) {
 }
 
 const auth = loadAuth()
-const sessions = createSessionAuthenticator(auth)
+const sessions = createSessionAuthenticator(auth, {
+  ttlMs: sessionTtlSeconds * 1000,
+  sessionsPath: join(dataDir, 'sessions.json'),
+})
 const tls = ensureTls()
 
 async function handleGateway(req, res, options) {

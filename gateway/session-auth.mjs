@@ -1,6 +1,34 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
 
 export const SESSION_COOKIE_NAME = 'dsh_session'
+
+export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+function atomicJson(path, value) {
+  mkdirSync(dirname(path), { recursive: true })
+  const temp = `${path}.${process.pid}.tmp`
+  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+  renameSync(temp, path)
+}
+
+function loadSessions(path, now) {
+  let parsed = null
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return new Map()
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map()
+  const sessions = new Map()
+  for (const [token, expiresAt] of Object.entries(parsed)) {
+    if (typeof token === 'string' && Number.isSafeInteger(expiresAt) && expiresAt > now()) {
+      sessions.set(token, expiresAt)
+    }
+  }
+  return sessions
+}
 
 export function passwordHash(password, salt, iterations) {
   return pbkdf2Sync(password, salt, iterations, 32, 'sha256').toString('hex')
@@ -75,12 +103,21 @@ export function withoutSessionCookie(header) {
 
 export function createSessionAuthenticator(auth, options = {}) {
   const now = options.now || (() => Date.now())
-  const ttlMs = options.ttlMs || 12 * 60 * 60 * 1000
-  const sessions = new Map()
+  const ttlMs = options.ttlMs || DEFAULT_SESSION_TTL_MS
+  const sessionsPath = typeof options.sessionsPath === 'string' && options.sessionsPath !== ''
+    ? options.sessionsPath
+    : null
+  const sessions = sessionsPath === null ? new Map() : loadSessions(sessionsPath, now)
+
+  function persist() {
+    if (sessionsPath === null) return
+    atomicJson(sessionsPath, Object.fromEntries(sessions))
+  }
 
   function issue() {
     const token = randomBytes(32).toString('base64url')
     sessions.set(token, now() + ttlMs)
+    persist()
     return token
   }
 
@@ -93,6 +130,7 @@ export function createSessionAuthenticator(auth, options = {}) {
     if (expiresAt === undefined) return false
     if (expiresAt <= now()) {
       sessions.delete(token)
+      persist()
       return false
     }
     return true

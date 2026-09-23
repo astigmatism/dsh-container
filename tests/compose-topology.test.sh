@@ -111,6 +111,8 @@ for name, config in (("default", default), ("remote", remote), ("external", exte
         raise SystemExit(f"{name}: gateway does not use deployment-local credentials")
     if environment.get("HARNESS_BACKEND_TOKEN_FILE") != "/run/dsh-backend-auth/launch-token":
         raise SystemExit(f"{name}: gateway does not consume the private Harness launch token")
+    if environment.get("HARNESS_SESSION_TTL_SECONDS") != "2592000":
+        raise SystemExit(f"{name}: gateway sessions do not default to thirty days")
     gateway_token_volume = next(
         (volume for volume in config["services"]["gateway"]["volumes"] if volume.get("target") == "/run/dsh-backend-auth"),
         None,

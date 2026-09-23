@@ -480,8 +480,10 @@ hash across restarts. Other deployment settings and conversation data remain.
 Open `http://HOST:3081/` for the portable, no-certificate-install login. Browser
 navigation opens a normal sign-in page and creates an HTTP-only, same-site
 session cookie after the stored gateway credentials are accepted. HTTP Basic
-Auth remains available for non-browser clients. Sessions last up to 12 hours
-and are invalidated when the gateway restarts.
+Auth remains available for non-browser clients. Sessions last 30 days by
+default and are persisted in `data/gateway/sessions.json`, so they survive
+gateway restarts until they expire. Override the lifetime in seconds with
+`HARNESS_SESSION_TTL_SECONDS` in the private `.env`.
 
 Harness `0.1.6-alpha.1` also authenticates its own browser and RPC carrier.
 The container entrypoint generates a fresh 32-byte launch token on every
@@ -557,7 +559,7 @@ old `settings.yaml`; the container will seed those from the repository image.
 
 - selected contents of `data/dsh/` — sessions, indexes, and workspace metadata,
   excluding the software/profile paths named above.
-- `data/gateway/` — password hash, local CA private key, and certificates.
+- `data/gateway/` — password hash, session store, local CA private key, and certificates.
 - `data/router/` and `data/router-runtime/` — managed-router logs and active
   model marker, if using managed mode.
 - `data/ollama/` — optional large Ollama store; copying it avoids model pulls.

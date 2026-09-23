@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -74,4 +77,61 @@ test('gateway requires explicit private credentials and accepts eight characters
   assert.throws(() => deploymentCredentials({ HARNESS_AUTH_USERNAME: 'test', HARNESS_AUTH_PASSWORD: 'short' }), /at least 8/)
   assert.throws(() => deploymentCredentials({ HARNESS_AUTH_USERNAME: 'bad:name', HARNESS_AUTH_PASSWORD: 'testpass' }), /Configure/)
   assert.deepEqual(deploymentCredentials({ HARNESS_AUTH_USERNAME: 'test', HARNESS_AUTH_PASSWORD: 'testpass' }), { username: 'test', password: 'testpass' })
+})
+
+test('defaults browser sessions to thirty days', () => {
+  const sessions = createSessionAuthenticator(auth, { now: () => 1000 })
+  const token = sessions.issue()
+  assert.match(sessions.setCookieHeader(token), /Max-Age=2592000$/)
+})
+
+test('the session cookie lifetime tracks the configured TTL', () => {
+  const sessions = createSessionAuthenticator(auth, { now: () => 1000, ttlMs: 7 * 24 * 60 * 60 * 1000 })
+  const token = sessions.issue()
+  assert.match(sessions.setCookieHeader(token), /Max-Age=604800$/)
+})
+
+test('persists issued sessions across an authenticator restart', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dsh-gateway-sessions-')), 'sessions.json')
+  const first = createSessionAuthenticator(auth, { now: () => 1000, sessionsPath: file })
+  const token = first.issue()
+  const restarted = createSessionAuthenticator(auth, { now: () => 1000, sessionsPath: file })
+  assert.equal(restarted.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` } }), true)
+  assert.equal((statSync(file).mode & 0o777), 0o600)
+})
+
+test('drops expired persisted sessions on restart', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dsh-gateway-sessions-')), 'sessions.json')
+  let currentTime = 1000
+  const sessions = createSessionAuthenticator(auth, { now: () => currentTime, ttlMs: 5000, sessionsPath: file })
+  const token = sessions.issue()
+  currentTime = 6000
+  const restarted = createSessionAuthenticator(auth, { now: () => currentTime, ttlMs: 5000, sessionsPath: file })
+  assert.equal(restarted.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` } }), false)
+})
+
+test('removes lazily expired sessions from the persisted store', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dsh-gateway-sessions-')), 'sessions.json')
+  let currentTime = 1000
+  const sessions = createSessionAuthenticator(auth, { now: () => currentTime, ttlMs: 5000, sessionsPath: file })
+  const token = sessions.issue()
+  currentTime = 6000
+  assert.equal(sessions.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` } }), false)
+  const restarted = createSessionAuthenticator(auth, { now: () => currentTime, ttlMs: 5000, sessionsPath: file })
+  assert.equal(restarted.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` } }), false)
+})
+
+test('treats a missing or corrupt session store as empty without throwing', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-gateway-sessions-'))
+  const missing = join(directory, 'sessions.json')
+  assert.doesNotThrow(() => {
+    const sessions = createSessionAuthenticator(auth, { now: () => 1000, sessionsPath: missing })
+    assert.equal(sessions.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=unknown` } }), false)
+  })
+  const corrupt = join(directory, 'corrupt.json')
+  writeFileSync(corrupt, 'not-json\n')
+  assert.doesNotThrow(() => {
+    const sessions = createSessionAuthenticator(auth, { now: () => 1000, sessionsPath: corrupt })
+    assert.equal(sessions.acceptsRequest({ headers: { cookie: `${SESSION_COOKIE_NAME}=unknown` } }), false)
+  })
 })

@@ -397,7 +397,7 @@ These corrections live in this repository's maintained plugin patch and Web
 profile, not in manually edited installed packages or upstream Harness source.
 Release the committed integration source through the normal update workflow
 to every Harness installation: validate the Mac build first, then update the
-production installations on `192.168.1.5` and `192.168.1.21`. The frozen plugin
+production installations on `192.168.1.5` and `192.168.1.4`. The frozen plugin
 lock and image qualification verify that subsequent builds retain the patch;
 upstream upgrades must refresh and requalify it when necessary.
 

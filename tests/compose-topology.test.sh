@@ -95,10 +95,10 @@ for name, config in (("default", default), ("remote", remote)):
     if network["name"] != "deepseek-harness_default":
         raise SystemExit(f"{name}: unexpected private network name: {network['name']}")
 
-if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.21" for entry in extra_hosts(default)):
+if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.4" for entry in extra_hosts(default)):
     raise SystemExit("default: ai-router does not map to REMOTE_OLLAMA_HOST")
 
-if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.21" for entry in extra_hosts(remote)):
+if not any(entry.replace("=", ":", 1) == "ai-router:192.168.1.4" for entry in extra_hosts(remote)):
     raise SystemExit("remote: ai-router does not map directly to REMOTE_OLLAMA_HOST")
 if "ai-router" in remote["services"]:
     raise SystemExit("remote: obsolete local ai-router service is still present")

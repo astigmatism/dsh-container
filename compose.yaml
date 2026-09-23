@@ -66,7 +66,7 @@ services:
     networks:
       - ollama_net
     extra_hosts:
-      - "ai-router:${REMOTE_OLLAMA_HOST:-192.168.1.21}"
+      - "ai-router:${REMOTE_OLLAMA_HOST:-192.168.1.4}"
     healthcheck:
       test: ["CMD-SHELL", "test -s /run/dsh-backend-auth/launch-token && curl --fail --silent --output /dev/null \"http://127.0.0.1:3080/?token=$$(cat /run/dsh-backend-auth/launch-token)\""]
       interval: 15s

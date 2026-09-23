@@ -376,7 +376,7 @@ fi
 
 if [ "$mode" = --remote-ollama ]; then
   remote_host=$(get_env REMOTE_OLLAMA_HOST)
-  [ -n "$remote_host" ] || remote_host=192.168.1.21
+  [ -n "$remote_host" ] || remote_host=192.168.1.4
   resolved_hosts=$(compose exec -T harness getent hosts ai-router 2>/dev/null \
     | awk '{ print $1 }' | sort -u)
   if [ "$resolved_hosts" != "$remote_host" ]; then

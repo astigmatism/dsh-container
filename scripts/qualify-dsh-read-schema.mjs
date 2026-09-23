@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 
-const endpoint = (process.env.DSH_SCHEMA_AB_ENDPOINT ?? "http://192.168.1.21:11434").replace(/\/$/u, "");
+const endpoint = (process.env.DSH_SCHEMA_AB_ENDPOINT ?? "http://192.168.1.4:11434").replace(/\/$/u, "");
 const model = process.env.DSH_SCHEMA_AB_MODEL ?? "local-active";
 const trials = Number.parseInt(process.env.DSH_SCHEMA_AB_TRIALS ?? "6", 10);
 const temperature = Number.parseFloat(process.env.DSH_SCHEMA_AB_TEMPERATURE ?? "0.7");

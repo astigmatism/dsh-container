@@ -3,7 +3,7 @@
 Develop and test in this local repository and the Mac's local DSH containers.
 
 `192.168.1.5` runs production DeepSeek Harness and Service Portal.
-`192.168.1.21` runs the production model router and also has a separate
+`192.168.1.4` runs the production model router and also has a separate
 Harness installation at `/home/astigmatism/apps/dsh-container`.
 Neither server is a development environment. Do not edit source or create
 development files, worktrees, patches or test logs there. Do not patch their

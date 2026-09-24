@@ -124,14 +124,14 @@ if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
 fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-better-sidebar@0.19.1' \
-  'dsh-context@0.52.0' \
-  'dsh-favicon-status@0.1.0-rc.6' \
+  'dsh-better-sidebar@0.21.1' \
+  'dsh-context@0.56.1' \
+  'dsh-favicon-status@0.1.0-rc.8' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
   'dsh-playwright@0.1.0' \
-  'dsh-session-pin@0.7.11' \
+  'dsh-session-pin@0.7.15' \
   'dsh-ui-appearance@0.1.11'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
@@ -335,12 +335,12 @@ if ! compose exec -T harness node --input-type=module -e '
   Function(deliverables);
   for (const marker of [
     "dsh-native-file-opening-v1",
-    // 0.1.6-alpha.1 redesign: produced-file chips unconditionally call
+    // 0.1.7-rc.2 redesign: produced-file chips unconditionally call
     // the in-app resource opener of the chat view; the legacy
     // owner/opener branches no longer exist, and the patch verifies
     // them upstream.
     "function producedFileMentions(paths, openFile, label)",
-    "function ProducedFiles({ matched: paths, openFile, t })",
+    "owner.openFile",
     "verified produced-file actions use the chat resource opener",
   ]) {
     if (!deliverables.includes(marker)) throw new Error(`deployed deliverables browser module is missing ${marker}`);
@@ -358,7 +358,7 @@ if ! compose exec -T harness node --input-type=module -e '
   if (!source.includes("dsh-token-session-format-v3-compat-v1")) {
     throw new Error("deployed dsh-token is missing format v3 compatibility");
   }
-  console.log("Verified dsh-token format v3 session compatibility.");
+  console.log("Verified the retained legacy Token shim; v4 opt-in support remains unqualified.");
 '; then
   echo "The deployed token plugin is incompatible with the current session format." >&2
   exit "$configuration_exit"
@@ -462,4 +462,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.1.6-alpha.1, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.1.7-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

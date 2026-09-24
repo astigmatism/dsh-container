@@ -55,6 +55,7 @@ DSH_SETTINGS_UID=$(id -u) \
 DSH_SETTINGS_GID=$(id -g) \
   /usr/local/bin/dsh-initialize-persisted-settings --replace-empty
 
+node /opt/dsh-build/migrate-profile-settings.mjs "$home"
 # Neutral CWD: the repo's .env is rejected by the launcher for
 # environment-authority variables, and no other CWD layer is wanted here.
 cd "$parent"

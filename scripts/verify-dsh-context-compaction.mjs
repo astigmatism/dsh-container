@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 
 const mode = process.argv[2];
 const DSH_ROOT = mode === undefined || mode.startsWith("--")
-  ? "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules"
+  ? `${process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh'}/node_modules`
   : mode;
 const { CONTEXT_WINDOW_EXCEEDED_CODE, isContextWindowExceededError } = await import(
   `file://${DSH_ROOT}/@deepseek-ai/dsh-llm/lib/index.js`
@@ -24,6 +25,7 @@ function config(thresholdRatio = 0.70) {
     summarizationProvider: "",
     summarizationModel: "",
     maxTokens: null,
+    headroomTokens: 0,
     compactionRetries: 1,
     maxOverflowRetries: 1,
     modelPolicies: [
@@ -251,20 +253,30 @@ assert.equal(originalPreserved, 1, "no-progress compaction failure must preserve
 if (mode === "--effective-config") {
   let effective = "";
   for await (const chunk of process.stdin) effective += chunk;
-  const row = (id, nextId) => {
-    const start = effective.indexOf(`- id: ${id}\n`);
-    assert.notEqual(start, -1, `effective Web composition is missing ${id}`);
-    const end = effective.indexOf(`- id: ${nextId}\n`, start + 1);
-    assert.notEqual(end, -1, `effective Web composition is missing following row ${nextId}`);
-    return effective.slice(start, end);
-  };
-  const compact = row("compaction-basic", "command-compact");
-  assert.doesNotMatch(compact, /disabled: true/);
-  assert.match(compact, /auto: true/);
-  assert.match(compact, /provider: local-ollama\n\s+model: local-active\n\s+thresholdRatio: 0\.7/);
-  assert.match(compact, /provider: local-everyday\n\s+model: qwen3.8-27b-abliterated-q6_k\n\s+thresholdRatio: 0\.7/);
-  assert.doesNotMatch(row("command-compact", "subagent"), /disabled: true/);
-  assert.doesNotMatch(row("tool-result-pruner", "tool-todo"), /disabled: true/);
+  const require = createRequire(`${DSH_ROOT}/../package.json`);
+  const YAML = require('yaml');
+  const rows = YAML.parse(effective, { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }] });
+  for (const id of ['compaction-basic', 'command-compact', 'tool-result-pruner']) {
+    assert.equal(rows.find(row => row.id === id)?.disabled, true, `${id} must be isolated to presets`);
+  }
+  for (const preset of ['standard', 'ptc', 'cordis', 'minimal']) {
+    const plugins = rows.find(row => row.id === `preset-${preset}`)?.config.plugins;
+    const stack = plugins?.find(row => row.id === 'compaction')?.config;
+    assert.ok(stack, `missing compaction for ${preset}`);
+    const config = stack.find(row => row.id === 'compaction-basic').config;
+    assert.equal(config.auto, true);
+    assert.equal(config.headroomTokens, 0);
+    assert.equal(config.maxTokens, null);
+    assert.equal(config.compactionRetries, 1);
+    assert.equal(config.maxOverflowRetries, 1);
+    assert.deepEqual(config.modelPolicies, [
+      { provider: 'local-ollama', model: 'local-active', thresholdRatio: 0.7 },
+      { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k', thresholdRatio: 0.7 },
+    ]);
+    for (const row of stack) assert.equal(row.disabled, false);
+    assert.deepEqual(stack.find(row => row.id === 'tool-result-pruner').config,
+      { thresholdChars: 8192, headChars: 4096, tailChars: 1024 });
+  }
 }
 
 console.log("Verified incident pressure policy, shared context classification, and bounded compaction recovery.");

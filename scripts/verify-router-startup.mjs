@@ -74,7 +74,9 @@ try {
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].reasoning, 'medium');
       assert.equal(current['llm-pi-ai'].providers['local-everyday'].reasoning, 'medium');
-      assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
+      const migratedPath = path.join(runtime, 'profiles/web/cordis.patch.yml');
+      assert.equal((await fs.stat(migratedPath)).mode & 0o777, 0o600);
+      await fs.access(path.join(runtime, '.container-settings-v1.json'));
       assert.equal((await fs.readdir(runtime)).some(name => name.includes('before-residents') || name.includes('.resident-')), false);
       const before = JSON.stringify(current);
       await new Promise(resolve => setTimeout(resolve, 500));

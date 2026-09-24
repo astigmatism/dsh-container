@@ -9,8 +9,8 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 FROM ${NODE_IMAGE} AS harness
 
-ARG DSH_VERSION=0.1.6-alpha.1
-ARG DSH_UPSTREAM_COMMIT=0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
+ARG DSH_VERSION=0.1.7-rc.2
+ARG DSH_UPSTREAM_COMMIT=477b4f420553e8a52c2fbccc464d7561b239c443
 ARG PNPM_VERSION=11.7.0
 
 LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-container" \
@@ -31,6 +31,8 @@ RUN apt-get update \
       fonts-liberation \
       fonts-noto-color-emoji \
       git \
+      make \
+      g++ \
       jq \
       less \
       openssh-client \
@@ -54,6 +56,7 @@ RUN sed -i 's/\r$//' /opt/dsh-build/install-dsh-runtime.sh \
 # exact source anchors so a future DSH layout change fails the image build
 # instead of silently dropping behavior.
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
+COPY scripts/patch-dsh-preset-policy.mjs /opt/dsh-build/patch-dsh-preset-policy.mjs
 COPY scripts/patch-unrestricted-policy.mjs /opt/dsh-build/patch-unrestricted-policy.mjs
 COPY scripts/verify-unrestricted-wire.mjs /opt/dsh-build/verify-unrestricted-wire.mjs
 COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
@@ -101,6 +104,8 @@ COPY scripts/initialize-persisted-settings.sh /usr/local/bin/dsh-initialize-pers
 COPY scripts/verify-plugin-boot.sh /usr/local/bin/dsh-verify-plugin-boot
 COPY scripts/verify-dictation-client.mjs /opt/dsh-build/verify-dictation-client.mjs
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
+COPY config/legacy-profile-alpha1.yaml /opt/dsh-defaults/legacy-profile-alpha1.yaml
+COPY scripts/migrate-profile-settings.mjs /opt/dsh-build/migrate-profile-settings.mjs
 
 RUN node /opt/dsh-build/verify-local-model-profiles.mjs /opt/dsh-defaults/settings.yaml
 
@@ -129,14 +134,13 @@ COPY seed/plugins/ /opt/dsh-seed/.dsh-plugins/
 # base image's `node` user. pnpm opens its store index even for read operations.
 # node-pty has no Linux prebuild for every supported architecture. Compile it
 # here, then discard the compiler; the runtime smoke test requires a real PTY.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends make g++ \
-    && cd /opt/dsh-seed/profiles/web \
-    && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store \
+RUN --mount=type=cache,target=/root/.cache/pnpm \
+    cd /opt/dsh-seed/profiles/web \
+    && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store
+RUN cd /opt/dsh-seed/profiles/web \
+    && node /opt/dsh-build/verify-sidebar-terminal.mjs \
+    && node /opt/dsh-build/patch-dsh-preset-policy.mjs \
     && node /opt/dsh-build/patch-dsh-file-previews.mjs \
-    && node /opt/dsh-build/verify-sidebar-terminal.mjs --native \
-    # dsh-favicon-status rc.6 ships a UTF-8 BOM that DSH's JSON loader rejects.
-    && node -e 'const fs = require("node:fs"); const p = "node_modules/dsh-favicon-status/package.json"; const s = fs.readFileSync(p, "utf8").replace(/^\uFEFF/, ""); if (JSON.parse(s).version !== "0.1.0-rc.6") throw Error("favicon manifest version drift"); fs.writeFileSync(p, s)' \
     && node /opt/dsh-build/patch-dsh-token-session-format.mjs \
     && node /opt/dsh-build/patch-dsh-playwright-webserver.mjs \
     && dsh --profile web --dump-config >/dev/null \
@@ -148,14 +152,14 @@ RUN apt-get update \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
-    && grep -Fq 'dsh-better-sidebar@0.19.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-context@0.52.0' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-favicon-status@0.1.0-rc.6' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-better-sidebar@0.21.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-context@0.56.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-favicon-status@0.1.0-rc.8' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-playwright-web-transport-scope-v6' node_modules/dsh-playwright/lib/index.js \
-    && grep -Fq 'dsh-session-pin@0.7.11' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-session-pin@0.7.15' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ui-appearance@0.1.11' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
@@ -171,10 +175,11 @@ RUN apt-get update \
 # playwright-core, pngjs, and ws), so this fails the build when the seed
 # lockfile's patched-dependency state drops a plugin's dependency graph -
 # exactly the state `--dump-config` and `plugin list` above would pass.
+COPY scripts/verify-native-terminal-client.mjs /opt/dsh-build/verify-native-terminal-client.mjs
 COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 # The maintenance checkout uses a restrictive umask. Runtime verification runs
 # as the service UID, so new non-executable helpers must remain readable.
-RUN chmod 0644 /opt/dsh-build/patch-dsh-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
+RUN chmod 0644 /opt/dsh-build/*.mjs
 RUN /usr/local/bin/dsh-verify-plugin-boot
 
 ENV DSH_HOME=/data/dsh \

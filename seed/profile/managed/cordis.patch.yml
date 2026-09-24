@@ -1,0 +1,114 @@
+# Repository defaults. The writable profile patch is applied after this bundle.
+
+# Let the native executor own the one deadline and preserve timed-out output.
+# Explicit requests may extend a foreground command to ten minutes; Stop still
+# cancels its process tree. This profile is shipped to every deployment.
+- id: bash-sandbox
+  config:
+    timeoutMs: 120000
+    maxTimeoutMs: 600000
+
+- id: web-search-deepseek
+  disabled: true
+
+# This deployment serves only the two local resident models. Disabling the
+# adapter prevents upstream's default DeepSeek catalog from entering the picker.
+- id: llm-deepseek
+  disabled: true
+
+- id: web
+  config:
+    searchProvider: duckduckgo
+
+# A first-prompt title request otherwise competes with the agent turn for the
+# single Ollama worker. DSH still creates its immediate fallback title.
+- id: session-title-llm
+  disabled: true
+
+# @zoytown/dsh-token 0.1.3 can retain gigabytes of native memory while
+# refolding concatenated Zstandard session frames. It also invalidates its
+# durable cache when bind-mounted device/inode identities change during a
+# container recreation. There is no fixed upstream release, so token
+# statistics are fail-closed by default. Operators accepting that risk can
+# opt in explicitly; the package remains installed for a reversible rollout.
+- id: dsh-token
+  disabled: !!js "(process.env.DSH_TOKEN_ENABLED ?? 'false').toLowerCase() !== 'true'"
+
+# The build applies these settings to each native agent preset. Keep the host
+# copies disabled: presets own the isolated compaction and pruning services.
+#
+# Working-context pressure triggers disclosed, durable compaction at 70%.
+# Summaries have no injected output quota; original events remain in storage.
+- id: compaction-basic
+  disabled: true
+  config:
+    auto: true
+    retainRatio: 0.16
+    headroomTokens: 0
+    maxTokens: null
+    compactionRetries: 1
+    maxOverflowRetries: 1
+    modelPolicies:
+      - provider: local-ollama
+        model: local-active
+        thresholdRatio: 0.70
+      - provider: local-everyday
+        model: qwen3.8-27b-abliterated-q6_k
+        thresholdRatio: 0.70
+
+- id: command-compact
+  disabled: true
+
+- id: tool-result-pruner
+  disabled: true
+  config:
+    thresholdChars: 8192
+    headChars: 4096
+    tailChars: 1024
+
+# The browser remains headless inside the container while its CDP screencast is
+# rendered in DSH's Browser Use panel. Private targets are an explicit
+# deployment choice because enabling them also permits private subresources.
+- id: dsh-playwright
+  inject:
+    - webServer
+  config:
+    browserExecutablePath: /usr/bin/chromium
+    viewportWidth: 1440
+    viewportHeight: 900
+    allowPrivateHosts: !!js "(process.env.DSH_BROWSER_ALLOW_PRIVATE_HOSTS ?? 'false').toLowerCase() === 'true'"
+
+- insert:
+    - id: web-search-duckduckgo
+      name: '../../../.dsh-plugins/dsh-web-search-free.js'
+      config:
+        baseURL: https://html.duckduckgo.com/html/
+
+- insert:
+    - id: loop-detector
+      name: 'dsh-loop-detector'
+      config:
+        repeatedTestTimeouts: 2
+        minLen: 512
+        maxRetries: 1
+        checkReasoning: true
+        # Provider-independent semantic progress guidance. These defaults are
+        # explicit here so the advisory checkpoint and contract tests share one
+        # reviewed configuration surface. Distinct repository reads and model
+        # continuations are never capped by count. The read defaults only
+        # canonicalize duplicate-read detection and match the pinned
+        # @deepseek-ai/dsh-tool-fs runtime.
+        continuationDirective: 12
+        reasoningPrefixChars: 128
+        reasoningDirectiveOccurrence: 2
+        reasoningHardOccurrence: 3
+        readDefaultOffset: 1
+        readDefaultLimit: 2000
+
+- insert:
+    - id: router-model-discovery
+      name: '../../../.dsh-plugins/dsh-router-model-discovery.js'
+      config:
+        providers: [ local-ollama, local-everyday ]
+        model: local-active
+        pollIntervalMs: 30000

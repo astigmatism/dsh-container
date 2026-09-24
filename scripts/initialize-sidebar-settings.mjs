@@ -1,14 +1,12 @@
 #!/usr/bin/env node
-/** Fill only absent live-console preferences before the settings service starts. */
+/** Fill retained Sidebar defaults before the one-time profile migration. */
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 export const SIDEBAR_DEFAULTS = Object.freeze({
-  agentTerminalTools: true,
-  browserInterceptLinks: false,
-  tabsEnabled: Object.freeze({ terminal: true, subagent: true, sidechat: false, browser: false }),
+  tabsEnabled: Object.freeze({ subagent: true, sidechat: false }),
 });
 
 function record(value) {

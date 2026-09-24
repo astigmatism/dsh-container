@@ -6,6 +6,18 @@ project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 env_file=${DSH_ENV_FILE:-$project_dir/.env}
 canonical_settings=${DSH_CANONICAL_SETTINGS:-$project_dir/config/settings.yaml}
 runtime_settings=${DSH_RUNTIME_SETTINGS:-$project_dir/data/dsh/settings.yaml}
+
+# 0.1.7 owns preferences in the writable profile. Never recreate its retired
+# settings.yaml: upstream would re-import stale defaults at every restart.
+if [ -f "${runtime_settings%/*}/.container-settings-v1.json" ] \
+  || [ -f "${runtime_settings%/*}/.container-settings-pending.json" ]; then
+  [ -s "${runtime_settings%/*}/profiles/web/cordis.patch.yml" ] || {
+    echo "Migrated profile settings are missing." >&2
+    exit 1
+  }
+  echo "Keeping migrated profile settings."
+  exit 0
+fi
 expected_mode=644
 replace_empty=0
 preserve_divergent=0

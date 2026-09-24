@@ -1,28 +1,29 @@
 {
-  "capturedAt": "2026-09-22",
-  "dsh": "0.1.6-alpha.1 (dsh-v0.1.6-alpha.1; 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d)",
+  "capturedAt": "2026-09-24",
+  "dsh": "0.1.7-rc.2 (dsh-v0.1.7-rc.2; 477b4f420553e8a52c2fbccc464d7561b239c443)",
   "profile": "web",
   "plugins": {
     "@zoytown/dsh-token": "0.1.3",
-    "dsh-context": "0.52.0",
-    "dsh-favicon-status": "0.1.0-rc.6",
+    "dsh-context": "0.56.1",
+    "dsh-favicon-status": "0.1.0-rc.8",
     "dsh-local-speech-input": "0.1.0 (local)",
     "dsh-loop-detector": "1.0.0 (local patch)",
-    "dsh-playwright": "0.1.0 (local panel patch; complete web-transport scopes integration v5)",
+    "dsh-playwright": "0.1.0 (local panel patch; web-transport scopes v6 and rc.2 client modules)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
-    "dsh-session-pin": "0.7.11",
+    "dsh-session-pin": "0.7.15",
     "dsh-ui-appearance": "0.1.11",
-    "dsh-better-sidebar": "0.19.1"
+    "dsh-better-sidebar": "0.21.1"
   },
   "sourceHeads": {
     "@zoytown/dsh-token": "https://github.com/zoyluoblue/deepseek-harness-token@8b75452985fc47bdc00b914053cf4c5c1cbe4898",
     "dsh-playwright": "https://github.com/JeremyGuo/dsh-playwright@9e8faf48cdcd479a777e52f5600899206a77f8af",
-    "dsh-better-sidebar": "https://github.com/omdsh-dev/DSH-better-sidebar@8753096a583ff2891d57a0074f1ac71cd5c6003e"
+    "dsh-better-sidebar": "https://github.com/omdsh-dev/DSH-better-sidebar@d641d2e2117c427f8373f37b786ea0613455bf28"
   },
   "policies": {
     "@zoytown/dsh-token": {
       "enabledByDefault": false,
       "optIn": "DSH_TOKEN_ENABLED=true",
+      "optInCompatibility": "unqualified: published reader does not support Harness v4 session generations",
       "reason": "0.1.3 performs inode/device-sensitive full refolds with per-frame synchronous Zstandard decompression and has caused repeatable multi-gigabyte Harness RSS growth"
     }
   },

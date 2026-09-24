@@ -281,7 +281,7 @@ test('offline picker checks use isolated settings without contacting a router', 
 });
 
 test('web composition explicitly disables the built-in DeepSeek catalog', async () => {
-  const patch = await readFile(path.join(root, 'seed/profile/cordis.patch.yml'), 'utf8');
+  const patch = await readFile(path.join(root, 'seed/profile/managed/cordis.patch.yml'), 'utf8');
   assert.match(patch, /- id: llm-deepseek\n\s+disabled: true/);
 });
 

@@ -64,6 +64,12 @@ def mode(path, wanted):
 
 def sync(source, target):
     global updated
+    # Since 0.1.7, the profile patch is the user's durable Settings document.
+    # Software defaults live in the managed bundle, never in this writable file.
+    if target == profiles / 'web/cordis.patch.yml' and (target.exists() or target.is_symlink()):
+        if target.is_symlink() or not target.is_file():
+            raise RuntimeError('Writable profile patch must be a regular file')
+        return
     source_stat = source.lstat()
     source_mode = stat.S_IMODE(source_stat.st_mode)
     try:
@@ -90,6 +96,8 @@ def sync(source, target):
             names.add(child.name)
             sync(child, target / child.name)
         for child in target.iterdir():
+            if target == profiles / 'web' and child.name in ('cordis.patch.yml', '.container-settings-v1.json'):
+                continue
             if child.name not in names:
                 remove(child)
         mode(target, source_mode)

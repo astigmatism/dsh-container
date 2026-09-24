@@ -43,8 +43,18 @@ export function patchResponses(input) {
 
 export function patchCompaction(input) {
   if (input.includes(marker)) return input;
-  let s = replace(input, 'maxTokens: config.maxTokens ?? 8192,',
-    `// ${marker}: null explicitly omits a summarization output quota.\n\t\tmaxTokens: config.maxTokens === null ? void 0 : config.maxTokens ?? 8192,`);
+  let s;
+  if (input.includes('const maxTokens = config.maxTokens ?? headroomTokens;')) {
+    s = replace(input, 'const maxTokens = config.maxTokens ?? headroomTokens;',
+      `// ${marker}: null explicitly omits a summarization output quota.\n\tconst maxTokens = config.maxTokens === null ? void 0 : config.maxTokens ?? headroomTokens;`);
+    s = replace(s, 'assertPositiveInteger("BasicCompactionConfig.maxTokens (explicit or from headroomTokens)", maxTokens);',
+      'if (maxTokens !== void 0) assertPositiveInteger("BasicCompactionConfig.maxTokens (explicit or from headroomTokens)", maxTokens);');
+    s = replace(s, 'assertPositiveInteger(`BasicCompactionConfig: modelPolicies[${index}].maxTokens (explicit or from headroomTokens)`, policy.maxTokens ?? maxTokens);',
+      'if (policy.maxTokens !== null && (policy.maxTokens ?? maxTokens) !== void 0) assertPositiveInteger(`BasicCompactionConfig: modelPolicies[${index}].maxTokens (explicit or from headroomTokens)`, policy.maxTokens ?? maxTokens);');
+  } else {
+    s = replace(input, 'maxTokens: config.maxTokens ?? 8192,',
+      `// ${marker}: null explicitly omits a summarization output quota.\n\t\tmaxTokens: config.maxTokens === null ? void 0 : config.maxTokens ?? 8192,`);
+  }
   s = replace(s, 'maxTokens: override?.maxTokens ?? config.maxTokens,',
     'maxTokens: override?.maxTokens === null ? void 0 : override?.maxTokens ?? config.maxTokens,');
   s = replace(s, 'if (maxTokens !== void 0) assertPositiveInteger', 'if (maxTokens != null) assertPositiveInteger');

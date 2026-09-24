@@ -29,7 +29,7 @@ test("manifest, lockfile, Compose, and operator configuration share the policy",
   const [manifestSource, lockSource, patch, compose, envExample, inventorySource] = await Promise.all([
     readFile(new URL("seed/profile/package.json", root), "utf8"),
     readFile(new URL("seed/profile/pnpm-lock.yaml", root), "utf8"),
-    readFile(new URL("seed/profile/cordis.patch.yml", root), "utf8"),
+    readFile(new URL("seed/profile/managed/cordis.patch.yml", root), "utf8"),
     readFile(new URL("compose.yaml", root), "utf8"),
     readFile(new URL(".env.example", root), "utf8"),
     readFile(new URL("config/plugins.lock.json", root), "utf8"),
@@ -45,6 +45,7 @@ test("manifest, lockfile, Compose, and operator configuration share the policy",
   assert.deepEqual(inventory.policies["@zoytown/dsh-token"], {
     enabledByDefault: false,
     optIn: "DSH_TOKEN_ENABLED=true",
+    optInCompatibility: "unqualified: published reader does not support Harness v4 session generations",
     reason: inventory.policies["@zoytown/dsh-token"].reason,
   });
   assert.match(inventory.policies["@zoytown/dsh-token"].reason, /multi-gigabyte Harness RSS growth/);

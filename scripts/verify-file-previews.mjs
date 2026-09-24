@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Exercise the installed resource adapter in Chromium against a disposable server. */
 import assert from 'node:assert/strict';
+import { verifyNativeTerminal } from './verify-native-terminal-client.mjs';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -36,7 +37,7 @@ const localSite = createServer((request, response) => {
 page.on('pageerror', error => errors.push(error.message));
 async function rpc(method, request) {
   const response = await context.request.post(`${base}/api/${method}`, { data: {
-    type: 'client-request', rpcId: randomUUID(), method, payload: { args: { request } },
+    type: 'client-request', rpcId: randomUUID(), method, payload: { args: request === undefined ? {} : { request } },
   } });
   assert.equal(response.status(), 200);
   const { result } = await response.json();
@@ -47,15 +48,19 @@ const address = (sessionId, path) => `dsh-resource://file/session/${sessionId}/$
 async function open(sessionId, path) {
   await page.evaluate(url => window.__previewTestContext.get('sidebarRight').openResource(url), address(sessionId, path));
 }
-const image = () => page.locator('[data-dsh-image-preview] img:visible');
+const image = () => page.locator('[data-image-preview] img:visible');
 async function waitForImage(path) {
-  await page.waitForFunction(expected => [...document.querySelectorAll('[data-dsh-image-preview] img')]
-    .some(img => img.naturalWidth > 0 && img.getClientRects().length > 0 && new URL(img.src).searchParams.get('path') === expected), path);
+  await page.waitForFunction(expected => [...document.querySelectorAll('[data-textpreview-url]')]
+    .some(view => {
+      const img = view.querySelector('[data-image-preview] img');
+      return img?.naturalWidth > 0 && img.getClientRects().length > 0 &&
+        decodeURIComponent(view.dataset.textpreviewUrl).endsWith(expected);
+    }), path);
 }
 async function select(sessionId) {
   await page.waitForFunction(id => !!window.__previewTestContext?.sessions.list.getSnapshot().byId[id]?.cwd, sessionId);
-  await page.evaluate(id => window.__previewTestContext.sessions.open(id), sessionId);
-  await page.waitForFunction(id => window.__previewTestContext.get('sidebarRight').binding?.sessionId === id, sessionId);
+  await page.evaluate(id => window.__previewTestContext.get('uiWorkspace').openSession(id), sessionId);
+  await page.waitForFunction(id => window.__previewTestContext.get('sidebarRight').mounted.getSnapshot() === id, sessionId);
 }
 function blankPdf() {
   let pdf = '%PDF-1.4\n';
@@ -86,6 +91,18 @@ try {
   }
   await symlink(`${root}/two/note.txt`, `${root}/one/escape.txt`);
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
+  const inventory = await rpc('pluginInventory/list');
+  for (const name of ['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
+    'dsh-loop-detector', 'dsh-playwright', 'dsh-plugin-task-notification',
+    'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar']) {
+    assert.ok(inventory.entries.some(row => row.moduleName === name && row.enabled && row.fiberPhase === 'active'),
+      `${name} host plugin must mount`);
+  }
+  const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
+  assert.equal(token?.enabled, false);
+  assert.notEqual(token?.fiberPhase, 'active');
+  for (const preset of inventory.agentPresets) assert.equal(preset.broken, undefined, `${preset.id} preset mounts`);
+  console.log('All nine enabled host plugins mounted; Token remained unloaded.');
   for (const folder of ['one', 'two']) {
     const { workspace } = await rpc('workspace/create', { path: `${root}/${folder}` });
     workspaces.push(workspace.workspaceId);
@@ -110,9 +127,19 @@ try {
   });
   await page.goto(base, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.__previewTestContext?.get('sidebarRight'));
+  await page.waitForFunction(() => {
+    const entries = [...window.__previewTestContext.loader.entries()];
+    return ['dsh-better-sidebar', 'dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
+      'dsh-playwright', 'dsh-session-pin', 'dsh-ui-appearance']
+      .every(name => entries.some(entry => entry.options.name === name && entry.fiber?.state === 2));
+  });
+  const tokenMounted = await page.evaluate(() => [...window.__previewTestContext.loader.entries()]
+    .some(entry => entry.options.name === '@zoytown/dsh-token' && entry.fiber?.state === 2));
+  assert.equal(tokenMounted, false, 'Token client stays unloaded');
   await page.waitForFunction(id => !!window.__previewTestContext.sessions.list.getSnapshot().byId[id]?.cwd, sessions[0]);
   await select(sessions[0]);
   console.log('Loaded the installed sidebar and referenced session directories.');
+  await verifyNativeTerminal(page, sessions[0], sessions[1]);
   const browserState = await page.evaluate(sessionId => window.__previewTestContext.connection.rpc.call(
     '/dsh-playwright', 'state', { sessionId },
   ), sessions[0]);
@@ -137,14 +164,14 @@ try {
   await open(sessions[0], 'image #?% ü.png');
   await image().waitFor();
   assert.equal(await image().evaluate(img => img.naturalWidth), 1);
-  assert.equal(new URL(await image().getAttribute('src'), base).searchParams.get('path'), `${root}/one/image #?% ü.png`);
+  assert.match(await image().getAttribute('src'), /^blob:/, 'native image renderer uses authenticated bytes');
   await open(sessions[1], 'image #?% ü.png');
-  await page.waitForFunction(path => [...document.querySelectorAll('[data-dsh-image-preview] img')].some(img => img.naturalWidth && new URL(img.src).searchParams.get('path') === path), `${root}/two/image #?% ü.png`);
+  await waitForImage('image #?% ü.png');
   await open(sessions[0], `${root}/one/asset.png`);
   await waitForImage(`${root}/one/asset.png`);
   await select(sessions[1]);
   await open(sessions[0], 'image #?% ü.png');
-  await waitForImage(`${root}/one/image #?% ü.png`);
+  await waitForImage('image #?% ü.png');
   await select(sessions[0]);
   await waitForImage(`${root}/one/asset.png`);
   // Native tabs survive a session switch, but upstream does not persist their
@@ -153,15 +180,15 @@ try {
   await page.waitForFunction(() => window.__previewTestContext?.get('sidebarRight'));
   await select(sessions[0]);
   await open(sessions[0], 'image #?% ü.png');
-  await waitForImage(`${root}/one/image #?% ü.png`);
+  await waitForImage('image #?% ü.png');
   console.log('Verified real relative/absolute image previews, encoded names, referenced sessions, and restored tabs.');
 
   await open(sessions[0], 'missing.png');
-  await page.locator('[data-dsh-image-preview] [role="alert"]').waitFor();
+  await page.locator('[data-textpreview-failed]').waitFor();
   await writeFile(`${root}/one/missing.png`, png);
-  await page.locator('[data-dsh-image-preview]').getByRole('button', { name: /retry/i }).click();
+  await page.locator('[data-textpreview-retry]').click();
   await image().waitFor();
-  assert.match(await image().getAttribute('src'), /_dshRetry=1/);
+  assert.equal(await image().evaluate(img => img.naturalWidth), 1);
   console.log('Verified missing-image error and Retry recovery.');
 
   await open(sessions[0], 'note.txt');
@@ -185,7 +212,7 @@ try {
   assert.equal(response.status(), 200);
   assert.deepEqual(await response.body(), archive);
   await open(sessions[0], 'report.pdf');
-  await page.locator('iframe[title="report.pdf"][src^="blob:"]').waitFor();
+  await page.locator('[data-pdf-preview] canvas').first().waitFor();
   assert.deepEqual(errors, []);
   console.log('Verified text/HTML/PDF/download adapter paths and existing workspace containment.');
 } catch (error) {

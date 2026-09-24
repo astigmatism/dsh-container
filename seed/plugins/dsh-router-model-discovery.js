@@ -302,11 +302,17 @@ export function capabilityOps(settings, providerName, modelId, metadata, storedS
 }
 
 /** The same synchronization is used by startup and the optional offline migration. */
+function readSettings(service, namespace) {
+  // 0.1.7 exposes live entry Config through descriptors rather than get().
+  return typeof service.get === "function" ? service.get(namespace)
+    : service.describe().find(entry => entry.ns === namespace)?.value;
+}
+
 export async function synchronizeRouterSettings(settingsService, providers = DEFAULT_PROVIDERS) {
   if (providers.length === DEFAULT_PROVIDERS.length && DEFAULT_PROVIDERS.every(name => providers.includes(name))) {
     return synchronizeResidentSettings(settingsService);
   }
-  const initial = settingsService.get("llm-pi-ai");
+  const initial = readSettings(settingsService, "llm-pi-ai");
   if (!plainObject(initial)) throw new Error('DSH settings namespace "llm-pi-ai" is not registered yet');
   const catalogs = new Map();
   const plans = [];
@@ -330,7 +336,7 @@ export async function synchronizeRouterSettings(settingsService, providers = DEF
     }
   }
   for (const { providerName, modelId, metadata } of plans) {
-    let settings = settingsService.get("llm-pi-ai");
+    let settings = readSettings(settingsService, "llm-pi-ai");
     let stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user;
     const provision = provisionProviderOps(settings, providerName, modelId, stored);
     if (provision.length) {
@@ -339,7 +345,7 @@ export async function synchronizeRouterSettings(settingsService, providers = DEF
       for (const op of capabilityOps(proposed, providerName, modelId, metadata)) applyOperation(proposed, op);
       provision[0].value = proposed.providers[providerName];
       await settingsService.mutate("llm-pi-ai", provision);
-      settings = settingsService.get("llm-pi-ai");
+      settings = readSettings(settingsService, "llm-pi-ai");
       stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user;
     }
     const ops = capabilityOps(settings, providerName, modelId, metadata, stored);
@@ -347,11 +353,11 @@ export async function synchronizeRouterSettings(settingsService, providers = DEF
   }
   const primary = plans.find(plan => plan.providerName === "local-ollama");
   if (primary) {
-    const settings = settingsService.get("llm-pi-ai");
+    const settings = readSettings(settingsService, "llm-pi-ai");
     const retired = settings.providers?.["local-ollama-256k"];
     const ownedRetired = retired?.baseURL === settings.providers?.["local-ollama"]?.baseURL &&
       retired?.models?.length === 1 && retired.models[0].id === "local-active";
-    const selected = settingsService.get("agent-default-model");
+    const selected = readSettings(settingsService, "agent-default-model");
     if (ownedRetired && selected?.provider === "local-ollama-256k") {
       await settingsService.mutate("agent-default-model", [
         { op: "set", path: ["provider"], value: "local-ollama" },
@@ -367,7 +373,7 @@ export async function synchronizeRouterSettings(settingsService, providers = DEF
  * untouched. Stable local-active IDs keep existing Daytime sessions routable.
  */
 async function synchronizeResidentSettings(settingsService) {
-  const initial = settingsService.get("llm-pi-ai");
+  const initial = readSettings(settingsService, "llm-pi-ai");
   if (!plainObject(initial?.providers?.["local-ollama"])) throw new Error("Missing local-ollama provider");
   const stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user ?? initial;
   const next = {};
@@ -390,7 +396,7 @@ async function synchronizeResidentSettings(settingsService) {
     for (const operation of capabilityOps(proposed, name, modelId, metadata)) applyOperation(proposed, operation);
     next[name] = proposed.providers[name];
   }
-  const selected = settingsService.get("agent-default-model");
+  const selected = readSettings(settingsService, "agent-default-model");
   let nextSelection;
   if (plainObject(selected) && RESIDENT_MODELS[selected.provider] !== selected.model) {
     const provider = selected.provider === "local-everyday" ? "local-everyday" : "local-ollama";

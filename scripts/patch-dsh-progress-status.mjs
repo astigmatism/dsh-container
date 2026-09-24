@@ -24,6 +24,11 @@ function replace(source, before, after) {
 
 export function patchSource(input) {
   if (input.includes(marker)) return input;
+  if (input.includes('function TurnProcessNodeView({ node, turnProcess, t })')) {
+    return replace(input,
+      'const label = running ? duration === void 0 ? t("chat.deepDiving") : t("message.turnProcess.deepDivingFor", { duration }) :',
+      `// ${marker}: keep the upstream process disclosure and show the active step.\n\t\t\tconst step = turn.steps.at(-1);\n\t\t\tconst progress = step === void 0 ? 'Working' : \`Working · step \${step.step}\${step.status === 'open' && step.start !== undefined ? ' · current step ' + formatLiveRunDuration(Math.max(0, now - step.start.time), t) : ' · between steps'}\`;\n\t\t\tconst label = running ? progress + (duration === void 0 ? '' : ' · total ' + duration) :`);
+  }
   let source = replace(input, 'function TurnStatus({ startTime, t }) {',
     `// ${marker}: distinguish a long current step from a long multi-step turn.\n\t\t${currentStep.toString()}\n\t\tfunction TurnStatus({ startTime, timeline, t }) {\n\t\t\tconst step = currentStep(timeline);`);
   source = replace(source, 'const showClock = elapsedMs >= 15e3;', 'const showClock = true;');

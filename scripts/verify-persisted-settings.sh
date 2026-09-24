@@ -5,6 +5,9 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 canonical_settings=$project_dir/config/settings.yaml
 runtime_settings=$project_dir/data/dsh/settings.yaml
+if [ -f "$project_dir/data/dsh/.container-settings-v1.json" ]; then
+  runtime_settings=$project_dir/data/dsh/profiles/web/cordis.patch.yml
+fi
 env_file=$project_dir/.env
 
 get_env() {
@@ -39,18 +42,18 @@ if [ ! -f "$canonical_settings" ]; then
 fi
 
 if [ ! -e "$runtime_settings" ]; then
-  echo "Persisted settings are missing: data/dsh/settings.yaml" >&2
+  echo "Persisted settings are missing: $runtime_settings" >&2
   echo "Maintenance will not create or replace persisted settings." >&2
   exit 1
 fi
 
 if [ ! -f "$runtime_settings" ] || [ -L "$runtime_settings" ]; then
-  echo "Persisted settings are not a regular file: data/dsh/settings.yaml" >&2
+  echo "Persisted settings are not a regular file: $runtime_settings" >&2
   exit 1
 fi
 
 if [ ! -s "$runtime_settings" ]; then
-  echo "Persisted settings are empty: data/dsh/settings.yaml" >&2
+  echo "Persisted settings are empty: $runtime_settings" >&2
   echo "Maintenance will not create or replace persisted settings." >&2
   exit 1
 fi

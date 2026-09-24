@@ -71,7 +71,7 @@ const deliverablesFixture = `
 		}
 `;
 
-// 0.1.6-alpha.1's produced-file UI: chips always call the chat view's in-app
+// 0.1.7-rc.2's produced-file UI: chips always call the chat view's in-app
 // resource opener (sidebar preview) and the Host-capability parameters are gone.
 const deliverablesUpstreamFixture = `
 		function producedFileMentions(paths, openFile, label) {
@@ -171,7 +171,7 @@ test("production patches gate Markdown, produced-file, and folder affordances an
   assert.equal(patchDeliverablesSource(deliverables), deliverables, "deliverables patch is idempotent");
 });
 
-test("0.1.6-alpha.1's in-app produced-file opener is verified upstream and marker-only", () => {
+test("0.1.7-rc.2's in-app produced-file opener is verified upstream and marker-only", () => {
   const patched = patchDeliverablesSource(deliverablesUpstreamFixture);
 
   assert.match(patched, /dsh-native-file-opening-v1/);

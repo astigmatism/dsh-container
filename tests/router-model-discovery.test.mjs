@@ -234,7 +234,7 @@ test("resident profiles take labels and capacities from discovery while retainin
   }
 });
 
-test("plugin activates without a hard settings injection and synchronizes immediately", async () => {
+test("plugin synchronizes through 0.1.7 settings descriptors without the removed get API", async () => {
   const previousFetch = globalThis.fetch;
   const settings = {
     providers: {
@@ -260,8 +260,7 @@ test("plugin activates without a hard settings injection and synchronizes immedi
     resolveMutation = resolve;
   });
   const settingsService = {
-    get: () => settings,
-    describe: () => [{ ns: "llm-pi-ai", user: settings }],
+    describe: () => [{ ns: "llm-pi-ai", value: settings, user: settings }],
     mutate: async (_namespace, ops) => resolveMutation(ops),
   };
   globalThis.fetch = async () => new Response(JSON.stringify({data:[entry()]}), {

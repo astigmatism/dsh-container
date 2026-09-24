@@ -5,8 +5,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const MARKER = 'dsh-session-file-previews-v1';
-export const SIDEBAR_VERSION = '0.19.1';
-export const DSH_VERSION = '0.1.6-alpha.1';
+export const SIDEBAR_VERSION = '0.21.1';
+export const DSH_VERSION = '0.1.7-rc.2';
 
 function replaceOnce(source, before, after, label) {
   const index = source.indexOf(before);
@@ -74,7 +74,7 @@ export function patchSidebarSource(input) {
     `\t\t\tconst preview = descriptorId === EDITOR_KIND ? resolvePreviewParams(params, cwd, resolveSidebarPath, isAbsolutePath$1) : { ready: true, params };\n\t\t\tparams = preview.params;\n\t\t\tconst descriptor = service.getTab(descriptorId);\n\t\t\tconst view = records.ensure({`, 'session-relative resource resolution');
   source = replaceOnce(source, '\t\t\t}, [records, nativeTab.id]);\n\t\t\tif (descriptor === void 0)',
     `\t\t\t}, [records, nativeTab.id]);\n\t\t\tif (!preview.ready) return react_jsx_runtime.jsx("div", { role: "status", "data-dsh-preview-awaiting-workspace": true, children: t("loading") });\n\t\t\tif (descriptor === void 0)`, 'defer preview until workspace hydration');
-  source = replaceOnce(source,
+  if (!source.includes("DSH 0.1.7 grew a real document-preview package")) source = replaceOnce(source,
     `\t\t\t\t\tcomponent: ({ mediaUrl: url, title }) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {\n\t\t\t\t\t\tclassName: sidebar_module_css_default.editorImageWrap,\n\t\t\t\t\t\tchildren: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {\n\t\t\t\t\t\t\tclassName: sidebar_module_css_default.editorImage,\n\t\t\t\t\t\t\tsrc: url,\n\t\t\t\t\t\t\talt: title\n\t\t\t\t\t\t})\n\t\t\t\t\t})`,
     '\t\t\t\t\tcomponent: SidebarImagePreview', 'image error and retry');
   return source;

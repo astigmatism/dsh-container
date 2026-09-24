@@ -51,10 +51,19 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
 }
 
 export async function readSettings(file) {
-  const text = await readFile(file, 'utf8');
+  let text;
+  try { text = await readFile(file, 'utf8'); }
+  catch (error) {
+    if (error.code !== 'ENOENT' || !file.endsWith('/settings.yaml')) throw error;
+    text = await readFile(file.slice(0, -'settings.yaml'.length) + 'profiles/web/cordis.patch.yml', 'utf8');
+  }
   if (file.endsWith('.json')) return JSON.parse(text);
   const require = createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json');
-  return require('yaml').parse(text);
+  const value = require('yaml').parse(text, { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }] });
+  if (!Array.isArray(value)) return value;
+  const settings = {};
+  for (const row of value) if (row.id && row.config) settings[row.id] = { ...settings[row.id], ...row.config };
+  return settings;
 }
 
 /** Independent expected UI contract: validate live settings against discovery

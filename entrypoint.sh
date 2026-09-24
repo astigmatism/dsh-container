@@ -23,18 +23,23 @@ DSH_SETTINGS_GID=$(id -g) \
 
 # Fill missing console defaults before the settings service starts.
 sidebar_initializer=${DSH_SIDEBAR_SETTINGS_INITIALIZER:-/opt/dsh-build/initialize-sidebar-settings.mjs}
-if [ -f "$sidebar_initializer" ]; then
+if [ -f "$sidebar_initializer" ] && [ ! -f "$runtime_home/.container-settings-v1.json" ] \
+  && [ ! -f "$runtime_home/.container-settings-pending.json" ]; then
   node "$sidebar_initializer" "$runtime_home/settings.yaml"
 fi
 
+profile_migrator=${DSH_PROFILE_SETTINGS_MIGRATOR:-/opt/dsh-build/migrate-profile-settings.mjs}
+if [ -f "$profile_migrator" ]; then
+  node "$profile_migrator" "$runtime_home"
+fi
+
 # Reconcile known router capabilities before any lazy agent/settings scope can
-# read the persisted file. Invalid/unavailable discovery never changes settings;
-# keep the application available and let provider verification report the cause.
+# read the persisted file. Failed active-model migrations stop startup. The
+# migrator can defer a network outage only when both resident routes are already
+# valid locally; it never falls back to an incomplete or retired configuration.
 router_migrator=${DSH_ROUTER_SETTINGS_MIGRATOR:-/opt/dsh-build/migrate-resident-models.mjs}
 if [ -f "$router_migrator" ]; then
-  if ! node "$router_migrator" --startup "$runtime_home/settings.yaml"; then
-    echo "Router settings synchronization deferred; persisted settings were preserved." >&2
-  fi
+  node "$router_migrator" --startup "$runtime_home/settings.yaml"
 fi
 
 # Upstream protects every browser and RPC request with a process launch token.

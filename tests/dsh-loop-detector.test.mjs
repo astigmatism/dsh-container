@@ -579,7 +579,7 @@ test("legitimate read-only diagnosis is not forced to edit or capped by implemen
 test("production profile exposes the centrally configured semantic thresholds and effective read defaults", async () => {
   const loopPatch = await readFile(path.join(projectRoot, "seed/profile/patches/dsh-loop-detector@1.0.0.patch"), "utf8");
   assert.match(loopPatch, /export const inject = \['agents', 'fs', 'tools'\]/);
-  const profile = await readFile(path.join(projectRoot, "seed/profile/cordis.patch.yml"), "utf8");
+  const profile = await readFile(path.join(projectRoot, "seed/profile/managed/cordis.patch.yml"), "utf8");
   for (const marker of [
     "continuationDirective: 12",
     "reasoningPrefixChars: 128",

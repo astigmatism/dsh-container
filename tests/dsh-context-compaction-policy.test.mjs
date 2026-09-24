@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const profile = await readFile(new URL("../seed/profile/cordis.patch.yml", import.meta.url), "utf8");
+const profile = await readFile(new URL("../seed/profile/managed/cordis.patch.yml", import.meta.url), "utf8");
 const settings = await readFile(new URL("../config/settings.yaml", import.meta.url), "utf8");
 
 const CONTEXT_WINDOW = 131072;
@@ -23,15 +23,15 @@ function block(id, nextId) {
   return profile.slice(start, end);
 }
 
-test("Web mounts automatic compaction, manual recovery, and replay-safe pruning", () => {
+test("Host keeps preset policy templates without mounting duplicate compaction services", () => {
   const compact = block("compaction-basic", "command-compact");
-  assert.match(compact, /disabled: false/);
+  assert.match(compact, /disabled: true/);
   assert.match(compact, /auto: true/);
   assert.match(compact, /retainRatio: 0\.16/);
   assert.match(compact, /maxOverflowRetries: 1/);
-  assert.match(block("command-compact", "tool-result-pruner"), /disabled: false/);
+  assert.match(block("command-compact", "tool-result-pruner"), /disabled: true/);
   const pruner = block("tool-result-pruner", "dsh-playwright");
-  assert.match(pruner, /disabled: false/);
+  assert.match(pruner, /disabled: true/);
   assert.match(pruner, /thresholdChars: 8192/);
 });
 

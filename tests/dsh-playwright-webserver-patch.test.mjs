@@ -27,7 +27,7 @@ test("mounts each HTTP-backed transport in its complete service scope", () => {
 });
 
 test("profile declares the scoped webServer dependency at the loader boundary", () => {
-  const overlay = readFileSync(new URL("../seed/profile/cordis.patch.yml", import.meta.url), "utf8");
+  const overlay = readFileSync(new URL("../seed/profile/managed/cordis.patch.yml", import.meta.url), "utf8");
   assert.match(overlay, /- id: dsh-playwright\n  inject:\n    - webServer\n  config:/);
 });
 

@@ -45,12 +45,33 @@ export function patchSource(input) {
 async function main() {
   const runtime = process.env.DSH_RUNTIME_ROOT ?? "/usr/local/lib/node_modules/@deepseek-ai/dsh";
   const connection = JSON.parse(await readFile(`${runtime}/node_modules/@deepseek-ai/dsh-client-connection/package.json`, "utf8"));
-  if (connection.version !== "0.1.6-alpha.1") throw new Error("Browser RPC owner patch requires client-connection 0.1.6-alpha.1");
+  if (connection.version !== "0.1.7-rc.2") throw new Error("Browser RPC owner patch requires client-connection 0.1.7-rc.2");
   const target = process.argv[2] ?? DEFAULT_TARGET;
   const before = await readFile(target, "utf8");
   const after = patchSource(before);
   if (after !== before) await writeFile(target, after);
   if (!after.includes(PATCH_MARKER)) throw new Error("dsh-playwright web-transport scope patch did not apply");
+  const directory = target.slice(0, -'/lib/index.js'.length);
+  const manifestPath = `${directory}/package.json`;
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (manifest.version !== '0.1.0') throw new Error('Browser client patch requires dsh-playwright 0.1.0');
+  manifest.dsh.client.inject = manifest.dsh.client.inject.map(name => name === '@deepseek-ai/dsh-client-runtime'
+    ? '@deepseek-ai/dsh-api-session-controller' : name);
+  delete manifest.peerDependencies['@deepseek-ai/dsh-client-runtime'];
+  manifest.peerDependencies['@deepseek-ai/dsh-api-session-controller'] = '^0.1.7-rc.2';
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  const clientPath = `${directory}/lib/client.cjs`;
+  const client = await readFile(clientPath, 'utf8');
+  if (!client.includes('dsh-browser-session-selection-v1')) {
+    let patched = replaceOnce(client,
+      'const sessions = (0, react.useSyncExternalStore)((listener) => ctx.sessions.list.subscribe(listener), () => ctx.sessions.list.getSnapshot());',
+      'const sessions = (0, react.useSyncExternalStore)((listener) => ctx.sessions.list.subscribe(listener), () => ctx.sessions.list.getSnapshot());\n\t\t\t// dsh-browser-session-selection-v1: selection is owned by the retained main view.\n\t\t\tconst activeSession = Object.values(sessions.byId).find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id;',
+      'selected browser session');
+    patched = replaceOnce(patched, 'sessions.current === void 0 ? void 0 : String(sessions.current)',
+      'activeSession === void 0 ? void 0 : String(activeSession)', 'browser session identity');
+    Function(patched);
+    await writeFile(clientPath, patched);
+  }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

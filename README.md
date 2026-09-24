@@ -17,9 +17,13 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-- DeepSeek Harness `0.1.6-alpha.1`, the official package built from GitHub tag
-  `dsh-v0.1.6-alpha.1` at commit
-  `0a15e36e7f82b6ed45af6fa9759f29b40dcd965d`; pnpm `11.7.0`; Docker CLI
+The `0.1.7-rc.2` upgrade is a qualification candidate. The Mac installation has
+not been upgraded. See [qualification results and remaining gates](docs/harness-0.1.7-upgrade.md)
+before using the update workflow.
+
+- DeepSeek Harness `0.1.7-rc.2`, the official package built from GitHub tag
+  `dsh-v0.1.7-rc.2` at commit
+  `477b4f420553e8a52c2fbccc464d7561b239c443`; pnpm `11.7.0`; Docker CLI
   `29.6.0`. The release and commit are immutable build inputs rather than a
   moving `master` reference.
 - Node 22 base pinned to the digest used by the source image.
@@ -54,7 +58,7 @@ The locked web profile contains these ten plugins:
    compatibility patch, installed but disabled by default because its
    inode/device-sensitive refold path and per-frame synchronous Zstandard
    decompression have caused repeatable multi-gigabyte Harness RSS growth
-2. `dsh-context` 0.52.0
+2. `dsh-context` 0.56.1
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
 5. `dsh-playwright` 0.1.0 with its existing panel-layout patch and a narrowly
@@ -63,18 +67,17 @@ The locked web profile contains these ten plugins:
    Browser Use panel and model-facing Playwright tools
 6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
-7. `dsh-session-pin` 0.7.11
-8. `dsh-ui-appearance` 0.1.10
-9. `dsh-favicon-status` 0.1.0-rc.6 with its manifest UTF-8 BOM removed at
-   image build time so the upstream profile loader can parse it
-10. `dsh-better-sidebar` 0.19.1 with live agent terminals, task views, and
-    session file activity, pinned to its DSH 0.1.6-alpha.1-compatible release
+7. `dsh-session-pin` 0.7.15
+8. `dsh-ui-appearance` 0.1.11
+9. `dsh-favicon-status` 0.1.0-rc.8 (published without a manifest BOM)
+10. `dsh-better-sidebar` 0.21.1 with task views and session file activity;
+    terminal and image/PDF rendering use the upstream Harness implementations
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 `seed/` for the exact manifest, lockfile, provider, and patch.
 
-The upstream repositories were rechecked on 2026-09-09. Their current heads
+The upstream repositories were rechecked on 2026-09-24. Their current heads
 still publish `@zoytown/dsh-token` 0.1.3 and `dsh-playwright` 0.1.0; the exact
 observed commits are recorded in `config/plugins.lock.json`. No unpublished
 token-memory repair or newer shared-panel implementation was available to
@@ -82,8 +85,9 @@ adopt.
 
 Token statistics are the only deliberately unavailable default feature. There
 is no fixed `@zoytown/dsh-token` release whose memory behavior can be proven
-bounded. To accept the known refold/OOM risk for a controlled experiment, set
-`DSH_TOKEN_ENABLED=true` in `.env` and rebuild/restart. Omitting the variable
+bounded. The retained v3 reader has not been qualified for v4 versioned session files.
+`DSH_TOKEN_ENABLED=true` is an unsupported diagnostic opt-in, not a qualified
+feature of this release. Omitting the variable
 or setting it to `false` keeps both the host scanner and token-statistics UI
 unloaded; package installation alone does not enable them.
 
@@ -94,59 +98,31 @@ three 35-second boundaries (longer than the plugin's 30-second refresh), and
 fails on monotonic growth, excessive RSS/growth, an OOM flag, a restart or
 recreation, or any write to the disabled plugin's durable index.
 
-## Live console
+## Native terminal workflow
 
-Deploy this feature through the Service Portal's **Update and Restart** action
-for Harness. The existing updater pulls `origin/main`, rebuilds the images,
-and verifies the recreated containers. Startup installs the canonical plugin
-profile and fills missing console preferences while retaining conversations
-and existing settings. Refresh the Harness browser page after the update.
+Harness 0.1.7-rc.2 owns the terminal in the right sidebar. Open a conversation,
+add a **Terminal** tab, and select Bash. The shell runs inside the container in
+that session's workspace. Output streams as it arrives; reconnecting restores
+the retained screen, and closing the terminal ends its process. Processes do
+not survive a Harness restart.
 
-Open a conversation and use the **bottom-panel toggle in the session header**
-to open the terminal workbench. Agent-created terminals appear automatically
-alongside the conversation. Ask, for example: "Run this build in a visible
-terminal so I can watch its output."
+Agent tools follow the selected preset. Standard uses Bash and background
+jobs; Minimal has a persistent Bash session. The upgrade preserves the user's
+preset selection. Better Sidebar 0.21.1 no longer supplies `terminal_*` tools.
+The existing Playwright **Browser Use** panel and Sidebar file activity remain.
 
-Better Sidebar provides `terminal_create`, `terminal_list`, `terminal_send`,
-`terminal_read`, `terminal_wait_for`, `terminal_resize`, `terminal_signal`, and
-`terminal_close`. Long commands using these tools stream their actual terminal
-output to the browser as it arrives. Ordinary shell calls retain their existing
-chat-card behavior; background-task output reflects what the agent has read.
-The Changes tab's **This Session** view shows file reads and edits.
-
-The terminal runs `/bin/bash` **inside the Harness container**, in the session's
-workspace. It uses the existing authenticated gateway and WebSocket forwarding;
-no additional listener is exposed. A browser refresh reattaches to an agent's
-terminal and replays its retained transcript. Closing its tab terminates that
-terminal; terminals do not survive a Harness restart.
-
-New preferences enable agent terminal tools and task views, disable Side Chat
-and the extra Browser tab, and leave external-link handling with the existing
-application. The Playwright **Browser Use** panel is retained. Change these
-preferences under **Settings → Side card**. Startup fills only absent fields
-in the `dsh-better-sidebar` namespace and preserves explicit choices, including
-turning terminal tools off. It never replaces other settings or user instructions.
-
-The image compiles `node-pty` with explicitly approved build scripts and removes
-the compiler afterward. Its build check spawns a real PTY and verifies output
-arrives before process completion; web boot also checks client module loading.
-`scripts/verify.sh` checks the deployed terminal and sidebar API without creating
-a model task. For an explicit local end-to-end test, run:
+The image compiles the core `node-pty` dependency, then exercises a real PTY.
+Authenticated browser qualification checks the terminal tab, incremental output,
+reconnect, interactive input, Ctrl-C, session isolation and process cleanup.
+For the isolated local browser/terminal/file-preview check:
 
 ```sh
 docker exec deepseek-harness node /opt/dsh-build/verify-sidebar-client.mjs --live
 ```
 
-This creates isolated verification conversations and exercises a real model
-tool call, live rendering, reconnect replay, input, interruption, session
-isolation, and terminal cleanup. Set `DSH_VERIFY_URL` plus
-`DSH_VERIFY_GATEWAY_USERNAME`/`DSH_VERIFY_GATEWAY_PASSWORD` privately to exercise
-the authenticated HTTPS gateway instead of the backend. Do not print credentials
-or include them in test reports.
-
-Rollback uses the previous image and its canonical profile through the normal
-local Compose workflow. Keep `data/dsh` intact: conversations and preferences
-are retained, and the unused sidebar preference namespace can remain in place.
+See [the upgrade and rollback procedure](docs/harness-0.1.7-upgrade.md) before
+recreating an existing installation. Rollback requires both the previous image
+and the pre-upgrade data snapshot.
 
 ## Shared browser and visual validation
 
@@ -363,7 +339,7 @@ discovery is complete, but never cancels a turn merely because it is still
 gathering distinct evidence. Normalized reasoning prefixes of at least 128
 characters direct on their second occurrence and stop on their third. These
 values are centralized under
-`dsh-loop-detector` in `seed/profile/cordis.patch.yml`. Diagnosis and review
+`dsh-loop-detector` in `seed/profile/managed/cordis.patch.yml`. Diagnosis and review
 tasks remain read-only; duplicate-read and reasoning-cycle protection still
 applies. Semantic guard cancellations use distinct reason codes and accurately
 report whether implementation occurred, while the character-level repetition
@@ -427,30 +403,24 @@ volatile slot-prefix caching. Reasoning summaries and opaque signatures are
 stored separately in replay state and reconstructed before tool calls on
 tool-result continuations.
 
-`scripts/configure.sh` atomically initializes a missing
-`data/dsh/settings.yaml` from that canonical file with the configured
-`HOST_UID:HOST_GID` ownership and mode `0644`. Container startup performs the
-same initialization defensively. It also recognizes and repairs the zero-byte
-mountpoint left by the repository's original nested settings bind mount, with a
-distinct diagnostic. After initialization, a non-empty persisted file is the
-machine's runtime source of truth. DSH may atomically reserialize it and save it
-with mode `0600`; that is expected. Non-empty divergent settings are preserved
-and are never overwritten by setup, startup, or maintenance.
+`scripts/configure.sh` initializes missing legacy settings from
+`config/settings.yaml`. On first 0.1.7 startup, the repository migrator moves
+those values into `data/dsh/profiles/web/cordis.patch.yml`, maps renamed settings
+namespaces, archives `settings.yaml` as `settings.yaml.imported`, and retains
+`profile-before-0.1.7.yaml`. Invalid inputs stop startup before Harness launches.
 
-After confirming that the canonical file is intended for a particular existing
-consumer, an operator may explicitly reconcile only a zero-byte placeholder:
+The `dsh-container-profile` bundle under `seed/profile/managed/` owns maintained
+defaults. The final writable profile owns user preferences and is never replaced
+by runtime synchronization. The `.container-settings-v1.json` receipt prevents
+subsequent startup/configuration runs from recreating `settings.yaml`. Settings
+may be saved atomically with mode `0600`; `0600`, `0640` and `0644` are accepted
+by verification. The service UID must own the file.
 
-```sh
-sudo ./scripts/initialize-persisted-settings.sh --replace-empty
-```
-
-The initializer refuses a non-empty divergent file even with that flag. It
-stages content in the persisted directory, applies service ownership and mode
-`0644`, rechecks the original state, and replaces the empty file atomically.
-The maintenance verifier requires a regular, non-empty file owned by the
-configured service identity. It accepts secure modes `0600`, `0640`, and
-`0644`; it reports whether the content differs from the defaults without
-blocking or replacing machine-specific runtime settings.
+The build applies the maintained compaction and pruning policy inside every
+shipped agent preset: 70% pressure for both resident models, zero extra headroom,
+one overflow recovery, and no injected summary-output quota. Host copies stay
+disabled to avoid duplicate services. Persisted custom preset definitions retain
+precedence over these defaults.
 
 ## First login and TLS
 
@@ -485,7 +455,7 @@ default and are persisted in `data/gateway/sessions.json`, so they survive
 gateway restarts until they expire. Override the lifetime in seconds with
 `HARNESS_SESSION_TTL_SECONDS` in the private `.env`.
 
-Harness `0.1.6-alpha.1` also authenticates its own browser and RPC carrier.
+Harness `0.1.7-rc.2` also authenticates its own browser and RPC carrier.
 The container entrypoint generates a fresh 32-byte launch token on every
 start, stores it as `data/backend-auth/launch-token` with mode `0600`, and supplies
 the same value to Harness. The gateway sees that file through a read-only
@@ -554,21 +524,21 @@ contract is missing.
 Fresh deployment is the safer default. To retain existing sessions and the
 same gateway TLS identity, stop the source stack and securely copy ignored runtime
 state into the same paths in this checkout. To keep the canonical software and
-plugin set, do not copy `data/dsh/profiles/`, `data/dsh/.dsh-plugins/`, or an
-old `settings.yaml`; the container will seed those from the repository image.
+plugin set, omit installed `node_modules` and `data/dsh/.dsh-plugins/`. Preserve
+the writable `profiles/web/cordis.patch.yml`, migration receipt and archived
+inputs. For a pre-0.1.7 source, retain `settings.yaml` and its profile patch so
+the one-time migration can preserve preferences.
 
 - selected contents of `data/dsh/` — sessions, indexes, and workspace metadata,
-  excluding the software/profile paths named above.
+  excluding installed dependencies and managed software paths.
 - `data/gateway/` — password hash, session store, local CA private key, and certificates.
 - `data/router/` and `data/router-runtime/` — managed-router logs and active
   model marker, if using managed mode.
 - `data/ollama/` — optional large Ollama store; copying it avoids model pulls.
 
-Do not commit any of those directories. A copied `data/dsh/profiles/web`
-is replaced from the image on every container start, as is
-`data/dsh/.dsh-plugins`. This makes the repository authoritative for plugin
-additions, removals, versions, patches, and lockfiles while preserving session
-and workspace data.
+Do not commit any of those directories. Startup synchronizes managed profile
+software and `data/dsh/.dsh-plugins` from the image, while preserving the writable
+web profile patch, sessions and workspace data.
 
 ## Host maintenance boundary
 
@@ -589,7 +559,7 @@ image build verifies that contract against the exact pinned browser bundles;
 an upstream layout or behavior change fails the build rather than silently
 restoring native host dispatch.
 
-The pinned `dsh-better-sidebar` 0.19.1 viewer also receives a version-checked
+The pinned `dsh-better-sidebar` 0.21.1 viewer also receives a version-checked
 build patch. Session-relative resources resolve against the referenced session's
 working directory before entering the shared image, text, HTML, PDF, and download
 adapter. Restored tabs wait for the session directory to load; absolute paths and
@@ -603,10 +573,9 @@ when private hosts are enabled.
 
 The CLI's dependency graph is also locked in `config/dsh-runtime.package-lock.json`
 and installed with `npm ci`. Pinning only the top-level CLI admits newer internal
-prereleases through upstream caret ranges. This lock retains the 0.1.6-alpha.1
-generation used by deployed revision `6c119f7`; regenerate and review it with any
-Harness upgrade. The initial lock resolves the published graph as of that
-deployment's build on 2026-09-17 at 05:27:47 UTC.
+prereleases through upstream caret ranges. This lock pins every Harness package
+to 0.1.7-rc.2 and Cordis to 4.0.4, using published packages resolved on
+2026-09-24. Regenerate and review both locks with any Harness upgrade.
 
 Ordinary `docker compose build` uses the Harness version and upstream commit
 pinned in `Dockerfile` on Windows, macOS, and Linux. Legacy `DSH_VERSION` and
@@ -747,8 +716,8 @@ before fetch. After fast-forwarding, the original process transfers
 its maintenance lock and status to the fetched updater and re-executes it. The
 fetched code therefore performs the final preflight and Compose validation
 before it can change services. During this handoff, exact legacy
-`0.1.1-rc.2` and `0.1.5-rc.2` package/image pins are atomically migrated to the qualified
-`0.1.6-alpha.1` tag and its recorded upstream commit; deliberately customized
+`0.1.1-rc.2`, `0.1.5-rc.2`, and `0.1.6-alpha.1` package/image pins are atomically migrated to the
+`0.1.7-rc.2` tag and its recorded upstream commit; deliberately customized
 pins are left unchanged, and dry-run reports the migration without editing
 `.env`. The fetched updater also records `DSH_TOKEN_ENABLED=false` when an
 older `.env` has no token-plugin policy, while preserving an existing exact

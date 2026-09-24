@@ -6,10 +6,10 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { initializeSidebarSettings, missingSidebarDefaults } from '../scripts/initialize-sidebar-settings.mjs';
 
-test('new installation receives visible terminals without extra browser or side chat', () => {
+test('new installation seeds only retained Sidebar tabs', () => {
   const entries = missingSidebarDefaults({ permission: { defaultPreset: 'custom' } });
-  assert.equal(entries.length, 6);
-  assert.ok(entries.some(entry => entry.path.at(-1) === 'agentTerminalTools' && entry.value === true));
+  assert.equal(entries.length, 2);
+  assert.ok(entries.every(entry => !['agentTerminalTools', 'terminal', 'browser'].includes(entry.path.at(-1))));
   assert.ok(entries.some(entry => entry.path.at(-1) === 'sidechat' && entry.value === false));
 });
 
@@ -28,7 +28,7 @@ test('recreation preserves explicit choices and unrelated preferences', () => {
 
 test('partial preferences receive only absent leaves', () => {
   const missing = missingSidebarDefaults({ 'dsh-better-sidebar': { agentTerminalTools: false, tabsEnabled: { terminal: false } } });
-  assert.equal(missing.length, 4);
+  assert.equal(missing.length, 2);
   assert.ok(missing.every(entry => !['terminal', 'agentTerminalTools'].includes(entry.path.at(-1))));
 });
 

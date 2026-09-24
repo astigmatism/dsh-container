@@ -62,6 +62,22 @@ class RuntimeProfileSyncTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertIn('0 files updated, 0 obsolete entries removed', result.stdout)
 
+    def test_writable_profile_survives_sync_and_managed_defaults_are_repaired(self):
+        (self.web / 'cordis.patch.yml').write_text('[]\n')
+        (self.web / 'managed').mkdir()
+        (self.web / 'managed/cordis.patch.yml').write_text('managed defaults')
+        self.run_sync()
+        user = self.installed / 'cordis.patch.yml'
+        preference = '- id: ui-theme\n  config:\n    theme: dark\n'
+        user.write_text(preference)
+        user.chmod(0o600)
+        for _ in range(2):
+            (self.installed / 'managed/cordis.patch.yml').write_text('drift')
+            self.run_sync()
+            self.assertEqual(user.read_text(), preference)
+            self.assertEqual(stat.S_IMODE(user.stat().st_mode), 0o600)
+            self.assertEqual((self.installed / 'managed/cordis.patch.yml').read_text(), 'managed defaults')
+
     def test_same_size_same_timestamp_edits_are_repaired(self):
         (self.web / 'unreadable.txt').write_text('canonical data')
         self.run_sync()

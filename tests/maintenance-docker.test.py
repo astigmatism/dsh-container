@@ -120,7 +120,7 @@ def fixture_application(manifest,by_service):
 engine.verify_application=fixture_application
 production_probe=engine.probe_release
 def fixture_probe(manifest,model,root,**kwargs):
-    if kwargs.get('portal',True):
+    if kwargs.get('portal',True) and (Path(root)/'transaction.json').exists():
         edge=run([*compose_command(root),'ps','-q','edge']).strip()
         run(['docker','exec',edge,'node','-e',
             "fetch('http://127.0.0.1:3081/api/session/create',{method:'POST'}).then(r=>{if(r.status!==503)throw Error('Uncommitted candidate accepted writable ingress')})"])
@@ -356,7 +356,8 @@ USER node
     if not previous_image and mode == 'remote':
         # Qualify the exact historical deployment-directory adapter path too.
         # Its forwarder is installed transactionally and preserves arguments.
-        run([legacy_entrypoint, '--verify'])
+        verified = subprocess.run([legacy_entrypoint, '--verify'], capture_output=True, text=True)
+        assert verified.returncode == 0, verified.stdout + verified.stderr
     (root/'inject-portal-failure').write_text('fixture only')
     result = update()
     assert result['state'] == 'failed', result

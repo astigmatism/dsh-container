@@ -32,6 +32,8 @@ timeout_seconds=180
 }
 
 parent=$(mktemp -d "${TMPDIR:-/tmp}/dsh-plugin-boot.XXXXXX")
+DSH_VERIFY_ISOLATED=1
+export DSH_VERIFY_ISOLATED
 home=$parent/runtime
 boot_log=$parent/dsh-web.log
 cookie_jar=$parent/cookies.txt

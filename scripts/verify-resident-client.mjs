@@ -1,12 +1,12 @@
 /** Deployment gate for the real model catalog, picker, effort control and inference. */
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 import { launchVerificationBrowser } from './verification-browser.mjs';
+import { waitForVerificationTurn, openVerificationSession } from './verification-state.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -22,6 +22,9 @@ let sessionId;
 let originalDefault;
 let fixture;
 let workspaceId;
+const browserErrors = [];
+page.on('pageerror', error => browserErrors.push(error.message));
+page.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()); });
 async function rpc(name, request = {}) {
   const method = name.includes('/') ? name : `session/${name}`;
   const response = await context.request.post(`${base}/api/${method}`, { data: {
@@ -56,28 +59,12 @@ try {
   await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
     'Text-only verification. Do not use tools or access files. Reply with READY.' }] });
   if (!live) await rpc('cancel', { sessionId });
-  const readyDeadline = Date.now() + (live ? 600000 : 90000);
-  while ((await rpc('list')).items.find(item => item.sessionId === sessionId)?.running) {
-    assert.ok(Date.now() < readyDeadline, 'verification session reached idle');
-    await delay(1000);
-  }
+  await waitForVerificationTurn(rpc, sessionId, { phase: 'initial READY prompt', marker: 'READY',
+    allowCancellation: !live, timeoutMs: live ? 600000 : 90000 });
   const title = `Resident model verification ${sessionId.slice(-8)}`;
   await rpc('rename', { sessionId, title });
   await page.goto(base, { waitUntil: 'networkidle' });
-  const group = page.getByRole('treeitem').filter({ has: page.getByText(created.workspace.title, { exact: true }) }).first();
-  const sessionRow = page.getByText(title, { exact: true });
-  // Workspace restoration can expand the most recent group while the browser
-  // connects. Re-read its state instead of racing that restoration with one
-  // blind toggle, and click the label rather than the row's action buttons.
-  const navigationDeadline = Date.now() + 30000;
-  while (!(await sessionRow.isVisible())) {
-    assert.ok(Date.now() < navigationDeadline, `verification session is visible in its workspace (expanded=${await group.getAttribute('aria-expanded')})`);
-    if (await group.getAttribute('aria-expanded') === 'false') {
-      await group.getByText(created.workspace.title, { exact: true }).click();
-    }
-    await delay(100);
-  }
-  await sessionRow.click();
+  await openVerificationSession(page, { workspaceId, workspaceTitle: created.workspace.title, sessionId });
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
   await trigger.click();
@@ -93,22 +80,12 @@ try {
     for (const [index, choice] of expected.entries()) {
       await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' });
       const marker = `RESIDENT_${index}_${randomUUID().slice(0, 8)}`;
+      const before = (await rpc('list')).items.find(item => item.sessionId === sessionId);
+      assert.ok(before, 'verification session exists before inference');
       await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
         `Text-only model acceptance check. Do not use tools or access files. Reply with exactly ${marker} and no other text.` }] });
-      const deadline = Date.now() + 600000;
-      let passed = false;
-      while (Date.now() < deadline) {
-        const row = (await rpc('list')).items.find(item => item.sessionId === sessionId);
-        if (!row.running && Number.isInteger(row.projections?.asOfSeq)) {
-          const history = await rpc('page', { address: { kind: 'session', sessionId }, throughSeq: row.projections.asOfSeq, maxMessages: 50 });
-          const events = history.records.map(record => record.event);
-          assert.ok(!events.some(event => event.type === 'tool/start'), 'acceptance must remain text-only');
-          passed = events.some(event => event.type === 'assistant/message' && event.data.message?.content?.some(block => block.type === 'text' && block.text.trim() === marker));
-          if (passed) break;
-        }
-        await delay(1000);
-      }
-      assert.ok(passed, `${choice.name} produced its expected reply through the application`);
+      await waitForVerificationTurn(rpc, sessionId, { phase: `${choice.name} inference`, marker,
+        afterSeq: before.projections?.asOfSeq ?? -1 });
       const meter = page.getByRole('button', { name: /% of context used/ });
       await meter.click();
       const capacity = `${Math.round(choice.contextWindow / 1000)}K`; // Upstream meter uses decimal K.
@@ -119,6 +96,17 @@ try {
   }
 } catch (error) {
   console.error(String(error?.stack ?? error).split(secret).join('<redacted>'));
+  const directory = process.env.DSH_VERIFY_DIAGNOSTICS;
+  if (directory) {
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const tree = await page.getByRole('tree').allTextContents();
+      await writeFile(resolve(directory, 'resident.json'), JSON.stringify({ code: error.code,
+        error: String(error), browserErrors, workspaceId, sessionId, tree }, null, 2)
+        .split(secret).join('<redacted>'), { mode: 0o600 });
+      await page.screenshot({ path: resolve(directory, 'resident.png') });
+    } catch { console.error('Could not save all isolated browser diagnostics.'); }
+  }
   process.exitCode = 1;
 } finally {
   if (sessionId) {

@@ -70,6 +70,8 @@ COPY scripts/verify-sidebar-terminal.mjs /opt/dsh-build/verify-sidebar-terminal.
 COPY scripts/verify-sidebar-client.mjs /opt/dsh-build/verify-sidebar-client.mjs
 COPY scripts/verification-browser.mjs /opt/dsh-build/verification-browser.mjs
 COPY scripts/verify-resident-client.mjs /opt/dsh-build/verify-resident-client.mjs
+COPY scripts/verification-state.mjs /opt/dsh-build/verification-state.mjs
+COPY scripts/verify-runtime-readiness.mjs /opt/dsh-build/verify-runtime-readiness.mjs
 COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs

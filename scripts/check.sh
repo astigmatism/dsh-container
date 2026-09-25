@@ -47,6 +47,7 @@ fi
 "$project_dir/tests/compose-topology.test.sh"
 python3 "$project_dir/tests/gateway-credentials.test.py"
 python3 "$project_dir/tests/upgrade-recovery.test.py"
+python3 "$project_dir/tests/isolated-verification.test.py"
 python3 "$project_dir/tests/runtime-release.test.py"
 python3 "$project_dir/tests/runtime-profile-sync.test.py"
 "$project_dir/tests/delegated-gateway.test.sh"
@@ -157,6 +158,8 @@ if [ "$build" -eq 1 ]; then
   docker build --target harness --tag "$harness_image" "$project_dir"
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
+
+  python3 "$project_dir/tests/isolated-verification-docker.test.py" "$harness_image"
 
   if [ "${CI:-false}" = true ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"

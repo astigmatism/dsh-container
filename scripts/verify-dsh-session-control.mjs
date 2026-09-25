@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { requireIsolatedVerification } from './verification-state.mjs';
+
+requireIsolatedVerification();
 
 if (!process.argv.includes('--live')) throw new Error('Pass --live to create a smoke-test session and use the model.');
 const base = 'http://127.0.0.1:3080';

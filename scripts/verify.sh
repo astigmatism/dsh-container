@@ -114,7 +114,10 @@ if ! compose exec -T harness node -e \
 fi
 echo "Verified DeepSeek Harness $expected_dsh_version from upstream commit $expected_upstream_commit."
 
-if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
+if ! inventory=$(compose exec -T harness node -e '
+  const dependencies = require("/data/dsh/profiles/web/package.json").dependencies;
+  for (const [name, version] of Object.entries(dependencies)) console.log(`${name}@${version}`);
+'); then
   if ! docker info >/dev/null 2>&1; then
     echo "Docker Engine became unavailable while reading the plugin inventory." >&2
     exit "$docker_compose_exit"
@@ -146,12 +149,13 @@ if ! compose exec -T harness node /opt/dsh-build/patch-dsh-file-previews.mjs \
   exit "$configuration_exit"
 fi
 
-# Exercise the installed PTY as the service UID and the mounted sidebar API.
-# The read-only client probe also works when the user has disabled agent tools.
-if ! compose exec -T -e DSH_PROFILE_ROOT=/data/dsh/profiles/web harness \
-  node /opt/dsh-build/verify-sidebar-terminal.mjs --native \
-  || ! compose exec -T harness node /opt/dsh-build/verify-sidebar-client.mjs; then
-  echo "The live-console terminal or browser integration failed verification." >&2
+# Opening the browser can create drafts even without an explicit create RPC.
+# All UI, native-terminal and inference probes run against disposable storage.
+# The legacy split-directory adapter calls this same gate after copying scripts.
+if ! python3 "$script_dir/verify-isolated-runtime.py" \
+  --container "$(compose ps -q harness)" \
+  --diagnostics "$project_dir/data/verification-diagnostics/$(date +%Y%m%dT%H%M%S)"; then
+  echo "Isolated application acceptance failed; production conversations were not used." >&2
   exit "$application_health_exit"
 fi
 
@@ -169,18 +173,7 @@ if ! compose exec -T harness node -e \
   exit "$configuration_exit"
 fi
 
-# Load the deployed browser client with its private launch token and require
-# the local-speech plugin to mount exactly one accessible control inside the
-# current Harness composer. Inventory and source checks cannot detect a UI
-# integration that loaded successfully but no longer matches the composer.
-if ! compose exec -T harness node /opt/dsh-build/verify-dictation-client.mjs; then
-  if ! docker info >/dev/null 2>&1; then
-    echo "Docker Engine became unavailable during dictation client verification." >&2
-    exit "$docker_compose_exit"
-  fi
-  echo "The deployed Harness client did not render its local dictation control." >&2
-  exit "$application_health_exit"
-fi
+# The rendered dictation control is covered in the isolated application gate.
 
 # Import the deployed loop detector itself (not a source-side helper) and
 # require the corrected generated implementation markers. This detects both a
@@ -262,8 +255,8 @@ while ! profile_output=$(compose exec -T harness node /opt/dsh-build/verify-rout
 done
 printf '%s\n' "$profile_output"
 
-if ! compose exec -T harness node /opt/dsh-build/verify-resident-client.mjs --live; then
-  echo "The resident model picker or application inference failed verification." >&2
+if ! compose exec -T harness node /opt/dsh-build/verify-runtime-readiness.mjs; then
+  echo "The production plugin inventory or model catalog failed its read-only check." >&2
   exit "$application_health_exit"
 fi
 

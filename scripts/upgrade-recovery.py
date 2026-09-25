@@ -236,7 +236,9 @@ def restore(point):
             write_json(point / 'state.json', state)
         state['stage'] = 'restored'
         write_json(point / 'state.json', state)
-    compose(point, 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '240')
+    # Recreate even if the image never changed: restored bind roots have new
+    # inodes, and an existing container would retain the moved failed-data mount.
+    compose(point, 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '240')
 
 
 def main():

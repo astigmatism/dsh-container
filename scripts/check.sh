@@ -155,6 +155,10 @@ if [ "$build" -eq 1 ]; then
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
 
+  if [ "${CI:-false}" = true ]; then
+    python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
+  fi
+
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.7-rc.2 ] || {
     echo "Built image has the wrong Harness version label." >&2
     exit 1

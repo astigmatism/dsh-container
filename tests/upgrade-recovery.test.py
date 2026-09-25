@@ -53,6 +53,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual((self.point / 'failed-runtime/data/dsh/preserved').read_text(), 'migrated v4')
         self.assertIn('--wait', self.calls[-1])
         self.assertIn('--no-build', self.calls[-1])
+        self.assertIn('--force-recreate', self.calls[-1])
         self.assertEqual(recovery.read_state(self.point)['stage'], 'restored')
         recovery.restore(self.point)  # Repeat only waits for old containers; never recopies data.
         self.assertEqual(recovery.inventory(self.point / 'snapshot'), json.loads((self.point / 'manifest.json').read_text()))

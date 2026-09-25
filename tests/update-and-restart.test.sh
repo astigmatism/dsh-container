@@ -1030,10 +1030,11 @@ PYFIXTURE
   unset TEST_DEPLOY_EXIT
   [ "$update_status" -ne 0 ] || fail "migration failure was swallowed"
   assert_status "$fixture" 'recovery=succeeded'
-  assert_status "$fixture" "recovery_point=$fixture/data/recovery-fixture"
+  expected_recovery_point=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve() / "data/recovery-fixture")' "$fixture")
+  assert_status "$fixture" "recovery_point=$expected_recovery_point"
   build_line=$(line_number ' build' "$fixture/docker.log")
-  capture_line=$(line_number 'recovery-capture' "$fixture/docker.log")
-  restore_line=$(line_number 'recovery-restore' "$fixture/docker.log")
+  capture_line=$(awk '$0 == "recovery-capture" { print NR; exit }' "$fixture/docker.log")
+  restore_line=$(awk '$0 == "recovery-restore" { print NR; exit }' "$fixture/docker.log")
   [ "$build_line" -lt "$capture_line" ] && [ "$capture_line" -lt "$restore_line" ] \
     || fail "migration recovery ordering is unsafe"
   if grep -q ' start$' "$fixture/docker.log"; then

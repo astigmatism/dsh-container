@@ -120,6 +120,10 @@ def fixture_application(manifest,by_service):
 engine.verify_application=fixture_application
 production_probe=engine.probe_release
 def fixture_probe(manifest,model,root,**kwargs):
+    if kwargs.get('portal',True):
+        edge=run([*compose_command(root),'ps','-q','edge']).strip()
+        run(['docker','exec',edge,'node','-e',
+            "fetch('http://127.0.0.1:3081/api/session/create',{method:'POST'}).then(r=>{if(r.status!==503)throw Error('Uncommitted candidate accepted writable ingress')})"])
     if kwargs.get('portal',True) and (Path(root)/'inject-portal-failure').exists():
         # Simulate post-start external drift. The candidate passed the real
         # pre-cutover contract gate; the live container now loses its button.

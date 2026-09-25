@@ -7,11 +7,12 @@ import re
 import shutil
 
 from .common import LABEL, REPOSITORY, SCHEMA, atomic_json, read_json, run
-from .contract import SCRIPT, require, validate_config, validate_manifest, portal_services
+from .contract import SCRIPT, require, validate_config, validate_deployment, configuration_bindings, portal_services
 from .engine import Updater, install_labels, validate_engine, validate_containers
 
 STATE_TARGETS = {'/data/dsh', '/data/gateway', '/run/dsh-backend-auth', '/app/data', '/app/runtime'}
 SYSTEM_TARGETS = {'/var/run/docker.sock', '/etc/passwd', '/etc/group'}
+MODEL_TARGETS = {'/models', '/root/.ollama'}
 
 
 def compact_paths(paths):
@@ -37,6 +38,11 @@ def parse_roles(values, model):
 
 def prepare(args, source):
     original_root = Path(args.project_directory or source).resolve()
+    if getattr(args, 'manifest', None):
+        require(args.manifest.name == 'deployment.json', 'Manifest must be named deployment.json')
+        require(not args.deployment_dir or Path(args.deployment_dir).resolve() == args.manifest.resolve().parent,
+                'Manifest and deployment directory disagree')
+        args.deployment_dir = args.manifest.resolve().parent
     root = Path(args.deployment_dir or original_root / 'data/deployment').resolve()
     require(not (root / '.git').exists() and root != source.resolve(), 'Operational artifacts must be outside the source checkout root')
     if (root / 'adoption.json').is_file():
@@ -96,6 +102,7 @@ def prepare(args, source):
     inputs = [str(root / 'config-inputs')]
     external = {str(Path(p).resolve()) for p in args.external_path}
     source_artifacts = []
+    model_stores = []
     for service, config in model['services'].items():
         for mount in config.get('volumes', []):
             require(mount['type'] == 'bind', 'Adoption requires explicit bind mounts for application state; named volumes must be migrated first')
@@ -104,6 +111,8 @@ def prepare(args, source):
             require(path.exists(), 'A deployment bind source is missing')
             if target in STATE_TARGETS:
                 state.append(str(path))
+            elif target in MODEL_TARGETS:
+                model_stores.append(str(path))
             elif target in SYSTEM_TARGETS or str(path) in external or target == config.get('working_dir') or target == '/host':
                 continue
             elif path.is_file() and path.is_relative_to(source.resolve()) and not path.is_relative_to(source / 'data'):
@@ -134,6 +143,7 @@ def prepare(args, source):
                 'images': {s: c['image'] for s, c in model['services'].items()},
                 'state_paths': compact_paths(state), 'input_paths': compact_paths(inputs),
                 'artifact_paths': [], 'source_artifacts': source_artifacts,
+                'bindings': configuration_bindings(model), 'model_stores': compact_paths(model_stores),
                 'previous_root': str(original_root)}
     legacy_entrypoint = getattr(args, 'legacy_entrypoint', None)
     if legacy_entrypoint:
@@ -164,7 +174,10 @@ def prepare(args, source):
     if not args.adopt:
         validate_config(previous, original_root, script_root=source)
     install_labels(model, manifest, model['services'][harness]['image'])
-    validate_manifest(manifest, root)
+    validate_deployment(manifest, model, root, script_root=source)
+    require(all(not Path(store).is_relative_to(Path(p)) and not Path(p).is_relative_to(Path(store))
+                for store in model_stores for p in manifest['state_paths'] + manifest['input_paths']),
+            'Shared model libraries must remain outside snapshot roots')
     # Source/configuration inputs are captured but never rewritten by adoption.
     # Refuse a state root that includes another service or operational bundle.
     require(all(not root.is_relative_to(Path(p)) for p in manifest['state_paths']), 'Operational directory overlaps application state')

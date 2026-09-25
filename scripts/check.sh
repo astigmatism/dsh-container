@@ -32,11 +32,11 @@ case "${1:-}" in
     exit 0
     ;;
   -h|--help)
-    echo "usage: ./scripts/check.sh [--build]"
+    echo "usage: ./scripts/check.sh [--host | --build]"
     exit 0
     ;;
   *)
-    echo "usage: ./scripts/check.sh [--build]" >&2
+    echo "usage: ./scripts/check.sh [--host | --build]" >&2
     exit 2
     ;;
 esac
@@ -184,6 +184,7 @@ if [ "$build" -eq 1 ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
+    python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
   fi
 
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.7-rc.2 ] || {

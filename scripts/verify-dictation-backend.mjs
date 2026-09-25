@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import { get } from 'node:https'
+import { checkServerIdentity } from 'node:tls'
 import { pathToFileURL } from 'node:url'
 
 export function verifyConfiguration(config, baseUrl, model) {
@@ -21,6 +22,7 @@ async function main() {
   const model = process.env.STT_MODEL || ''
   const gatewayPort = Number(process.env.HARNESS_HTTPS_PORT || 3443)
   const publicPort = Number(process.env.HARNESS_PUBLIC_HTTPS_PORT || gatewayPort)
+  const identity = process.env.HARNESS_TLS_VERIFY_NAME || process.env.HARNESS_TLS_IP || '127.0.0.1'
 
   const ca = await readFile('/data/gateway/tls/ca.crt')
   const authorization = `Basic ${Buffer.from(`${process.env.HARNESS_AUTH_USERNAME}:${process.env.HARNESS_AUTH_PASSWORD}`).toString('base64')}`
@@ -30,9 +32,10 @@ async function main() {
       port: gatewayPort,
       path: '/local-stt/config',
       ca,
+      checkServerIdentity: (_host, certificate) => checkServerIdentity(identity, certificate),
       headers: {
         authorization,
-        host: `127.0.0.1:${publicPort}`,
+        host: `${identity}:${publicPort}`,
       },
     }, response => {
       const chunks = []

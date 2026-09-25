@@ -21,7 +21,7 @@ if Path(__file__).resolve().parent.name != 'maintenance':
     spec.loader.exec_module(package)
 
 from maintenance.common import Failure, LABEL, compose_command, inspect, read_json, run
-from maintenance.contract import require, validate_config, validate_manifest
+from maintenance.contract import require, validate_config, validate_manifest, validate_deployment
 from maintenance.engine import Updater, probe_release, validate_engine
 
 
@@ -30,7 +30,7 @@ def launch(root, dry_run=False, action='update'):
     validate_manifest(manifest, root)
     validate_engine(manifest)
     model = read_json(root / 'compose.json')
-    _, _, image, user, _ = validate_config(model, root)
+    _, _, image, user, _ = validate_deployment(manifest, model, root)
     require(inspect('image', image)['Config'].get('Labels', {}).get('io.dsh.maintenance.schema') == '1',
             'Updater image lacks the qualified runtime; bootstrap required')
     paths = {str(root): False}
@@ -48,6 +48,7 @@ def launch(root, dry_run=False, action='update'):
     command = ['docker', 'run', '--rm', '--init', '--name', name,
                '--label', 'io.service-portal.maintenance=true', '--user', user,
                '--group-add', str(os.stat('/var/run/docker.sock').st_gid),
+               '--env', 'HOME=/tmp', '--env', 'DOCKER_CONFIG=/tmp/.docker',
                '--workdir', str(root), '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock',
                '--entrypoint', 'python3']
     for path, readonly in paths.items():
@@ -102,6 +103,9 @@ def main():
     root = args.manifest.resolve().parent
     require(args.manifest.name == 'deployment.json', 'Manifest must be named deployment.json')
     manifest = read_json(args.manifest)
+    if args.portal_url:
+        require(args.portal_url.rstrip('/') == manifest['portal_url'].rstrip('/'),
+                'Portal URL conflicts with the deployment manifest')
     if args.mode:
         require(args.mode == manifest['mode'], 'Requested topology conflicts with installed deployment')
     if args.action == 'launch':
@@ -120,10 +124,13 @@ def main():
             except BlockingIOError:
                 raise Failure('Maintenance is active; boot/verification must wait') from None
             updater = Updater(root)
-            updater.preflight()
+            if (root / 'transaction.json').exists():
+                updater.recover()
+                raise Failure('Recovered interrupted maintenance; retry boot/verification')
+            updater.preflight(allow_empty=args.action == 'boot')
             require(not (root / 'transaction.json').exists(), 'Interrupted update requires recovery before boot or verification')
             if args.action == 'boot':
-                run([*compose_command(root), 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
+                run([*compose_command(root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
             probe_release(manifest, updater.model, root)
             print('Deployment and mandatory Portal capability verified')
 

@@ -16,8 +16,8 @@ set -eu
 # trusted-TLS probe is therefore executed inside the gateway container, which
 # shares the Harness network namespace where the gateway listener is bound.
 # The probe receives the host-side CA over stdin and keeps full
-# certificate-chain and IP verification: the gateway certificate always
-# carries the IP:127.0.0.1 SAN. The host bind address and published port are
+# certificate-chain and configured DNS/IP identity verification. The
+# connection address need not appear in the certificate. The host bind address and published port are
 # irrelevant in delegated mode; the probe targets the listener in the
 # gateway's own network namespace. Verification is never skipped and never
 # relaxed in delegated mode.
@@ -82,7 +82,7 @@ if [ "$delegated" -eq 1 ]; then
   # The probe runs inside the gateway container, where 127.0.0.1 is the
   # shared Harness/gateway network namespace and the gateway listener is
   # bound. It trusts exactly the CA bytes the runner supplies on stdin,
-  # verifies the full chain and the IP:127.0.0.1 SAN, and requires HTTP 200.
+  # verifies the full chain and configured identity, and requires HTTP 200.
   # The port comes from the gateway container's own HARNESS_HTTPS_PORT.
   probe=$(cat <<'EOF'
 import https from 'node:https'

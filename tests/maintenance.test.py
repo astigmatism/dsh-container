@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from maintenance.common import Failure, LABEL, REPOSITORY, atomic_json
 from maintenance.contract import validate_config, validate_manifest, validate_deployment, configuration_bindings, verify_portal
-from maintenance.engine import Updater, install_labels, pinned_bases
+from maintenance.engine import Updater, install_labels, pinned_bases, verify_recovered_release
 from maintenance import recovery
 from maintenance.qualification import registered_files
 from maintenance.install import prepare
@@ -161,6 +161,17 @@ class ContractTests(Fixture):
 
 
 class RecoveryTests(Fixture):
+    def test_previous_generation_uses_protocol_probe_instead_of_old_release_verifiers(self):
+        rows = {'application': {'Id': 'harness-container'}, 'edge': {'Id': 'gateway-container'}}
+        with patch('maintenance.engine.probe_containers', return_value=rows), \
+             patch('maintenance.engine.probe_gateway') as gateway, \
+             patch('maintenance.engine.verify_application', side_effect=Failure('old verifier rejects IP-only TLS')), \
+             patch('maintenance.engine.run') as command:
+            verify_recovered_release(self.manifest, self.model, self.root)
+        gateway.assert_called_once_with(self.manifest, rows)
+        self.assertEqual(command.call_args.args[0][0:3], ['docker', 'exec', 'harness-container'])
+        self.assertIn('ai-router:11434/v1/models', command.call_args.args[0][-1])
+
     def test_copy_assigns_ownership_before_checking_shared_filesystem_metadata(self):
         source = self.data / 'session'
         target = self.base / 'copied-session'
@@ -199,6 +210,33 @@ class RecoveryTests(Fixture):
         with patch.object(Path, 'lstat', metadata), patch('maintenance.recovery.os.chown', side_effect=PermissionError), \
              self.assertRaisesRegex(Failure, 'Cannot preserve snapshot ownership'):
             recovery.preserve_owner(source, target)
+
+    def test_root_owned_copy_uses_only_qualified_image_and_scoped_mount(self):
+        source = self.data / 'session'
+        target = self.base / 'copied-session'
+        target.write_bytes(source.read_bytes())
+        stat = Path.lstat
+        owner_fixed = False
+        def metadata(path):
+            actual = stat(path)
+            if path == source or (path == target and owner_fixed):
+                fields = list(actual)
+                fields[4:6] = [0, 0]
+                return os.stat_result(fields)
+            return actual
+        def command(args, **kwargs):
+            nonlocal owner_fixed
+            self.assertEqual(args[:5], ['docker', 'run', '--rm', '--network', 'none'])
+            self.assertIn('--cap-drop', args)
+            self.assertIn('DAC_OVERRIDE', args)
+            self.assertIn('CHOWN', args)
+            self.assertIn('type=bind,src=' + str(target.parent.resolve()) + ',dst=/dsh-snapshot-ownership', args)
+            self.assertEqual(args[-3:], ['--', '0:0', '/dsh-snapshot-ownership/copied-session'])
+            owner_fixed = True
+        with patch.object(Path, 'lstat', metadata), patch('maintenance.recovery.os.chown', side_effect=PermissionError), \
+             patch('maintenance.recovery.run', side_effect=command):
+            recovery.preserve_owner(source, target, helper_image='sha256:' + 'a' * 64)
+        self.assertTrue(owner_fixed)
 
     def point(self):
         point = self.root / 'recovery/test'
@@ -392,7 +430,7 @@ if '-c' in sys.argv:
         restarted = Updater(self.root)
         with patch.object(restarted, 'build_candidate') as build, patch('maintenance.engine.run'), \
              patch('maintenance.engine.validate_engine'), patch('maintenance.engine.containers', return_value=[]), \
-             patch('maintenance.engine.probe_release'), self.assertRaisesRegex(Failure, 'Recovered interrupted'):
+             patch('maintenance.engine.verify_recovered_release'), self.assertRaisesRegex(Failure, 'Recovered interrupted'):
             restarted.update()
         build.assert_not_called()
         self.assertEqual((self.data / 'session').read_text(), 'original session')
@@ -438,7 +476,8 @@ if '-c' in sys.argv:
         with patch.object(updater, 'old_model', return_value=(self.model, True)), \
              patch('maintenance.engine.run', side_effect=command), patch('maintenance.engine.validate_engine'), \
              patch('maintenance.engine.containers', return_value=[]), \
-             patch('maintenance.engine.probe_release', side_effect=verify), self.assertRaises(Failure):
+             patch('maintenance.engine.probe_release', side_effect=verify), \
+             patch('maintenance.engine.verify_recovered_release'), self.assertRaises(Failure):
             updater.cutover(release)
         self.assertEqual((self.data / 'session').read_text(), 'original session')
         self.assertEqual((self.credentials / 'auth').read_text(), 'synthetic-$credential')
@@ -453,7 +492,7 @@ if '-c' in sys.argv:
         with patch.object(updater, 'old_model', return_value=(self.model, True)), \
              patch('maintenance.engine.run') as command, patch('maintenance.engine.validate_engine'), \
              patch('maintenance.engine.containers', return_value=[]), \
-             patch('maintenance.engine.probe_release'), patch('maintenance.engine.recovery.capture', side_effect=Failure('copy failed')), \
+             patch('maintenance.engine.verify_recovered_release'), patch('maintenance.engine.recovery.capture', side_effect=Failure('copy failed')), \
              self.assertRaises(Failure):
             updater.cutover(release)
         for call in command.call_args_list:
@@ -466,6 +505,7 @@ if '-c' in sys.argv:
              patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
              patch('maintenance.engine.containers', return_value=[]), \
              patch('maintenance.engine.probe_release', side_effect=Failure('verification failed')), \
+             patch('maintenance.engine.verify_recovered_release', side_effect=Failure('verification failed')), \
              self.assertRaisesRegex(Failure, 'recovery incomplete'):
             updater.cutover(release)
         self.assertTrue((self.root / 'transaction.json').exists())

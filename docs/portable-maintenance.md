@@ -61,7 +61,10 @@ workspaces and shared libraries with `--external-path PATH`; those paths are
 preserved and excluded from snapshots. The updater rejects unclassified writable
 mounts. Maintenance needs permission to preserve ownership and modes and to stage
 restoration beside each state root, so those parent directories must be narrowly
-scoped and writable by the deployment UID.
+scoped and writable by the deployment UID. A readable file owned by another
+UID, such as a bind-mount placeholder, is copied with its original ownership
+using the qualified maintenance image and a narrowly mounted ownership helper.
+The snapshot is rejected if that ownership cannot be verified.
 
 Adoption renders and imports the effective Compose configuration, including
 private environment values. The private operational `compose.json` becomes the
@@ -128,7 +131,10 @@ restored bind mounts take effect. Changed failed-state roots are retained beside
 their original locations with a `.failed-` suffix. Private transaction/status
 records identify the recovery point. A successful rollback still reports the
 update as failed. Interrupted transactions are recovered before another update;
-an incomplete recovery retains its journal and requires inspection.
+an incomplete recovery retains its journal and requires inspection. Recovery
+verifies the previous image with the current identity-aware gateway probe and
+model protocol so older image-local verification scripts cannot prevent a safe
+rollback.
 
 Snapshots and rollback images are retained until explicitly retired. They contain
 credentials and must not be published. No global pruning occurs. A same-disk

@@ -64,7 +64,7 @@ def verify_application(manifest, by_service):
     run(['docker', 'exec', by_service[gateway]['Id'], 'node', '/opt/dsh-gateway/verify-dictation-backend.mjs'])
 
 
-def probe_release(manifest, model, root, *, portal=True):
+def probe_containers(manifest, model, root):
     rows = validate_containers(manifest, model, root)
     by_service = {row['Config']['Labels']['com.docker.compose.service']: row for row in rows}
     for service, config in model['services'].items():
@@ -78,9 +78,36 @@ def probe_release(manifest, model, root, *, portal=True):
             continue
         require(row['State']['Running'] and row['State'].get('Health', {}).get('Status') == 'healthy',
                 'An application service is not healthy')
+    return by_service
+
+
+def probe_gateway(manifest, by_service):
     gateway = next(s for s, role in manifest['roles'].items() if role == 'gateway')
     run(['docker', 'exec', '-i', by_service[gateway]['Id'], 'node', '--input-type=module'],
         data=(PACKAGE / 'probe.mjs').read_text())
+
+
+def verify_recovered_release(manifest, model, root):
+    """Verify a previous image without requiring this release's test scripts.
+
+    Older gateways may have a localhost-only verifier even when their live TLS
+    certificate correctly permits only the configured IP. The current probe
+    checks the live identity, login and router protocol independently.
+    """
+    by_service = probe_containers(manifest, model, root)
+    probe_gateway(manifest, by_service)
+    harness = next(s for s, role in manifest['roles'].items() if role == 'harness')
+    run(['docker', 'exec', by_service[harness]['Id'], 'node', '-e',
+         "fetch('http://ai-router:11434/v1/models',{signal:AbortSignal.timeout(15000)})"
+         ".then(async r=>{if(!r.ok)throw Error('model discovery failed');"
+         "const body=await r.json();if(!Array.isArray(body.data)||!body.data.length)"
+         "throw Error('model discovery empty')})"
+         ".catch(()=>process.exit(1))"])
+
+
+def probe_release(manifest, model, root, *, portal=True):
+    by_service = probe_containers(manifest, model, root)
+    probe_gateway(manifest, by_service)
     verify_application(manifest, by_service)
     if portal:
         validate_deployment(manifest, model, root)
@@ -290,14 +317,15 @@ class Updater:
         atomic_json(point / 'previous-compose.json', old_model)
         transaction = {'point': str(point), 'previous_root': str(old_root), 'previous_model': old_model,
                        'existed': existed, 'phase': 'prepared', 'paths': paths,
-                       'previous_manifest': self.manifest}
+                       'previous_manifest': self.manifest,
+                       'maintenance_image': (Path(release) / 'runner-image').read_text().strip()}
         atomic_json(self.root / 'transaction.json', transaction)
         try:
             transaction['phase'] = 'stopping'
             atomic_json(self.root / 'transaction.json', transaction)
             if existed:
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'stop'])
-            recovery.capture(point, paths)
+            recovery.capture(point, paths, helper_image=transaction['maintenance_image'])
             transaction['phase'] = 'captured'
             atomic_json(self.root / 'transaction.json', transaction)
             for name in ('maintenance',):
@@ -365,11 +393,11 @@ class Updater:
                 # Use the recorded project identity even if installation died
                 # before writing a valid candidate Compose file.
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'stop'])
-                recovery.restore(point)
+                recovery.restore(point, helper_image=transaction.get('maintenance_image'))
             if transaction['existed']:
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'up', '-d', '--force-recreate', '--no-build',
                      '--pull', 'never', '--wait', '--wait-timeout', '900'])
-                probe_release(transaction['previous_manifest'], transaction['previous_model'], old_root, portal=False)
+                verify_recovered_release(transaction['previous_manifest'], transaction['previous_model'], old_root)
             else:
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'down'])
             self.status('failed', recovery='succeeded', recovery_point=str(point))

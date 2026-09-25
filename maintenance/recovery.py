@@ -1,10 +1,11 @@
 """Verified stopped-writer snapshots with resumable, whole-root restoration."""
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 
-from .common import Failure, atomic_json, digest, read_json, sync_path, sync_directory
+from .common import Failure, atomic_json, digest, read_json, run, sync_path, sync_directory
 from .contract import require
 
 
@@ -30,18 +31,18 @@ def inventory(root):
     return result
 
 
-def copy_path(source, destination):
+def copy_path(source, destination, *, helper_image=None):
     source, destination = Path(source), Path(destination)
     require(not source.is_symlink(), 'Snapshot roots must not be symlinks')
     def copy_file(src, dst):
         shutil.copy2(src, dst, follow_symlinks=False)
-        preserve_owner(Path(src), Path(dst))
+        preserve_owner(Path(src), Path(dst), helper_image=helper_image)
         return dst
     if source.is_dir():
         shutil.copytree(source, destination, symlinks=True, copy_function=copy_file)
         for parent, dirs, files in os.walk(source, followlinks=False):
             for path in [Path(parent), *(Path(parent) / name for name in dirs + files)]:
-                preserve_owner(path, destination / path.relative_to(source))
+                preserve_owner(path, destination / path.relative_to(source), helper_image=helper_image)
     else:
         copy_file(source, destination)
     require(inventory(source) == inventory(destination), 'Snapshot copy failed integrity or ownership verification')
@@ -49,7 +50,7 @@ def copy_path(source, destination):
     sync_directory(destination.parent)
 
 
-def preserve_owner(source, target):
+def preserve_owner(source, target, *, helper_image=None):
     info = source.lstat()
     try:
         # Assign ownership explicitly even when copying as the same UID. Shared
@@ -57,9 +58,20 @@ def preserve_owner(source, target):
         # relying on that first stat can reject an otherwise faithful snapshot.
         os.chown(target, info.st_uid, info.st_gid, follow_symlinks=False)
     except PermissionError:
-        # Some filesystems forbid even an unchanged chown. Accept only already
-        # correct ownership; never silently drop another service's identity.
-        pass
+        # A nested read-only bind target can leave a root-owned host placeholder
+        # inside otherwise user-owned state. Use the qualified image through the
+        # already-declared Docker socket to restore only the copied path's owner.
+        if (target.lstat().st_uid, target.lstat().st_gid) != (info.st_uid, info.st_gid):
+            require(bool(re.fullmatch(r'sha256:[0-9a-f]{64}', helper_image or '')),
+                    'Cannot preserve snapshot ownership without a qualified image')
+            parent = str(target.parent.resolve())
+            require(',' not in parent and target.name not in ('.', '..'), 'Unsafe snapshot ownership path')
+            run(['docker', 'run', '--rm', '--network', 'none', '--read-only',
+                 '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
+                 '--user', '0:0',
+                 '--mount', f'type=bind,src={parent},dst=/dsh-snapshot-ownership',
+                 '--entrypoint', '/usr/bin/chown', helper_image, '--no-dereference',
+                 '--', f'{info.st_uid}:{info.st_gid}', '/dsh-snapshot-ownership/' + target.name])
     actual = target.lstat()
     require((actual.st_uid, actual.st_gid) == (info.st_uid, info.st_gid),
             'Cannot preserve snapshot ownership as the deployment user')
@@ -86,7 +98,7 @@ def check_space(point, paths):
                 'Insufficient restoration space on a persistent-state filesystem')
 
 
-def capture(point, paths):
+def capture(point, paths, *, helper_image=None):
     point = Path(point)
     payload = point / 'snapshot'
     payload.mkdir(mode=0o700)
@@ -96,7 +108,7 @@ def capture(point, paths):
         require(not path.is_symlink(), 'Snapshot roots must not be symlinks')
         before = inventory(path)
         if before is not None:
-            copy_path(path, payload / str(index))
+            copy_path(path, payload / str(index), helper_image=helper_image)
             require(before == inventory(path) == inventory(payload / str(index)),
                     'Persistent state changed while taking the stopped-writer snapshot')
         records.append({'path': str(path), 'inventory': before})
@@ -106,7 +118,7 @@ def capture(point, paths):
     return records
 
 
-def restore(point):
+def restore(point, *, helper_image=None):
     point = Path(point)
     records = read_json(point / 'snapshot.json')
     # Validate every snapshot before touching any destination.
@@ -136,7 +148,7 @@ def restore(point):
             state['prepared'].append(index)
             atomic_json(state_file, state)
         if record['inventory'] is not None and not stage.exists() and not failed.exists():
-            copy_path(original, stage)
+            copy_path(original, stage, helper_image=helper_image)
         if stage.exists():
             require(inventory(stage) == record['inventory'], 'Interrupted recovery staging failed integrity verification')
         if target.is_file() and not target.is_symlink() and original.is_file():

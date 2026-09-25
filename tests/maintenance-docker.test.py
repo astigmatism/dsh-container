@@ -110,6 +110,11 @@ def fixture_application(manifest,by_service):
     run(['docker','exec',by_service['application']['Id'],'node','/opt/dsh-build/verify-router-contract.mjs'])
 engine.verify_application=fixture_application
 production_probe=engine.probe_release
+def fixture_recovery(manifest,model,root):
+    # The synthetic app has no ai-router endpoint; keep the real container,
+    # authenticated gateway and fixture provider checks during rollback.
+    production_probe(manifest,model,root,portal=False)
+engine.verify_recovered_release=fixture_recovery
 def fixture_probe(manifest,model,root,**kwargs):
     if kwargs.get('portal',True) and (Path(root)/'inject-portal-failure').exists():
         # Simulate post-start external drift. The candidate passed the real
@@ -138,6 +143,11 @@ USER node
     run(['docker', 'build', '-t', fixture_image, fixture])
     fixture_id = json.loads(run(['docker', 'image', 'inspect', fixture_image]))[0]['Id']
     gateway_id = json.loads(run(['docker', 'image', 'inspect', gateway_image]))[0]['Id']
+    run(['docker', 'run', '--rm', '--user', '0:0',
+         '--mount', f'type=bind,src={state},dst=/data/dsh',
+         '--entrypoint', '/bin/sh', fixture_id, '-c',
+         "printf 'root-owned operational placeholder' > /data/dsh/root-owned"])
+    assert (state / 'root-owned').stat().st_uid == 0
 
     # IP-only leaf: localhost is intentionally absent. No CA key is mounted.
     def openssl(*args):
@@ -248,6 +258,8 @@ USER node
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
+    assert (state/'root-owned').read_text() == 'root-owned operational placeholder'
+    assert (state/'root-owned').stat().st_uid == 0
     (root/'inject-portal-failure').write_text('fixture only')
     result = update()
     assert result['state'] == 'failed', result
@@ -256,6 +268,8 @@ USER node
     assert json.loads((root/'compose.json').read_text())['services']['application']['labels'][LABEL+'enabled'] == 'true'
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
+    assert (state/'root-owned').read_text() == 'root-owned operational placeholder'
+    assert (state/'root-owned').stat().st_uid == 0
     assert json.loads(run(['docker','inspect',unrelated]))[0]['Id'] == unrelated_id
     assert json.loads(run(['docker','inspect',unrelated]))[0]['State']['Running']
     if mode == 'managed':

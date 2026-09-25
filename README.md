@@ -726,10 +726,14 @@ before Compose is interrupted. This lets the same updater carry the release acro
 deployments without replacing their model, router, credentials, or other
 machine-local settings. The updater pulls non-buildable images and builds
 the selected topology while the current deployment remains available, then uses
-the normal verified deployment command without an explicit `compose down` or
-`compose stop`. It creates no backup or rollback artifacts. After success it
-removes only superseded image IDs captured directly from this Compose project's
-containers. This remains reliable when an active container's original image tag
+the normal verified deployment command. Before migrating a pre-0.1.7 runtime,
+it stops the project briefly and saves a private, verified snapshot of application
+data, gateway state, backend authentication, secrets, and the original environment
+under `data/upgrade-recovery`. Previous images are pinned under rollback tags.
+A failed deployment restores both that data and the previous images, waits for
+health, and still reports the update as failed. The recovery point and failed
+runtime are retained for inspection. Other updates remove only superseded image
+IDs captured directly from this Compose project's containers. This remains reliable when an active container's original image tag
 has been replaced or its old image-store record has been collected. It never
 runs a global Docker prune. Remote-mode deployment additionally removes the
 exact obsolete `deepseek-harness/ai-router` container only after direct-route

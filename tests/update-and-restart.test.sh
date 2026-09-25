@@ -66,6 +66,7 @@ make_fixture() {
   fixture=$temporary_root/$fixture_name
   mkdir -p "$fixture/scripts" "$fixture/config" "$fixture/data/dsh" "$fixture/fake-bin" "$fixture/home"
   cp "$source_root/scripts/update-and-restart.sh" "$fixture/scripts/"
+  cp "$source_root/scripts/upgrade-recovery.py" "$fixture/scripts/"
   cp "$source_root/scripts/configure.sh" "$fixture/scripts/"
   cp "$source_root/scripts/gateway-credentials.py" "$fixture/scripts/"
   cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/scripts/"
@@ -160,6 +161,7 @@ make_legacy_fixture() {
   make_fixture "$fixture_name" "$runtime_kind"
   mkdir -p "$fixture/target/scripts"
   cp "$source_root/scripts/update-and-restart.sh" "$fixture/target/scripts/"
+  cp "$source_root/scripts/upgrade-recovery.py" "$fixture/target/scripts/"
   cp "$source_root/scripts/configure.sh" "$fixture/target/scripts/"
   cp "$source_root/scripts/gateway-credentials.py" "$fixture/target/scripts/"
   cp "$source_root/scripts/verify-persisted-settings.sh" "$fixture/target/scripts/"
@@ -1006,6 +1008,39 @@ for credential_failure in absent wrong-project conflict invalid-hash; do
   assert_no_interruption "$fixture"
   if grep -Eq ' config | pull | build |^deploy ' "$fixture/docker.log"; then
     fail "credential failure reached Compose validation or deployment"
+  fi
+done
+
+# The destructive boundary is guarded by a complete snapshot. Use a helper
+# fixture here; real copy/restore integrity is exercised by the Python suite.
+for recovery_failure in capture deploy; do
+  make_fixture "migration-recovery-$recovery_failure" matching
+  cat >"$fixture/scripts/upgrade-recovery.py" <<'PYFIXTURE'
+import os, sys
+from pathlib import Path
+root = Path(__file__).resolve().parents[1]
+action = sys.argv[1]
+with (root / 'docker.log').open('a') as log:
+    log.write('recovery-' + action + '\n')
+if action == 'prepare': print(root / 'data/recovery-fixture')
+if action == 'capture' and 'migration-recovery-capture' in str(root): sys.exit(1)
+PYFIXTURE
+  TEST_DEPLOY_EXIT=23
+  run_update "$fixture" --external-ollama
+  unset TEST_DEPLOY_EXIT
+  [ "$update_status" -ne 0 ] || fail "migration failure was swallowed"
+  assert_status "$fixture" 'recovery=succeeded'
+  assert_status "$fixture" "recovery_point=$fixture/data/recovery-fixture"
+  build_line=$(line_number ' build' "$fixture/docker.log")
+  capture_line=$(line_number 'recovery-capture' "$fixture/docker.log")
+  restore_line=$(line_number 'recovery-restore' "$fixture/docker.log")
+  [ "$build_line" -lt "$capture_line" ] && [ "$capture_line" -lt "$restore_line" ] \
+    || fail "migration recovery ordering is unsafe"
+  if grep -q ' start$' "$fixture/docker.log"; then
+    fail "migration failure merely restarted the failed containers"
+  fi
+  if [ "$recovery_failure" = capture ] && grep -q '^deploy ' "$fixture/docker.log"; then
+    fail "incomplete snapshot allowed deployment"
   fi
 done
 

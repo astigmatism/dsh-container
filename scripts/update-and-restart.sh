@@ -7,6 +7,7 @@ env_file=$project_dir/.env
 mode=
 dry_run=0
 deployment_started=0
+recovery_point=
 before_commit=unknown
 target_commit=unknown
 branch=unknown
@@ -61,8 +62,10 @@ pulls/builds replacement images while the deployment remains available before
 recreating the project and verifying it. In remote mode, deploy.sh removes only
 the obsolete deepseek-harness/ai-router container after direct-route
 verification and retains its image and data. The updater removes only
-superseded images captured from this project and creates no backup, archive,
-stash, rollback tag, or rollback directory.
+superseded images captured from this project. Before a legacy-to-0.1.7 storage
+migration it retains the old images and a private, consistent data snapshot.
+If deployment fails, it restores that snapshot with the old images. Recovery
+points remain in data/upgrade-recovery until the operator retires them.
 The fetched updater records DSH_TOKEN_ENABLED=false when the setting is absent,
 preserves exact true/false values, and rejects ambiguous values before Compose
 is interrupted.
@@ -491,6 +494,7 @@ write_status() {
     echo "failure_type=$reported_failure"
     echo "failure_stage=$failure_stage"
     echo "recovery=$recovery"
+    echo "recovery_point=$recovery_point"
     echo "boot_service=$boot_service"
   } >"$temporary"
   chmod 0600 "$temporary"
@@ -630,12 +634,18 @@ finish() {
   trap - EXIT
   if [ "$status" -ne 0 ]; then
     if [ "$deployment_started" -eq 1 ]; then
-      echo "Maintenance failed after Compose began deployment; attempting to start the existing project containers." >&2
       recovery=attempted
-      if compose start >&2; then
-        recovery=succeeded
+      if [ -n "$recovery_point" ]; then
+        echo "Maintenance failed; restoring the pre-migration data and previous images." >&2
+        if python3 "$script_dir/upgrade-recovery.py" restore --point "$recovery_point" >&2; then
+          recovery=succeeded
+        else
+          recovery=failed
+          echo "Automatic recovery failed. Retained recovery point: $recovery_point" >&2
+        fi
       else
-        recovery=failed
+        echo "Maintenance failed after Compose began deployment; attempting to start the existing project containers." >&2
+        if compose start >&2; then recovery=succeeded; else recovery=failed; fi
       fi
     fi
     write_status failed "$status" || true
@@ -898,6 +908,15 @@ if ! converge_boot_service preflight; then
   exit 1
 fi
 
+# Capture the old Compose model, image IDs and environment before migrating
+# pins. Data is copied only after replacement images have built successfully.
+if [ "$dry_run" -ne 1 ] && [ "$resume" -eq 1 ]; then
+  failure_type=configuration-verification
+  failure_stage=upgrade-recovery-preparation
+  recovery_point=$(python3 "$script_dir/upgrade-recovery.py" prepare \
+    --project "$project_dir" --mode "$mode" --from-commit "$before_commit")
+fi
+
 if [ "$dry_run" -eq 1 ] || [ "$resume" -eq 1 ]; then
   failure_type=configuration-verification
   failure_stage=safe-default-migration
@@ -914,7 +933,7 @@ if [ "$dry_run" -eq 1 ]; then
   echo "Worktree:   clean"
   echo "Settings:   non-empty runtime configuration with service ownership and secure mode"
   echo "Plan:       fetch/fast-forward, revalidate with fetched updater, record the safe token-plugin default, migrate exact legacy Harness pins, pull/build, deploy, verify, remove superseded project images"
-  echo "Rollback:   no backups or rollback artifacts will be created"
+  echo "Rollback:   legacy storage upgrades retain a private stopped-data snapshot and previous images"
   exit 0
 fi
 
@@ -983,6 +1002,16 @@ if ! compose build; then
   exit 1
 fi
 
+if [ -n "$recovery_point" ]; then
+  failure_stage=upgrade-recovery-snapshot
+  # Set this before stopping: a partial snapshot failure must restart the old
+  # containers. The helper will never restore an incomplete snapshot.
+  deployment_started=1
+  write_status running 0
+  echo "Saving a consistent pre-migration recovery point: $recovery_point"
+  python3 "$script_dir/upgrade-recovery.py" capture --point "$recovery_point"
+fi
+
 echo "Deploying and verifying commit $(git_repo rev-parse --short HEAD)..."
 failure_stage=compose-deploy
 deployment_started=1
@@ -1040,6 +1069,10 @@ for image_id in $old_image_ids; do
   fi
 done
 
+# The rollback image tags deliberately protect this migration's old images.
+# Do not prune them, even after a healthy new boot.
+if [ -n "$recovery_point" ]; then obsolete_image_ids=; fi
+
 remove_obsolete_images() {
   for image_id in $obsolete_image_ids; do
     if docker image rm "$image_id" >/dev/null 2>&1; then
@@ -1080,4 +1113,8 @@ failure_type=none
 failure_stage=complete
 write_status ok 0
 echo "Maintenance complete: $before_commit -> $target_commit ($mode mode)."
-echo "No backup or rollback artifacts were created."
+if [ -n "$recovery_point" ]; then
+  echo "Retained pre-migration data and images: $recovery_point"
+else
+  echo "No storage migration recovery point was needed."
+fi

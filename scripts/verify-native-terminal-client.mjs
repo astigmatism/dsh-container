@@ -28,7 +28,7 @@ export async function verifyNativeTerminal(page, sessionId, otherSessionId) {
     assert.equal(await page.evaluate(() => window.__nativeTerminalTest.text.includes('NATIVE_LAST')), false);
     await contains('NATIVE_LAST');
     assert.deepEqual(await page.evaluate(async id => {
-      const result = await window.__previewTestContext.remote.terminal.list(id);
+      const result = await window.__previewTestContext.get('webTerminals').remote.list(id);
       if (!result.ok) throw new Error(result.error.message);
       return result.value;
     }, otherSessionId), [], 'terminal session isolation');
@@ -52,7 +52,7 @@ export async function verifyNativeTerminal(page, sessionId, otherSessionId) {
     });
   }
   const remaining = await page.evaluate(async session => {
-    const result = await window.__previewTestContext.remote.terminal.list(session);
+    const result = await window.__previewTestContext.get('webTerminals').remote.list(session);
     if (!result.ok) throw new Error(result.error.message);
     return result.value;
   }, sessionId);

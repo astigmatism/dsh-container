@@ -12,8 +12,9 @@ available.
 >
 > ## Non-negotiable prohibitions
 >
-> Do not create a backup, archive, stash, rollback branch, rollback tag,
-> rollback directory, or any other copy of the checkout or runtime data. Do not
+> Allow the reviewed updater to create its private storage-migration recovery
+> point and image tags, and to restore them automatically after failed deployment.
+> Do not create additional backups, archives, stashes or checkout copies. Do not
 > use `git reset`, `git checkout --`, `git restore`, or another discard
 > operation. Do not force-push. Do not run `docker system prune`, a global image
 > prune, or any other system-wide Docker cleanup. Do not delete a volume or

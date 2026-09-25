@@ -10,8 +10,8 @@ channel. Both dependency locks use this exact Harness generation and Cordis
 **Qualification incomplete; rollout remains blocked.** This upgrade was prepared
 from the pulled `5742e98` revision. No upgraded image has been deployed and
 the Mac's original application data has not been migrated. Production was not
-modified. Docker Desktop shut down during qualification and remained unavailable
-after restart attempts; its logs record a desktop-initiated shutdown.
+modified. Docker on the Mac is now excluded at the user's request. Image and runtime
+qualification runs in GitHub CI; local checks use lightweight host tools.
 
 Completed checks:
 
@@ -81,14 +81,29 @@ taken before any local rollout.
 
 ## Migration
 
-Develop and qualify on the Mac only. Production deployment is a separate
+Develop source on the Mac; run container qualification in GitHub CI. Do not
+start Docker Desktop on the Mac. Production deployment is a separate
 explicit operation; neither production server is a development workspace.
 
-Before upgrade, finish active tasks and stop the local Harness and gateway long
-enough to take a consistent private snapshot of `data/dsh`, `data/gateway`,
-`.env`, and `secrets`. Record the old Harness and gateway image IDs and preserve
-them under rollback tags. Keep this snapshot outside Git with restrictive access.
-Restart the old installation while qualifying copied data if needed.
+Finish active tasks before choosing Service Portal Update and Restart. The
+fetched updater captures the previous Compose configuration and image IDs before
+changing pins, builds replacements while the old service runs, then stops the
+project and snapshots `data/dsh`, `data/gateway`, `data/backend-auth`, `.env`, and
+`secrets`. It verifies copied hashes, ownership and modes before deployment. It
+requires space for the snapshot and a recovery working copy. The private recovery
+point stays under ignored `data/upgrade-recovery`; previous image tags are retained.
+
+If snapshot creation fails, the original containers restart with unchanged data.
+If deployment or verification fails, the updater restores the complete snapshot
+and old images, retaining the failed runtime separately, and waits for Compose
+health. Maintenance still reports failure, with `recovery=succeeded` only if that
+recovery command completes. `recovery_point` records the path. Git stays at the
+reviewed new commit so a subsequent reviewed fix can be fetched normally.
+
+A manual restore uses `python3 scripts/upgrade-recovery.py restore --point PATH`
+from the same deployment checkout, after confirming no maintenance run is active.
+Never publish the recovery directory: its Compose configuration and environment
+contain private credentials.
 
 Startup synchronizes packaged dependencies and the managed configuration bundle.
 It preserves the writable web profile. A one-time migration strips unchanged

@@ -1,9 +1,11 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
+import { maintenanceActive, maintenanceReadAllowed } from './maintenance-gate.mjs'
 import { createServer as createHttpsServer } from 'node:https'
 import { connect as netConnect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { externalTls } from './external-tls.mjs'
 import { authorityTrusted, externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
 import { appendBackendCookie, createBackendAuthenticator } from './backend-auth.mjs'
 import {
@@ -123,6 +125,11 @@ function openssl(args) {
 }
 
 function ensureTls() {
+  const mode = process.env.HARNESS_TLS_MODE || 'auto'
+  if (mode === 'external') {
+    return externalTls(tlsDir, process.env.HARNESS_TLS_VERIFY_NAME || process.env.HARNESS_TLS_IP)
+  }
+  if (mode !== 'auto') throw new Error('HARNESS_TLS_MODE must be auto or external')
   mkdirSync(tlsDir, { recursive: true })
   const caKey = join(tlsDir, 'ca.key')
   const caCert = join(tlsDir, 'ca.crt')
@@ -396,6 +403,12 @@ const tls = ensureTls()
 
 async function handleGateway(req, res, options) {
   const path = new URL(req.url || '/', `${options.protocol}//local`).pathname
+  if (maintenanceActive(process.env.HARNESS_BACKEND_TOKEN_FILE || '/run/dsh-backend-auth/launch-token')
+    && !maintenanceReadAllowed(req.method, path)) {
+    res.setHeader('retry-after', '5')
+    json(res, 503, { error: { message: 'Deployment verification is in progress. Please retry shortly.' } })
+    return
+  }
   if (path === '/healthz') {
     json(res, 200, { status: 'ok' })
     return
@@ -464,6 +477,10 @@ async function handleGateway(req, res, options) {
 }
 
 async function handleUpgrade(req, socket, head, options) {
+  if (maintenanceActive(process.env.HARNESS_BACKEND_TOKEN_FILE || '/run/dsh-backend-auth/launch-token')) {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nConnection: close\r\n\r\n')
+    return
+  }
   if (!externallyTrusted(req, options.authorities, options.protocol)) {
     socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
     return

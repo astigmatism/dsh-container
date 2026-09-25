@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "profiles": {
+    "portable": ["compose.yaml"],
+    "remote": ["compose.yaml", "compose.remote-ollama.yaml"],
+    "external": ["compose.yaml", "compose.external-ollama.yaml"],
+    "managed": ["compose.yaml", "compose.managed-ollama.yaml"]
+  },
+  "separate_projects": [
+    "speech/compose.yaml",
+    "speech/chatterbox-tts-api/docker/docker-compose.blackwell.yml",
+    "speech/chatterbox-tts-api/docker/docker-compose.cpu.yml",
+    "speech/chatterbox-tts-api/docker/docker-compose.gpu.yml",
+    "speech/chatterbox-tts-api/docker/docker-compose.uv.gpu.yml",
+    "speech/chatterbox-tts-api/docker/docker-compose.uv.yml",
+    "speech/chatterbox-tts-api/docker/docker-compose.yml"
+  ]
+}

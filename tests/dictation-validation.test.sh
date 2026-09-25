@@ -16,8 +16,10 @@ do
   [ -f "$project_dir/$path" ] || fail "missing $path"
 done
 
-grep -Fq 'node /opt/dsh-build/verify-dictation-client.mjs' "$project_dir/scripts/verify.sh" \
-  || fail "post-deployment verification does not render-check the dictation client"
+grep -Fq 'verify-isolated-runtime.py' "$project_dir/scripts/verify.sh" \
+  || fail "post-deployment verification does not invoke isolated acceptance"
+grep -Fq "'verify-dictation-client.mjs'" "$project_dir/scripts/verify-isolated-runtime.py" \
+  || fail "isolated acceptance does not render-check the dictation client"
 grep -Fq 'node /opt/dsh-gateway/verify-dictation-backend.mjs' "$project_dir/scripts/verify.sh" \
   || fail "post-deployment verification does not check the dictation backend"
 grep -Fq 'COPY scripts/verify-dictation-client.mjs /opt/dsh-build/verify-dictation-client.mjs' "$project_dir/Dockerfile" \

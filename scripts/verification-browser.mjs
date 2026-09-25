@@ -1,9 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { requireIsolatedVerification } from './verification-state.mjs';
 
 /** Each service UID needs its own Chromium home, including crashpad and caches. */
 export async function launchVerificationBrowser(chromium) {
+  requireIsolatedVerification();
   const home = await mkdtemp(join(process.env.DSH_BROWSER_HOME || tmpdir(), 'dsh-browser-check-'));
   let browser;
   try {

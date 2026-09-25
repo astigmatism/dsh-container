@@ -176,13 +176,14 @@ cd dsh-container
 ./scripts/deploy.sh
 ```
 
-The no-flag deploy command selects remote mode for a new deployment and reuses
-the recorded mode on an existing deployment. Use `deploy.sh`, which includes a
-no-op remote mode marker, builds Harness and the gateway, records the mode, and
-verifies the direct route. When upgrading the obsolete proxy topology, it
-verifies the direct production route before stopping and removing only the
-`deepseek-harness-ollama-router` container, verifies again, and retains the
-router image plus all persistent data for rollback.
+The no-flag deploy command selects remote mode for a new deployment and preserves
+an existing recorded mode. Set `SERVICE_PORTAL_URL` in the private `.env` before
+installation. The installer creates an operational bundle, builds a pinned
+release, snapshots state, and verifies the application and Portal capability.
+Existing custom Compose deployments use the explicit adoption procedure in
+[portable maintenance](docs/portable-maintenance.md). It preserves their effective
+configuration and rejects ambiguous service mappings; topology changes require
+an explicit deployment migration.
 
 The container-only default exposes as much of the host filesystem as the
 platform permits at the stable Linux path `/host`. Native Windows Compose
@@ -237,13 +238,11 @@ All modes bind to loopback unless `--bind-address` is supplied. The router's
 admin ports remain loopback-only by default even when Harness is exposed on a
 trusted LAN.
 
-`DSH_DEPLOYMENT_MODE` starts blank in a newly generated `.env`.
-`deploy.sh` atomically records its explicit external, remote, or managed mode
-before it can change Compose state, so even a failed first deployment retains
-an unambiguous intended topology. It refuses a duplicated or conflicting
-existing value. Maintenance requires exactly one non-empty mode and refuses
-any disagreement with the running Compose labels, including when a mode flag
-is supplied explicitly.
+`DSH_DEPLOYMENT_MODE` starts blank in a newly generated `.env`. Bootstrap accepts
+a recorded external, remote, or managed mode and rejects duplicated or conflicting
+values. The operational manifest records the selected mode before any cutover.
+Subsequent maintenance uses that manifest and rejects a conflicting mode flag;
+it does not modify the old checkout's `.env`.
 
 ## Persisted settings lifecycle
 
@@ -611,83 +610,22 @@ gateway code before deployment.
 
 ## Boot and auto-start
 
-Both containers run with `restart: unless-stopped`, so the Docker Engine
-restarts them as soon as the daemon starts after a reboot. That start happens
-before the host's LAN address exists, so the harness cannot publish its ports
-on `HARNESS_BIND_ADDRESS` yet. In external mode the problem is worse: the
-harness joins the shared Ollama network (`OLLAMA_NETWORK`, normally
-`local-ai-ollama_default`), which the host's local-ai bootstrap destroys and
-replaces on every boot, so the harness loses that attachment even while it is
-running.
+The operational bundle includes `start-after-network.sh`, which uses its manifest
+and generated Compose configuration to recreate and verify the application,
+including the Portal button. It shares the updater's lock and recovers interrupted
+transactions before another operation. Docker restart policies remain unchanged.
 
-The repository therefore ships an after-network boot service that repairs the
-deployment once the network is actually up:
+Adoption preserves an existing application-owned boot unit and redirects its
+working directory and entrypoint to the operational bundle. Unit contents are
+included in recovery snapshots. If the host user bus is unavailable, status
+records the required `systemctl --user daemon-reload`; existing enablement remains
+in place. No particular host bootstrap service is required. Other boot managers
+can invoke the same installed entrypoint once Docker and networking are ready.
 
-- `start-after-network.sh` (project root) — waits for the Docker daemon, the
-  `HARNESS_BIND_ADDRESS` LAN address, the local-ai bootstrap
-  (`local-ai-apply-default.service` or the user
-  `local-ai-apply-default-after-network.service`), and, in external mode, the
-  shared network. It then verifies the harness port binding and network
-  attachment. When either is missing it recreates the harness for the recorded
-  `DSH_DEPLOYMENT_MODE` with
-  `docker compose up -d --force-recreate --no-deps harness`, waits up to
-  900 seconds for the harness healthcheck, covering Compose's ten-minute
-  startup grace for cold profile copies and its retry window — exiting 1 with
-  a clear message on timeout so a broken image fails the unit visibly instead
-  of hanging the boot — then recreates the gateway and re-verifies binding, attachment, and
-  gateway status. A healthy deployment is a fast no-op that exits 0.
-- `deploy/deepseek-harness-after-network.service` — the canonical user unit
-  template (`Type=oneshot`, `RemainAfterExit=yes`, `Restart=on-failure`,
-  `RestartPreventExitStatus=78`, `RestartSec=10`,
-  `TimeoutStartSec=infinity`, wanted by `default.target`). Configuration
-  failures use exit 78 and therefore do not enter a restart loop; transient
-  runtime failures remain retryable.
-  The unbounded start timeout is intentional: the pre-recreate waits
-  legitimately run long early in boot, while the recreate wait is bounded
-  inside the script.
-- `scripts/install-boot-service.sh` — idempotent, content-driven installer.
-  It renders the template for this checkout into
-  `~/.config/systemd/user/`, creates the `default.target.wants` symlink, then
-  `systemctl --user daemon-reload` and `start` (or `restart`) the unit.
-  Identical files cause no writes and normally no reload. When the user bus is
-  unreachable (for example from a maintenance container without the host user
-  session) it still installs the files, prints the exact commands to run on
-  the host, and exits 0. `--dry-run` previews the rendered unit and the
-  planned actions without changing anything. `--defer-activation` converges
-  only the on-disk files and enablement; deployment and maintenance use it as
-  a preflight before any Compose mutation.
-  The installer also removes the exact obsolete
-  `10-project-path.conf` shell-wrapper drop-in from early installations. It
-  preserves other user drop-ins and refuses an unrecognized `ExecStart`
-  override with a diagnostic instead of deleting user-authored configuration.
-  It also reloads once if unchanged files leave the user manager exposing a
-  stale effective `ExecStart` from an earlier bus-unreachable migration.
-
-`scripts/deploy.sh` and `scripts/update-and-restart.sh` treat this on-disk boot
-integration as a required deployment invariant. They converge it before
-building or changing services and activate it after successful deployment.
-Maintenance performs this preflight before fetch. If the host home cannot be
-resolved, mounted, inspected, or written, maintenance stops and records
-`state=failed`, `failure_type=boot-service`, and the `boot_service` reason in
-`data/maintenance-status`; it cannot report `state=ok`. An unavailable user
-systemd bus is intentionally different: the canonical unit, recognized legacy
-drop-in migration, and `default.target` link are still converged on disk, so
-maintenance may succeed with `boot_service=warning:bus-unreachable` while
-activation is deferred.
-
-Check the service on the host as the deploying user:
-
-```sh
-systemctl --user status deepseek-harness-after-network
-systemctl --user cat deepseek-harness-after-network
-journalctl --user -u deepseek-harness-after-network --no-pager
-```
-
-A failed deployment leaves the unit as it was: if recreation fails at runtime,
-the unit shows failed and systemd retries it every 10 seconds. Permanent
-configuration failures exit 78 and remain failed without retrying. In either
-case the deployment stays down until the next successful
-`update-and-restart.sh`, `deploy.sh`, or boot-service run repairs it.
+The source-tree boot script and installer remain available for legacy installations.
+After adoption the source-tree entrypoint delegates to the operational bundle.
+See [boot migration and recovery](docs/portable-maintenance.md) before retiring
+an old checkout or changing a boot arrangement.
 
 ## Operations
 
@@ -698,117 +636,23 @@ Validate the repository and generated Compose configuration:
 ./scripts/check.sh
 ```
 
-Apply later repository/plugin updates without changing per-host configuration:
+Every Harness deployment must expose the Service Portal **Update and restart**
+button. The shared updater fetches a pinned source release into temporary storage,
+builds and verifies images, snapshots application state, and performs a verified
+redeployment with automatic rollback. A retained source checkout is not required.
+No local override may disable the update capability.
 
-```sh
-./scripts/update-and-restart.sh
-```
+Set the deployment-local `SERVICE_PORTAL_URL` before installation. Existing
+installations require one reviewed adoption through `scripts/deploy.sh --adopt`;
+this installs a private operational bundle without rewriting checkout contents,
+credentials, sessions, or machine-local settings. No production deployment is
+implied by a repository update.
 
-The maintenance command infers the current Ollama mode, requires a clean and
-fast-forwardable `main` checkout tracking the canonical `origin/main`, and
-requires exactly one recorded deployment mode consistent with the running
-Compose labels. It checks that the persisted `data/dsh/settings.yaml` is a
-regular, non-empty file with the configured service ownership and a secure
-mode before fetching. It does not require byte equality with repository
-defaults, so DSH serialization changes and intentional per-machine settings
-survive updates. Missing, empty, wrongly owned, or insecurely permissioned
-settings stop maintenance before any Compose interruption. After
-settings validation, the updater also requires boot-service files to converge
-before fetch. After fast-forwarding, the original process transfers
-its maintenance lock and status to the fetched updater and re-executes it. The
-fetched code therefore performs the final preflight and Compose validation
-before it can change services. During this handoff, exact legacy
-`0.1.1-rc.2`, `0.1.5-rc.2`, and `0.1.6-alpha.1` package/image pins are atomically migrated to the
-`0.1.7-rc.2` tag and its recorded upstream commit; deliberately customized
-pins are left unchanged, and dry-run reports the migration without editing
-`.env`. The fetched updater also records `DSH_TOKEN_ENABLED=false` when an
-older `.env` has no token-plugin policy, while preserving an existing exact
-`true` opt-in or `false` setting. Any other or duplicated value is rejected
-before Compose is interrupted. This lets the same updater carry the release across existing home-network
-deployments without replacing their model, router, credentials, or other
-machine-local settings. The updater pulls non-buildable images and builds
-the selected topology while the current deployment remains available, then uses
-the normal verified deployment command. Before migrating a pre-0.1.7 runtime,
-it stops the project briefly and saves a private, verified snapshot of application
-data, gateway state, backend authentication, secrets, and the original environment
-under `data/upgrade-recovery`. Previous images are pinned under rollback tags.
-A failed deployment restores both that data and the previous images, waits for
-health, and still reports the update as failed. The recovery point and failed
-runtime are retained for inspection. Other updates remove only superseded image
-IDs captured directly from this Compose project's containers. This remains reliable when an active container's original image tag
-has been replaced or its old image-store record has been collected. It never
-runs a global Docker prune. Remote-mode deployment additionally removes the
-exact obsolete `deepseek-harness/ai-router` container only after direct-route
-verification, while retaining its image and persistent data.
-
-Delegated updates use the same pinned Docker CLI, Compose, and Buildx plugins
-inside the maintenance image as direct updates. Service Portal receives the
-explicit `HOST_HOME` deployment label and validates it, but exposes only that
-home's `.config/systemd/user` directory with Docker's missing-source-safe mount
-form. Harness-originated maintenance resolves the same home for the configured
-numeric host UID through the host passwd database and verifies that both it and
-its user-unit directory exist inside the configured host-filesystem view. The
-project checkout remains a separate bind; the entire home is never mounted.
-If either path cannot establish this narrow mount, the helper records a
-blocking boot-service failure before any fetch, build, or service change. Each
-maintenance lock records
-whether its owner is a host process or an exact Docker container ID. A later
-run refuses a live owner, but atomically reclaims a schema-1 lock when that
-process has exited or that exact container no longer exists or is no longer
-running. This prevents an interrupted Service Portal runner from permanently
-blocking future update attempts; legacy PID-only locks remain fail-closed and
-require operator inspection before removal.
-
-The `harness` service is the only service carrying the Service Portal update
-labels. The portal therefore offers one project-level update job for every
-container in the active `deepseek-harness` project, including managed-mode
-containers, while using the already-local `HARNESS_IMAGE` as its maintenance
-runner. The optional `deepseek-harness-speech` project is intentionally not
-opted in because it has a separate host configuration and deployment lifecycle.
-After changing these labels, recreate the root project with its active Compose
-overlay so Docker stores them on the `harness` container.
-
-Service Portal updates run from an isolated maintenance container. Post-deploy
-gateway verification detects that delegated context and performs the same
-CA-validated HTTPS health probe inside the gateway container's network
-namespace. Verification is not skipped or weakened, and failures retain the
-normal updater exit classifications.
-
-A single atomically replaced status file is kept at
-`data/maintenance-status`. In addition to the mode, commits, and exit status,
-it records `failure_type`, `failure_stage`, and recovery outcome. Failure types
-distinguish Git state, deployment-mode inference, Docker/Compose, configuration
-verification, boot-service convergence, model-provider or credential access,
-and application health. `state=ok` requires successful on-disk boot-service
-convergence; only activation may remain deferred when the user bus is
-unreachable.
-
-For an existing checkout, the supported redeployment is one normal update as
-the deploying user:
-
-```sh
-./scripts/update-and-restart.sh
-```
-
-That run preserves `.env`, credentials, sessions, workspaces, gateway identity,
-and other persistent data while migrating the narrowly recognized legacy
-drop-in. If maintenance reports `boot_service=warning:bus-unreachable`, run the
-three host-side `systemctl --user` commands shown by the installer; no file
-edits are required. A fresh or deliberately selected-mode deployment continues
-to use `./scripts/deploy.sh --external-ollama`, `--remote-ollama`, or
-`--managed-ollama` as appropriate.
-
-Preview the operation or select a mode explicitly:
-
-```sh
-./scripts/update-and-restart.sh --dry-run
-./scripts/update-and-restart.sh --remote-ollama
-```
-
-When invoked by an AI inside Harness, the command delegates to a temporary
-maintenance container so stopping Harness cannot interrupt its own update.
-That helper and its Docker logs remove themselves afterward. See
-`docs/maintenance-agent-prompt.md` for a reusable agent prompt.
+See [portable maintenance, custom Compose adoption, and recovery](docs/portable-maintenance.md)
+for commands, configuration, external TLS support, and qualification. The existing
+remote, external, and managed topologies and intentional model/speech endpoints
+remain supported. Use `./scripts/check.sh --host` for checks without Docker;
+container qualification runs with `./scripts/check.sh --build` in GitHub CI.
 
 The rebuild refreshes the canonical profile in the image, and container start
 synchronizes the runtime software-managed profile from that image. It compares

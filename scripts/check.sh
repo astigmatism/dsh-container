@@ -15,12 +15,31 @@ compose_check() {
 case "${1:-}" in
   '') ;;
   --build) build=1 ;;
+  --host)
+    # No Docker invocation on development hosts. Container qualification is CI-only.
+    host_guard=$(mktemp -d)
+    trap 'rm -rf "$host_guard"' EXIT HUP INT TERM
+    printf '%s\n' '#!/bin/sh' 'echo "Docker is forbidden in --host checks" >&2' 'exit 99' >"$host_guard/docker"
+    chmod +x "$host_guard/docker"
+    PATH="$host_guard:$PATH"
+    export PATH
+    for shell_file in "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh "$project_dir/start-after-network.sh"; do
+      sh -n "$shell_file"
+    done
+    python3 -B "$project_dir/tests/maintenance.test.py"
+    python3 -B "$project_dir/tests/isolated-verification.test.py"
+    (cd "$project_dir" && python3 -B -c 'from maintenance.qualification import registered_files; registered_files(".")')
+    python3 -B "$project_dir/tests/upgrade-recovery.test.py"
+    node --test "$project_dir/gateway/maintenance-gate.test.mjs" "$project_dir/tests/verification-state.test.mjs"
+    node --test "$project_dir/tests/external-tls.integration.mjs"
+    exit 0
+    ;;
   -h|--help)
-    echo "usage: ./scripts/check.sh [--build]"
+    echo "usage: ./scripts/check.sh [--host | --build]"
     exit 0
     ;;
   *)
-    echo "usage: ./scripts/check.sh [--build]" >&2
+    echo "usage: ./scripts/check.sh [--host | --build]" >&2
     exit 2
     ;;
 esac
@@ -47,6 +66,7 @@ fi
 "$project_dir/tests/compose-topology.test.sh"
 python3 "$project_dir/tests/gateway-credentials.test.py"
 python3 "$project_dir/tests/upgrade-recovery.test.py"
+python3 "$project_dir/tests/isolated-verification.test.py"
 python3 "$project_dir/tests/runtime-release.test.py"
 python3 "$project_dir/tests/runtime-profile-sync.test.py"
 "$project_dir/tests/delegated-gateway.test.sh"
@@ -158,9 +178,17 @@ if [ "$build" -eq 1 ]; then
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
 
+  python3 "$project_dir/tests/isolated-verification-docker.test.py" "$harness_image"
+  docker run --rm --network none --read-only --tmpfs /tmp \
+    --volume "$project_dir:/src:ro" --entrypoint node "$gateway_image" \
+    --test /src/tests/external-tls.integration.mjs
+
   if [ "${CI:-false}" = true ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
+    python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
+    python3 "$project_dir/tests/previous-release-docker.test.py" "$harness_image" "$gateway_image"
+    python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
   fi
 
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.7-rc.2 ] || {

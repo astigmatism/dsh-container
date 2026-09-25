@@ -140,10 +140,10 @@ case "$*" in
   inspect*org.opencontainers.image.version*) echo "$FAKE_VERSION" ;;
   inspect*io.astigmatism.deepseek-harness.upstream.commit*) echo "$FAKE_COMMIT" ;;
   inspect*) echo healthy ;;
+  *'require("/data/dsh/profiles/web/package.json").dependencies'*) echo reached-inventory >&2; exit 1 ;;
   *" exec -T harness node -e "*)
     for expected do :; done
     [ "$expected" = "$FAKE_PACKAGE_VERSION" ] ;;
-  *" plugin --profile web list") echo reached-inventory >&2; exit 1 ;;
   *) echo "Unexpected verification command" >&2; exit 99 ;;
 esac
 """)

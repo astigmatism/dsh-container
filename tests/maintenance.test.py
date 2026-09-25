@@ -161,6 +161,45 @@ class ContractTests(Fixture):
 
 
 class RecoveryTests(Fixture):
+    def test_copy_assigns_ownership_before_checking_shared_filesystem_metadata(self):
+        source = self.data / 'session'
+        target = self.base / 'copied-session'
+        target.write_bytes(source.read_bytes())
+        assigned = False
+        stat = Path.lstat
+        def metadata(path):
+            actual = stat(path)
+            if path == target and not assigned:
+                fields = list(actual)
+                fields[4] = actual.st_uid + 1  # Initial shared-filesystem cache entry.
+                return os.stat_result(fields)
+            return actual
+        def chown(path, uid, gid, **kwargs):
+            nonlocal assigned
+            self.assertEqual(path, target)
+            self.assertEqual((uid, gid), (source.stat().st_uid, source.stat().st_gid))
+            self.assertFalse(kwargs['follow_symlinks'])
+            assigned = True
+        with patch.object(Path, 'lstat', metadata), patch('maintenance.recovery.os.chown', chown):
+            recovery.preserve_owner(source, target)
+        self.assertTrue(assigned)
+
+    def test_copy_does_not_accept_wrong_ownership_when_chown_is_denied(self):
+        source = self.data / 'session'
+        target = self.base / 'copied-session'
+        target.write_bytes(source.read_bytes())
+        stat = Path.lstat
+        def metadata(path):
+            actual = stat(path)
+            if path == target:
+                fields = list(actual)
+                fields[4] = actual.st_uid + 1
+                return os.stat_result(fields)
+            return actual
+        with patch.object(Path, 'lstat', metadata), patch('maintenance.recovery.os.chown', side_effect=PermissionError), \
+             self.assertRaisesRegex(Failure, 'Cannot preserve snapshot ownership'):
+            recovery.preserve_owner(source, target)
+
     def point(self):
         point = self.root / 'recovery/test'
         point.mkdir(parents=True)

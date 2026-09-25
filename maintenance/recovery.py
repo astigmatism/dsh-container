@@ -51,13 +51,18 @@ def copy_path(source, destination):
 
 def preserve_owner(source, target):
     info = source.lstat()
-    if os.geteuid() == 0:
+    try:
+        # Assign ownership explicitly even when copying as the same UID. Shared
+        # filesystems can briefly report stale ownership for a new directory;
+        # relying on that first stat can reject an otherwise faithful snapshot.
         os.chown(target, info.st_uid, info.st_gid, follow_symlinks=False)
-    else:
-        actual = target.lstat()
-        if actual.st_gid != info.st_gid:
-            os.chown(target, -1, info.st_gid, follow_symlinks=False)
-        require(actual.st_uid == info.st_uid, 'Cannot preserve snapshot ownership as the deployment user')
+    except PermissionError:
+        # Some filesystems forbid even an unchanged chown. Accept only already
+        # correct ownership; never silently drop another service's identity.
+        pass
+    actual = target.lstat()
+    require((actual.st_uid, actual.st_gid) == (info.st_uid, info.st_gid),
+            'Cannot preserve snapshot ownership as the deployment user')
 
 
 def bytes_used(path):

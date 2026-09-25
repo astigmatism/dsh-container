@@ -19,3 +19,16 @@ different user-authorized workflow.
 Preserve unrelated work and user settings. Keep credentials out of logs and
 reports. For any authorized container operation, verify the host, repository
 and Compose project first; container names alone do not identify an environment.
+
+Service Portal Update and Restart is a required production compatibility
+contract. Every release must qualify the existing maintenance entrypoint,
+including supported adapters with separate source, deployment and credential
+directories. Do not bypass failing acceptance checks to make an update green.
+
+Deployment acceptance must not create user-visible chats, workspaces, drafts,
+notifications, or model-preference changes in production. Browser startup itself
+can create drafts. Run mutating UI/inference checks only through
+`scripts/verify-isolated-runtime.py`, which owns disposable application storage;
+keep production probes read-only. `DSH_VERIFY_ISOLATED=1` is an internal marker
+for these disposable runtimes, not a production override. Run the repeated-live
+isolation regression in Linux CI for verification or maintenance changes.

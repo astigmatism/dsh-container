@@ -9,7 +9,8 @@ const data = ['local-active', 'qwen3.8-27b-abliterated-q6_k'].map((id, index) =>
     display_name: index ? 'Nighttime (128K)' : 'Daytime (128K)',
     context_window: 131072, active_request_limit: 1, output_policy: 'unrestricted',
     max_output_tokens: null, default_output_tokens: null,
-    input_modalities: ['text', 'image'], capabilities: ['completion', 'thinking', 'tools', 'vision'],
+    input_modalities: index ? ['text'] : ['text', 'image'],
+    capabilities: index ? ['completion', 'thinking', 'tools'] : ['completion', 'thinking', 'tools', 'vision'],
     reasoning: { supported: true, default: 'medium', output_limit_policy: 'reject',
       absolute_max_output_tokens: null,
       efforts: { off: 'none', low: 'low', medium: 'medium', xhigh: 'xhigh' },
@@ -23,8 +24,8 @@ let mode = 'success';
 http.createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  if (request.url === '/test/fail' && request.method === 'POST') {
-    mode = 'failure'; response.end('ok'); return;
+  if (request.url.startsWith('/test/') && request.method === 'POST') {
+    mode = request.url.slice('/test/'.length); response.end('ok'); return;
   }
   if (request.url === '/v1/models') {
     response.setHeader('content-type', 'application/json');
@@ -32,7 +33,8 @@ http.createServer(async (request, response) => {
   }
   if (request.url === '/health') { response.end('{"ok":true}'); return; }
   if (request.url !== '/v1/responses') { response.writeHead(404).end(); return; }
-  if (mode === 'failure') {
+  if (mode === 'hold') return; // Cancellation fixture owns this pending request.
+  if (mode === 'fail') {
     response.writeHead(400, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ error: { message: 'deliberate fixture failure', type: 'invalid_request_error' } })); return;
   }

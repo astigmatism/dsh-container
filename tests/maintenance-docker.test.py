@@ -107,6 +107,8 @@ def fixture_candidate(self):
     manifest['revision']='b'*40
     if (self.root/'candidate-image').exists():
         model['services']['application']['image']=(self.root/'candidate-image').read_text().strip()
+        engine.install_labels(model,manifest,model['services']['application']['image'])
+        (release/'runner-image').write_text(model['services']['application']['image']+'\\n')
     manifest['images']={s:c['image'] for s,c in model['services'].items()}
     atomic_json(release/'compose.json',model)
     atomic_json(release/'deployment.json',manifest)
@@ -133,19 +135,36 @@ def fixture_probe(manifest,model,root,**kwargs):
 engine.probe_release=fixture_probe
 runpy.run_path('/opt/dsh-maintenance/production-main.py',run_name='__main__')
 ''')
+    substitutions = '' if previous_image else '''COPY provider.mjs /opt/dsh-build/verify-router-contract.mjs
+COPY provider.mjs /opt/dsh-build/verify-runtime-readiness.mjs
+COPY qualification.py /opt/dsh-build/verify-isolated-runtime.py
+'''
     (fixture / 'Dockerfile').write_text(f'''FROM {harness_image}
 USER root
 RUN mv /opt/dsh-maintenance/main.py /opt/dsh-maintenance/production-main.py && ln -s /opt/dsh-maintenance /opt/maintenance
 COPY driver.py /opt/dsh-maintenance/main.py
 COPY application.mjs /opt/fixture/application.mjs
-COPY provider.mjs /opt/dsh-build/verify-router-contract.mjs
-COPY provider.mjs /opt/dsh-build/verify-runtime-readiness.mjs
-COPY qualification.py /opt/dsh-build/verify-isolated-runtime.py
+{substitutions}
 USER node
 ''')
     run(['docker', 'build', '-t', fixture_image, fixture])
     fixture_id = json.loads(run(['docker', 'image', 'inspect', fixture_image]))[0]['Id']
-    candidate_id = json.loads(run(['docker', 'image', 'inspect', harness_image]))[0]['Id']
+    candidate_id = fixture_id
+    previous_id = None
+    if previous_image:
+        # The old application/runtime/profile are unchanged. Backport only the
+        # maintenance dispatcher so its Portal can launch the detached worker.
+        (fixture/'Dockerfile.previous').write_text(f'''FROM {harness_image} AS maintenance
+FROM {previous_image}
+USER root
+COPY --from=maintenance /opt/dsh-maintenance /opt/dsh-maintenance
+RUN mv /opt/dsh-maintenance/main.py /opt/dsh-maintenance/production-main.py && ln -s /opt/dsh-maintenance /opt/maintenance
+COPY driver.py /opt/dsh-maintenance/main.py
+LABEL io.dsh.maintenance.schema="1"
+USER node
+''')
+        run(['docker','build','-f',fixture/'Dockerfile.previous','-t',fixture_image+'-previous',fixture])
+        previous_id = json.loads(run(['docker','image','inspect',fixture_image+'-previous']))[0]['Id']
     gateway_id = json.loads(run(['docker', 'image', 'inspect', gateway_image]))[0]['Id']
 
     # IP-only leaf: localhost is intentionally absent. No CA key is mounted.
@@ -174,7 +193,7 @@ USER node
     }}
     if previous_image:
         app = model['services']['application']
-        app['image'] = json.loads(run(['docker', 'image', 'inspect', previous_image]))[0]['Id']
+        app['image'] = previous_id
         app.pop('entrypoint')
         app['environment'] = {'HOME': '/tmp', 'DSH_HOME': '/data/dsh',
             'DSH_WEB_LAUNCH_TOKEN_FILE': '/run/dsh-backend-auth/launch-token'}
@@ -212,13 +231,13 @@ USER node
             'state_paths': [str(state), str(credentials), str(temporary/'backend')],
             'input_paths': [str(fixture_path)], 'external_paths': [],
             'artifact_paths': [], 'source_artifacts': []}
-        install_labels(model, manifest, fixture_id)
+        install_labels(model, manifest, previous_id)
         manifest['images'] = {s:c['image'] for s,c in model['services'].items()}
         manifest['bindings'] = configuration_bindings(model)
         (root/'scripts').mkdir()
         shutil.copy2(source/'scripts/update-and-restart.sh', root/'scripts/update-and-restart.sh')
         shutil.copytree(source/'maintenance', root/'maintenance', ignore=shutil.ignore_patterns('__pycache__'))
-        (root/'runner-image').write_text(fixture_id+'\n')
+        (root/'runner-image').write_text(previous_id+'\n')
         (root/'candidate-image').write_text(candidate_id+'\n')
         (root/'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
         atomic_json(root/'compose.json', model)
@@ -331,6 +350,12 @@ USER node
         assert (model_store/'model.blob').read_bytes() == b'synthetic shared model blob'
     print('Real Portal runner verified: detached dispatch, external state mounts, authenticated IP-only TLS, update and automatic rollback.')
 finally:
+    if sys.exc_info()[0] is not None:
+        for name in ('application', 'edge', 'provider'):
+            subprocess.run(['docker','compose','--project-directory',str(root),'-f',str(root/'compose.json'),
+                            'logs','--tail','80',name])
+        for name in ('maintenance-status.json',):
+            if (root/name).exists(): print((root/name).read_text())
     subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root/'compose.json'), 'down'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(['docker', 'rm', '-f', portal_name, project + '-unrelated'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     shutil.rmtree(temporary)

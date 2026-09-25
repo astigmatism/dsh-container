@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Linux-only acceptance: two real live UI runs leave populated production intact."""
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 from pathlib import Path
@@ -87,8 +88,53 @@ try:
         else:
             raise AssertionError('Provider failure incorrectly passed qualification')
         assert docker('exec', '-i', source, 'python3', '-c', SNAPSHOT) == before, 'Failure cleanup modified production state'
+        docker('exec', router, 'node', '-e', "fetch('http://127.0.0.1:11434/test/hold',{method:'POST'})")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(isolated.qualify, source, None, directory)
+            for attempt in range(180):
+                names = docker('ps', '-q', '--filter', 'label=io.dsh.verification=isolated').decode().split()
+                if names:
+                    result = subprocess.run(['docker','exec','-i',names[0], 'node', '--input-type=module', '-', '--cancel-verification'],
+                        input=(ROOT/'tests/fixtures/verification-session.mjs').read_bytes(), capture_output=True)
+                    if result.returncode == 0:
+                        break
+                time.sleep(1)
+            else:
+                raise AssertionError('Isolated cancellation fixture did not start')
+            try:
+                future.result()
+            except isolated.QualificationError:
+                assert json.loads((Path(directory)/'resident.json').read_text())['code'] == 'verification-cancelled'
+            else:
+                raise AssertionError('Canceled verification incorrectly passed')
+        assert docker('exec', '-i', source, 'python3', '-c', SNAPSHOT) == before, 'Cancellation modified production state'
+        # A handled interruption tears down the entire isolated lifecycle.
+        process = subprocess.Popen([sys.executable, str(ROOT/'scripts/verify-isolated-runtime.py'),
+            '--container', source, '--diagnostics', directory])
+        for attempt in range(60):
+            if docker('ps', '-q', '--filter', 'label=io.dsh.verification=isolated').strip():
+                process.terminate()
+                break
+            time.sleep(0.5)
+        assert process.wait(timeout=90) != 0, 'Interrupted verification was reported as success'
+        assert docker('exec', '-i', source, 'python3', '-c', SNAPSHOT) == before, 'Interruption modified production state'
     assert not docker('ps', '-aq', '--filter', 'label=io.dsh.verification=isolated').strip(), 'Disposable runtime leaked'
-    print('Repeated live picker/inference verification and provider failure preserved all production sessions and preferences.')
+    print('Repeated live acceptance, provider failure, cancellation and interruption preserved production sessions and preferences.')
+    # Negative control: run the incident's verifier only against this disposable
+    # production fixture. The SAME nonintrusion assertion must reject it.
+    revision = 'b4f8c7856abb160d857a749543ac83f6875dbbab'
+    subprocess.run(['git','-C',str(ROOT),'fetch','--quiet','--depth=1','origin',revision], check=True)
+    defective = subprocess.check_output(['git','-C',str(ROOT),'show', revision+':scripts/verify-resident-client.mjs']).decode()
+    defective = defective.replace("'./", "'/opt/dsh-build/").replace('"./', '"/opt/dsh-build/')
+    docker('exec', router, 'node', '-e', "fetch('http://127.0.0.1:11434/test/success',{method:'POST'})")
+    subprocess.run(['docker','exec','-i','--env','DSH_VERIFY_ISOLATED=1',source,
+        'node','--input-type=module','-','--live'], input=defective.encode(), capture_output=True, timeout=180)
+    after = docker('exec', '-i', source, 'python3', '-c', SNAPSHOT)
+    assert after != before, 'Negative control failed to expose the original production-state mutation'
+    print('Regression demonstrated: the incident verifier fails the same production-state preservation assertion that isolated acceptance passes.')
 finally:
+    if sys.exc_info()[0] is not None:
+        for name in (source, router):
+            subprocess.run(['docker', 'logs', '--tail', '80', name])
     subprocess.run(['docker', 'rm', '-f', source, router], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

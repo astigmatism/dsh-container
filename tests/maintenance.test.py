@@ -30,7 +30,7 @@ class Fixture(unittest.TestCase):
         self.addCleanup(qualification.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.base = Path(self.temporary.name)
+        self.base = Path(self.temporary.name).resolve()
         self.root = self.base / 'operational bundle'
         self.root.mkdir()
         (self.root / 'scripts').mkdir()
@@ -355,7 +355,7 @@ class TransactionTests(Fixture):
         command.assert_not_called()
         self.assertEqual((self.data / 'session').read_text(), 'original session')
 
-    def test_failed_cutover_restores_entire_generation(self):
+    def test_failed_cutover_restores_owned_state_but_preserves_external_writes(self):
         legacy = self.base / 'update-and-restart.sh'
         legacy.write_text('#!/bin/sh\nexec python3 maintain.py\n')
         self.manifest['legacy_entrypoint'] = str(legacy)
@@ -376,7 +376,7 @@ class TransactionTests(Fixture):
              patch('maintenance.engine.probe_release', side_effect=verify), self.assertRaises(Failure):
             updater.cutover(release)
         self.assertEqual((self.data / 'session').read_text(), 'original session')
-        self.assertEqual((self.credentials / 'auth').read_text(), 'synthetic-$credential')
+        self.assertEqual((self.credentials / 'auth').read_text(), 'changed')
         self.assertEqual((self.root / 'maintenance/identity').read_text(), 'old runtime')
         self.assertEqual(legacy.read_text(), '#!/bin/sh\nexec python3 maintain.py\n')
         self.assertEqual(json.loads((self.root / 'deployment.json').read_text())['revision'], 'a' * 40)

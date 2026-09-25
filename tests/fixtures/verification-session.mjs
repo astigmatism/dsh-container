@@ -27,6 +27,11 @@ if (process.argv.includes('--populate')) {
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 }
+if (process.argv.includes('--cancel-verification')) {
+  const row = (await rpc('session/list')).items.find(row => row.running && row.cwd?.includes('dsh-resident-verification-'));
+  if (!row) process.exit(3);
+  await rpc('session/cancel', { sessionId: row.sessionId });
+}
 if (process.argv.includes('--cancel-archive')) {
   for (const { sessionId } of (await rpc('session/list')).items) {
     await rpc('session/cancel', { sessionId });

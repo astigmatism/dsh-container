@@ -12,68 +12,7 @@ export HARNESS_AUTH_PASSWORD=compose-fixture-password
 grep -Fq 'COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx' "$project_dir/Dockerfile" \
   || { echo "Harness image does not include the Buildx plugin required by delegated updates." >&2; exit 1; }
 
-check_project() {
-  mode=$1
-  shift
-  output=$temporary_root/$mode.json
-  docker compose --env-file "$project_dir/.env.example" "$@" config --format json >"$output"
-  python3 - "$project_dir" "$mode" "$output" <<'PY'
-import json
-import os
-from pathlib import Path, PurePosixPath
-import stat
-import sys
-
-root = Path(sys.argv[1])
-mode = sys.argv[2]
-config = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-services = config["services"]
-prefix = "io.service-portal.update."
-advertisers = [
-    name for name, service in services.items()
-    if service.get("labels", {}).get(prefix + "enabled") == "true"
-]
-if advertisers != ["harness"]:
-    raise SystemExit(f"{mode}: expected only harness to advertise updates; got {advertisers}")
-
-labels = services["harness"]["labels"]
-expected = {
-    prefix + "enabled": "true",
-    prefix + "script": "scripts/update-and-restart.sh",
-    prefix + "image": "local/deepseek-harness:0.1.7-rc.2-portable",
-    prefix + "user": "1000:1000",
-    prefix + "host-home": "/home/harness",
-}
-actual = {key: value for key, value in labels.items() if key.startswith(prefix)}
-if actual != expected:
-    raise SystemExit(f"{mode}: unexpected Service Portal labels: {actual!r}")
-
-relative_script = PurePosixPath(labels[prefix + "script"])
-if relative_script.is_absolute() or ".." in relative_script.parts:
-    raise SystemExit(f"{mode}: updater path is not a safe project-relative path")
-script = root.joinpath(*relative_script.parts)
-metadata = script.lstat()
-if not stat.S_ISREG(metadata.st_mode) or not os.access(script, os.X_OK):
-    raise SystemExit(f"{mode}: updater is not a regular executable file")
-
-for name, service in services.items():
-    if name == "harness":
-        continue
-    conflicting = [key for key in service.get("labels", {}) if key.startswith(prefix)]
-    if conflicting:
-        raise SystemExit(f"{mode}: {name} has conflicting update labels: {conflicting}")
-PY
-}
-
-check_project external \
-  -f "$project_dir/compose.yaml" \
-  -f "$project_dir/compose.external-ollama.yaml"
-check_project remote \
-  -f "$project_dir/compose.yaml" \
-  -f "$project_dir/compose.remote-ollama.yaml"
-check_project managed \
-  -f "$project_dir/compose.yaml" \
-  -f "$project_dir/compose.managed-ollama.yaml"
+(cd "$project_dir" && python3 -B -m maintenance.qualification)
 
 speech_output=$temporary_root/speech.json
 docker compose --env-file "$project_dir/speech/.env.example" \

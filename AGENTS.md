@@ -32,3 +32,13 @@ can create drafts. Run mutating UI/inference checks only through
 keep production probes read-only. `DSH_VERIFY_ISOLATED=1` is an internal marker
 for these disposable runtimes, not a production override. Run the repeated-live
 isolation regression in Linux CI for verification or maintenance changes.
+Every Harness deployment must expose a working Service Portal Update and restart
+capability. Deployment constraints must be addressed by the shared updater and
+deployment-local configuration, never by disabling the update labels. Maintenance
+fetches a pinned source revision into temporary storage, verifies replacement
+images, snapshots application state, and restores state and images on failure.
+It must not require a permanent source checkout or edit deployment sources in
+place. Keep destination identities and local deployment settings outside Git;
+the intentional model-router and speech-service defaults remain application
+dependencies. Qualify all supported topologies and custom deployment adoption
+with synthetic fixtures before releasing changes.

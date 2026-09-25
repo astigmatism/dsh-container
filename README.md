@@ -698,117 +698,23 @@ Validate the repository and generated Compose configuration:
 ./scripts/check.sh
 ```
 
-Apply later repository/plugin updates without changing per-host configuration:
+Every Harness deployment must expose the Service Portal **Update and restart**
+button. The shared updater fetches a pinned source release into temporary storage,
+builds and verifies images, snapshots application state, and performs a verified
+redeployment with automatic rollback. A retained source checkout is not required.
+No local override may disable the update capability.
 
-```sh
-./scripts/update-and-restart.sh
-```
+Set the deployment-local `SERVICE_PORTAL_URL` before installation. Existing
+installations require one reviewed adoption through `scripts/deploy.sh --adopt`;
+this installs a private operational bundle without rewriting checkout contents,
+credentials, sessions, or machine-local settings. No production deployment is
+implied by a repository update.
 
-The maintenance command infers the current Ollama mode, requires a clean and
-fast-forwardable `main` checkout tracking the canonical `origin/main`, and
-requires exactly one recorded deployment mode consistent with the running
-Compose labels. It checks that the persisted `data/dsh/settings.yaml` is a
-regular, non-empty file with the configured service ownership and a secure
-mode before fetching. It does not require byte equality with repository
-defaults, so DSH serialization changes and intentional per-machine settings
-survive updates. Missing, empty, wrongly owned, or insecurely permissioned
-settings stop maintenance before any Compose interruption. After
-settings validation, the updater also requires boot-service files to converge
-before fetch. After fast-forwarding, the original process transfers
-its maintenance lock and status to the fetched updater and re-executes it. The
-fetched code therefore performs the final preflight and Compose validation
-before it can change services. During this handoff, exact legacy
-`0.1.1-rc.2`, `0.1.5-rc.2`, and `0.1.6-alpha.1` package/image pins are atomically migrated to the
-`0.1.7-rc.2` tag and its recorded upstream commit; deliberately customized
-pins are left unchanged, and dry-run reports the migration without editing
-`.env`. The fetched updater also records `DSH_TOKEN_ENABLED=false` when an
-older `.env` has no token-plugin policy, while preserving an existing exact
-`true` opt-in or `false` setting. Any other or duplicated value is rejected
-before Compose is interrupted. This lets the same updater carry the release across existing home-network
-deployments without replacing their model, router, credentials, or other
-machine-local settings. The updater pulls non-buildable images and builds
-the selected topology while the current deployment remains available, then uses
-the normal verified deployment command. Before migrating a pre-0.1.7 runtime,
-it stops the project briefly and saves a private, verified snapshot of application
-data, gateway state, backend authentication, secrets, and the original environment
-under `data/upgrade-recovery`. Previous images are pinned under rollback tags.
-A failed deployment restores both that data and the previous images, waits for
-health, and still reports the update as failed. The recovery point and failed
-runtime are retained for inspection. Other updates remove only superseded image
-IDs captured directly from this Compose project's containers. This remains reliable when an active container's original image tag
-has been replaced or its old image-store record has been collected. It never
-runs a global Docker prune. Remote-mode deployment additionally removes the
-exact obsolete `deepseek-harness/ai-router` container only after direct-route
-verification, while retaining its image and persistent data.
-
-Delegated updates use the same pinned Docker CLI, Compose, and Buildx plugins
-inside the maintenance image as direct updates. Service Portal receives the
-explicit `HOST_HOME` deployment label and validates it, but exposes only that
-home's `.config/systemd/user` directory with Docker's missing-source-safe mount
-form. Harness-originated maintenance resolves the same home for the configured
-numeric host UID through the host passwd database and verifies that both it and
-its user-unit directory exist inside the configured host-filesystem view. The
-project checkout remains a separate bind; the entire home is never mounted.
-If either path cannot establish this narrow mount, the helper records a
-blocking boot-service failure before any fetch, build, or service change. Each
-maintenance lock records
-whether its owner is a host process or an exact Docker container ID. A later
-run refuses a live owner, but atomically reclaims a schema-1 lock when that
-process has exited or that exact container no longer exists or is no longer
-running. This prevents an interrupted Service Portal runner from permanently
-blocking future update attempts; legacy PID-only locks remain fail-closed and
-require operator inspection before removal.
-
-The `harness` service is the only service carrying the Service Portal update
-labels. The portal therefore offers one project-level update job for every
-container in the active `deepseek-harness` project, including managed-mode
-containers, while using the already-local `HARNESS_IMAGE` as its maintenance
-runner. The optional `deepseek-harness-speech` project is intentionally not
-opted in because it has a separate host configuration and deployment lifecycle.
-After changing these labels, recreate the root project with its active Compose
-overlay so Docker stores them on the `harness` container.
-
-Service Portal updates run from an isolated maintenance container. Post-deploy
-gateway verification detects that delegated context and performs the same
-CA-validated HTTPS health probe inside the gateway container's network
-namespace. Verification is not skipped or weakened, and failures retain the
-normal updater exit classifications.
-
-A single atomically replaced status file is kept at
-`data/maintenance-status`. In addition to the mode, commits, and exit status,
-it records `failure_type`, `failure_stage`, and recovery outcome. Failure types
-distinguish Git state, deployment-mode inference, Docker/Compose, configuration
-verification, boot-service convergence, model-provider or credential access,
-and application health. `state=ok` requires successful on-disk boot-service
-convergence; only activation may remain deferred when the user bus is
-unreachable.
-
-For an existing checkout, the supported redeployment is one normal update as
-the deploying user:
-
-```sh
-./scripts/update-and-restart.sh
-```
-
-That run preserves `.env`, credentials, sessions, workspaces, gateway identity,
-and other persistent data while migrating the narrowly recognized legacy
-drop-in. If maintenance reports `boot_service=warning:bus-unreachable`, run the
-three host-side `systemctl --user` commands shown by the installer; no file
-edits are required. A fresh or deliberately selected-mode deployment continues
-to use `./scripts/deploy.sh --external-ollama`, `--remote-ollama`, or
-`--managed-ollama` as appropriate.
-
-Preview the operation or select a mode explicitly:
-
-```sh
-./scripts/update-and-restart.sh --dry-run
-./scripts/update-and-restart.sh --remote-ollama
-```
-
-When invoked by an AI inside Harness, the command delegates to a temporary
-maintenance container so stopping Harness cannot interrupt its own update.
-That helper and its Docker logs remove themselves afterward. See
-`docs/maintenance-agent-prompt.md` for a reusable agent prompt.
+See [portable maintenance, custom Compose adoption, and recovery](docs/portable-maintenance.md)
+for commands, configuration, external TLS support, and qualification. The existing
+remote, external, and managed topologies and intentional model/speech endpoints
+remain supported. Use `./scripts/check.sh --host` for checks without Docker;
+container qualification runs with `./scripts/check.sh --build` in GitHub CI.
 
 The rebuild refreshes the canonical profile in the image, and container start
 synchronizes the runtime software-managed profile from that image. It compares

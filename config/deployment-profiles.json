@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "profiles": {
+    "portable": ["compose.yaml"],
+    "remote": ["compose.yaml", "compose.remote-ollama.yaml"],
+    "external": ["compose.yaml", "compose.external-ollama.yaml"],
+    "managed": ["compose.yaml", "compose.managed-ollama.yaml"]
+  },
+  "separate_projects": ["speech/"]
+}

@@ -3,6 +3,9 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+if [ -f "$project_dir/data/deployment/runner-image" ] && [ ! -f "$project_dir/data/deployment/adoption.json" ]; then
+  exec "$project_dir/data/deployment/scripts/update-and-restart.sh" --verify
+fi
 mode=${1:-}
 docker_compose_exit=20
 configuration_exit=21

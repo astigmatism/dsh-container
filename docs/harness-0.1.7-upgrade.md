@@ -1,5 +1,10 @@
 # Harness 0.1.7-rc.2 upgrade
 
+The checkout-based updater described in the historical qualification below is
+superseded by [portable maintenance](portable-maintenance.md). New updates take
+complete snapshots on every release and do not fast-forward a retained checkout.
+The storage-migration and complete-state rollback requirements still apply.
+
 This upgrade is pinned to [the published `dsh-v0.1.7-rc.2` release](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.7-rc.2), commit
 `477b4f420553e8a52c2fbccc464d7561b239c443`, published on npm's `next`
 channel. Both dependency locks use this exact Harness generation and Cordis

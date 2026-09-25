@@ -86,8 +86,10 @@ if [ "$delegated" -eq 1 ]; then
   # The port comes from the gateway container's own HARNESS_HTTPS_PORT.
   probe=$(cat <<'EOF'
 import https from 'node:https'
+import tls from 'node:tls'
 
 const port = Number.parseInt(process.env.HARNESS_HTTPS_PORT || '3443', 10)
+const identity = process.env.HARNESS_TLS_VERIFY_NAME || process.env.HARNESS_TLS_IP || '127.0.0.1'
 if (!Number.isSafeInteger(port) || port <= 0) {
   process.stderr.write('Gateway HTTPS port is not configured.\n')
   process.exit(1)
@@ -100,7 +102,8 @@ if (ca.length === 0) {
   process.exit(1)
 }
 const request = https.get(
-  { host: '127.0.0.1', port, path: '/healthz', ca },
+  { host: '127.0.0.1', port, path: '/healthz', ca,
+    checkServerIdentity: (_host, certificate) => tls.checkServerIdentity(identity, certificate) },
   response => {
     response.resume()
     response.on('end', () => {

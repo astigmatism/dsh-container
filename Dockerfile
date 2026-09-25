@@ -99,6 +99,10 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 
+COPY maintenance /opt/dsh-maintenance
+LABEL io.dsh.maintenance.schema="1"
+RUN python3 -B /opt/dsh-maintenance/main.py self-test
+
 COPY plugin/dsh-local-speech /opt/dsh-local-speech
 COPY entrypoint.sh /usr/local/bin/dsh-entrypoint
 COPY scripts/nvidia-smi-proxy.sh /usr/local/bin/nvidia-smi
@@ -210,7 +214,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/
+COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs gateway/external-tls.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/
 
 USER node
 ENTRYPOINT ["node", "/opt/dsh-gateway/server.mjs"]

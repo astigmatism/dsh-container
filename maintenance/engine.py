@@ -25,7 +25,8 @@ def containers(model, root):
 
 def validate_engine(manifest):
     actual = run(['docker', 'info', '--format', '{{.ID}}']).strip()
-    require(actual == manifest['engine_id'], 'Docker Engine does not match this deployment')
+    local = run(['docker', '--host', 'unix:///var/run/docker.sock', 'info', '--format', '{{.ID}}']).strip()
+    require(actual == local == manifest['engine_id'], 'Docker Engine does not match the local deployment socket')
 
 
 def validate_containers(manifest, model, root, *, allow_empty=False):

@@ -235,7 +235,7 @@ class AdoptionTests(Fixture):
         raise AssertionError(args)
 
     def prepare(self):
-        with patch('maintenance.install.run', side_effect=self.command), patch('maintenance.install.portal_services'):
+        with patch('maintenance.install.run', side_effect=self.command), patch('maintenance.install.portal_services'), patch('maintenance.install.validate_engine'):
             prepare(self.args, self.source)
 
     def test_custom_adoption_dry_run_keeps_every_byte_and_preserves_mode(self):
@@ -295,6 +295,25 @@ class SourceTests(unittest.TestCase):
 
 
 class TransactionTests(Fixture):
+    def test_interrupted_transaction_is_recovered_before_any_new_build(self):
+        updater, release = Updater(self.root), self.candidate()
+        def fail(manifest, model, root, **kwargs):
+            (self.data / 'session').write_text('interrupted migration')
+            raise Failure('simulated interruption')
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch.object(updater, 'recover'), patch('maintenance.engine.run'), \
+             patch('maintenance.engine.probe_release', side_effect=fail), self.assertRaises(Failure):
+            updater.cutover(release)
+        self.assertTrue((self.root / 'transaction.json').exists())
+        restarted = Updater(self.root)
+        with patch.object(restarted, 'build_candidate') as build, patch('maintenance.engine.run'), \
+             patch('maintenance.engine.validate_engine'), patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.probe_release'), self.assertRaisesRegex(Failure, 'Recovered interrupted'):
+            restarted.update()
+        build.assert_not_called()
+        self.assertEqual((self.data / 'session').read_text(), 'original session')
+        self.assertFalse((self.root / 'transaction.json').exists())
+
     def test_dry_run_is_immutable_and_does_not_build(self):
         updater = Updater(self.root)
         before = recovery.inventory(self.base)

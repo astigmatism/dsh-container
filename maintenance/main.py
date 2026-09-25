@@ -26,11 +26,16 @@ from maintenance.engine import Updater, probe_release, validate_engine
 
 
 def launch(root, dry_run=False, action='update'):
-    manifest = read_json(root / 'deployment.json')
+    interrupted = (root / 'transaction.json').exists()
+    transaction = read_json(root / 'transaction.json') if interrupted else None
+    manifest = transaction['previous_manifest'] if interrupted else read_json(root / 'deployment.json')
     validate_manifest(manifest, root)
     validate_engine(manifest)
-    model = read_json(root / 'compose.json')
-    _, _, image, user, _ = validate_deployment(manifest, model, root)
+    model = transaction['previous_model'] if interrupted else read_json(root / 'compose.json')
+    # A crash can leave old and candidate operational files mixed. Recovery
+    # must launch the recorded qualified runtime before checking that generation.
+    _, _, image, user, _ = (validate_config(model, root) if interrupted
+                            else validate_deployment(manifest, model, root))
     require(inspect('image', image)['Config'].get('Labels', {}).get('io.dsh.maintenance.schema') == '1',
             'Updater image lacks the qualified runtime; bootstrap required')
     paths = {str(root): False}

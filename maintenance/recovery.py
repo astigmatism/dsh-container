@@ -132,6 +132,18 @@ def restore(point):
             copy_path(original, stage)
         if stage.exists():
             require(inventory(stage) == record['inventory'], 'Interrupted recovery staging failed integrity verification')
+        if target.is_file() and not target.is_symlink() and original.is_file():
+            # Keep manifest, Compose, and dispatcher paths continuously present
+            # so a killed recovery can still be launched from the Portal.
+            if not failed.exists():
+                os.link(target, failed)
+            if inventory(target) != record['inventory']:
+                require(stage.exists() and inventory(target) == inventory(failed),
+                        'Interrupted file restore found changed destination state')
+                stage.replace(target)
+            state['done'].append(index)
+            atomic_json(state_file, state)
+            continue
         if failed.exists() and target.exists():
             require(inventory(target) == record['inventory'], 'Interrupted restore found changed destination state')
         else:

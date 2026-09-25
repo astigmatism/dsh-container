@@ -167,6 +167,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
+    && chmod -R a+rX /opt/dsh-seed \
     && chmod -R a+rwX /opt/dsh-pnpm-store \
     && apt-get purge -y --auto-remove make g++ \
     && rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp

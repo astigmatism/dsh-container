@@ -79,7 +79,7 @@ http.createServer((req,res)=>{if(req.url.includes('token=')){res.writeHead(303,{
 setInterval(()=>{},1000);
 ''')
     (fixture / 'provider.mjs').write_text("import {readFileSync} from 'node:fs'; if(!readFileSync('/data/dsh/session','utf8'))process.exit(1);\n")
-    (fixture / 'qualification.py').write_text("print('Synthetic application acceptance; real Harness isolation is a separate required CI gate')\n")
+    (fixture / 'qualification.py').write_text("class QualificationError(RuntimeError): pass\ndef qualify(*args): print('Synthetic application acceptance; real Harness isolation is a separate required CI gate')\n")
     (fixture / 'driver.py').write_text('''import sys, runpy, shutil, copy, os
 from pathlib import Path
 sys.path.insert(0, '/opt')

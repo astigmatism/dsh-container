@@ -69,6 +69,8 @@ def main():
     parser.add_argument('--compose-file', action='append', default=[])
     parser.add_argument('--env-file')
     parser.add_argument('--boot-unit')
+    parser.add_argument('--legacy-entrypoint', type=Path,
+                        help='Preserve the currently advertised update script as a forwarding entrypoint during adoption')
     parser.add_argument('--worker-action', choices=('update', 'boot', 'verify'), default='update')
     parser.add_argument('--portal-url', default=os.environ.get('SERVICE_PORTAL_URL', ''))
     parser.add_argument('--role', action='append', default=[])

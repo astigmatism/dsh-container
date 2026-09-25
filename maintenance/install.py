@@ -135,6 +135,16 @@ def prepare(args, source):
                 'state_paths': compact_paths(state), 'input_paths': compact_paths(inputs),
                 'artifact_paths': [], 'source_artifacts': source_artifacts,
                 'previous_root': str(original_root)}
+    legacy_entrypoint = getattr(args, 'legacy_entrypoint', None)
+    if legacy_entrypoint:
+        advertised = previous['services'][harness].get('labels', {}).get(LABEL + 'script', '')
+        require(advertised and not Path(advertised).is_absolute(), 'Existing updater has no relative advertised entrypoint')
+        entrypoint = Path(legacy_entrypoint).absolute()
+        require(entrypoint == original_root / advertised and entrypoint.resolve().is_relative_to(original_root)
+                and entrypoint.is_file() and not entrypoint.is_symlink(),
+                'Legacy entrypoint must be the currently advertised regular update script')
+        manifest['legacy_entrypoint'] = str(entrypoint)
+        manifest['artifact_paths'].append(str(entrypoint))
     # Adopt only the existing application-owned unit. Do not install a host-
     # specific scheduler or modify arbitrary units/drop-ins.
     boot_unit = Path(args.boot_unit).resolve() if args.boot_unit else None

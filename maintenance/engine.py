@@ -1,11 +1,13 @@
 """One update transaction for all topologies; no deployment-target constants."""
 import copy
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import signal
 import tempfile
 import time
@@ -102,14 +104,22 @@ def qualify_application(manifest, model, root, image):
     source = next(row['Id'] for row in rows if row['Config']['Labels']['com.docker.compose.service'] == harness)
     diagnostics = Path(manifest['root']) / 'verification-diagnostics' / uuid.uuid4().hex
     diagnostics.mkdir(parents=True, mode=0o700)
-    # Execute the candidate's own verifier. The outer worker only receives the
-    # Docker socket and a private diagnostic directory; its child gets neither.
-    run(['docker', 'run', '--rm', '--init', '--network', 'none', '--user', manifest['user'],
-         '--group-add', str(os.stat('/var/run/docker.sock').st_gid),
-         '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock',
-         '--mount', f'type=bind,src={diagnostics},dst=/diagnostics',
-         '--entrypoint', 'python3', image, '/opt/dsh-build/verify-isolated-runtime.py',
-         '--container', source, '--image', image, '--diagnostics', '/diagnostics'])
+    # Load the verifier from the immutable candidate, not the previous worker
+    # image. Running its controller in this process preserves signal cleanup;
+    # only the disposable application/browser child touches verification state.
+    code = run(['docker', 'run', '--rm', '--network', 'none',
+                '--label', 'io.service-portal.maintenance=true', '--entrypoint', 'cat',
+                image, '/opt/dsh-build/verify-isolated-runtime.py'])
+    with tempfile.TemporaryDirectory(prefix='dsh-candidate-verifier-') as directory:
+        path = Path(directory) / 'verification.py'
+        path.write_text(code)
+        spec = importlib.util.spec_from_file_location('candidate_verification', path)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        try:
+            verifier.qualify(source, image, diagnostics)
+        except verifier.QualificationError as error:
+            raise Failure(str(error)) from None
 
 
 def pinned_bases(source):
@@ -319,6 +329,11 @@ class Updater:
                 atomic_json(self.root / name, read_json(Path(release) / name))
             atomic_text(self.root / 'runner-image', (Path(release) / 'runner-image').read_text())
             shutil.copy2(Path(release) / 'start-after-network.sh', self.root / 'start-after-network.sh')
+            if self.manifest.get('legacy_entrypoint'):
+                entrypoint = Path(self.manifest['legacy_entrypoint'])
+                require(str(entrypoint) in self.manifest['artifact_paths'], 'Legacy entrypoint is not covered by recovery')
+                atomic_text(entrypoint, '#!/bin/sh\nset -eu\nexec ' + shlex.quote(str(self.root / SCRIPT)) + ' "$@"\n')
+                entrypoint.chmod(0o700)
             if self.manifest.get('boot_unit'):
                 unit = Path(self.manifest['boot_unit'])
                 text = unit.read_text()

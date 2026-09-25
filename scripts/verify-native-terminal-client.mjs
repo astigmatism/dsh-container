@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 export async function verifyNativeTerminal(page, sessionId, otherSessionId) {
   await page.evaluate(() => window.__previewTestContext.get('sidebarRight').openTab('terminal'));
   await page.locator('.xterm:visible').first().waitFor();
-  await page.waitForFunction(() => [...window.__previewTestContext.get('webTerminals').views.values()]
+  await page.waitForFunction(() => [...window.__previewTestContext.get('webTerminals').views.values()].flatMap(views => [...views.values()])
     .some(view => view.state.getSnapshot().phase === 'connected'));
   const id = await page.evaluate(() => {
-    const view = [...window.__previewTestContext.get('webTerminals').views.values()]
+    const view = [...window.__previewTestContext.get('webTerminals').views.values()].flatMap(views => [...views.values()])
       .find(view => view.state.getSnapshot().phase === 'connected');
     const output = window.__nativeTerminalTest = { view, text: '', revision: -1 };
     const record = () => {

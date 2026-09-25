@@ -304,6 +304,42 @@ class SourceTests(unittest.TestCase):
 
 
 class TransactionTests(Fixture):
+    def test_host_dispatch_uses_engine_socket_group_and_rejects_invalid_probe(self):
+        # Desktop host/VM groups differ. The fake engine returns its own group;
+        # no real Docker command is executed by this host-compatible check.
+        binaries = self.base / 'bin'
+        binaries.mkdir()
+        log = self.base / 'docker-calls.jsonl'
+        docker = binaries / 'docker'
+        docker.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+with open(os.environ['FAKE_DOCKER_LOG'], 'a') as output:
+    output.write(json.dumps(sys.argv[1:]) + '\\n')
+if '-c' in sys.argv:
+    print(os.environ['FAKE_SOCKET_GID'])
+''')
+        docker.chmod(0o700)
+        script = Path(__file__).resolve().parents[1] / 'scripts/update-and-restart.sh'
+        for group in ('31415', 'invalid'):
+            with self.subTest(group=group):
+                log.unlink(missing_ok=True)
+                env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ['PATH'],
+                           FAKE_DOCKER_LOG=str(log), FAKE_SOCKET_GID=group)
+                env.pop('SERVICE_PORTAL_UPDATE_DELEGATED', None)
+                result = subprocess.run(['sh', str(script), '--manifest', str(self.root / 'deployment.json'), '--verify'],
+                                        env=env, capture_output=True, text=True)
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertIn('--read-only', calls[0])
+                self.assertIn('type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly', calls[0])
+                if group == 'invalid':
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(len(calls), 1)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(calls), 2)
+                    self.assertEqual(calls[1][calls[1].index('--group-add') + 1], group)
+                    self.assertIn('DOCKER_CONFIG=/tmp/.docker', calls[1])
+                    self.assertEqual(calls[1][-2:], ['--worker-action', 'verify'])
+
     def test_interrupted_transaction_is_recovered_before_any_new_build(self):
         updater, release = Updater(self.root), self.candidate()
         def fail(manifest, model, root, **kwargs):

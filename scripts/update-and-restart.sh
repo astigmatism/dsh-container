@@ -48,8 +48,15 @@ fi
 [ -f "$root/runner-image" ] || { echo "Qualified runner is not installed; bootstrap required." >&2; exit 1; }
 runner=$(cat "$root/runner-image")
 case "$runner" in sha256:*) ;; *) echo "Invalid runner identity" >&2; exit 1 ;; esac
-socket_gid=$(ls -ln /var/run/docker.sock | awk '{print $4}')
+# Docker Desktop's host socket can have a different group from the socket
+# mounted by its Linux engine. Inspect the mounted socket with the qualified
+# image before launching the non-root dispatcher.
+socket_gid=$(docker run --rm --network none --read-only --user "$(id -u):$(id -g)" \
+  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly \
+  --entrypoint python3 "$runner" -B -c 'import os; print(os.stat("/var/run/docker.sock").st_gid)')
+case "$socket_gid" in ''|*[!0-9]*) echo "Invalid engine socket group" >&2; exit 1 ;; esac
 exec docker run --rm --init --user "$(id -u):$(id -g)" --group-add "$socket_gid" \
+  --env HOME=/tmp --env DOCKER_CONFIG=/tmp/.docker \
   --mount "type=bind,src=$root,dst=$root" \
   --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
   --entrypoint python3 "$runner" -B /opt/dsh-maintenance/main.py launch --manifest "$manifest" --worker-action "$action" "$@"

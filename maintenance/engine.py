@@ -265,6 +265,7 @@ class Updater:
                 'Deployment configuration changed during maintenance; services remain unchanged')
         validate_deployment(read_json(Path(release) / 'deployment.json'),
                             read_json(Path(release) / 'compose.json'), self.root, script_root=release)
+        portal_services(self.manifest['portal_url'])
         old_root = Path(previous_root or self.root)
         old_model, existed = self.old_model(old_root, previous_model or self.model)
         point = self.root / 'recovery' / (time.strftime('%Y%m%dT%H%M%S-') + uuid.uuid4().hex[:8])
@@ -316,6 +317,8 @@ class Updater:
             run([*compose_command(self.root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
             candidate, manifest = read_json(self.root / 'compose.json'), read_json(self.root / 'deployment.json')
             probe_release(manifest, candidate, self.root)
+            if hasattr(os, 'sync'):
+                os.sync()
             transaction['phase'] = 'complete'
             atomic_json(self.root / 'transaction.json', transaction)
             self.status('ok', revision=manifest['revision'], recovery_point=str(point),

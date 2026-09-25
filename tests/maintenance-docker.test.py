@@ -216,7 +216,7 @@ USER node
     with patch.object(Updater, 'build_candidate', adopted_candidate), patch('maintenance.engine.verify_application', fixture_application):
         prepare(args, source)
     assert (legacy / 'compose.json').read_bytes() == before_checkout
-    assert live_gateway_environment() == original_gateway_environment
+    assert sorted(live_gateway_environment()) == sorted(original_gateway_environment)
     (legacy / 'compose.json').unlink()  # Updates now have no source Compose input.
     installed = json.loads((root / 'deployment.json').read_text())
     assert installed['mode'] == mode

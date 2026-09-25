@@ -141,6 +141,8 @@ def restore(point):
                 require(stage.exists() and inventory(target) == inventory(failed),
                         'Interrupted file restore found changed destination state')
                 stage.replace(target)
+            if hasattr(os, 'sync'):
+                os.sync()
             state['done'].append(index)
             atomic_json(state_file, state)
             continue
@@ -152,5 +154,7 @@ def restore(point):
             if stage.exists():
                 stage.rename(target)
         require(inventory(target) == record['inventory'], 'Restored state failed integrity verification')
+        if hasattr(os, 'sync'):
+            os.sync()
         state['done'].append(index)
         atomic_json(state_file, state)

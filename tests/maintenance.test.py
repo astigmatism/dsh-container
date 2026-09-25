@@ -25,6 +25,9 @@ from maintenance.engine import fetch_source
 
 class Fixture(unittest.TestCase):
     def setUp(self):
+        portal = patch('maintenance.engine.portal_services', return_value=[])
+        portal.start()
+        self.addCleanup(portal.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)

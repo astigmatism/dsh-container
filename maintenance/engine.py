@@ -12,7 +12,7 @@ import time
 import uuid
 
 from .common import Failure, LABEL, REPOSITORY, atomic_json, atomic_text, compose_command, digest, inspect, read_json, run
-from .contract import SCRIPT, require, validate_config, validate_manifest, portal_services, verify_portal
+from .contract import SCRIPT, require, validate_config, validate_manifest, validate_deployment, configuration_bindings, portal_services, verify_portal
 from . import recovery
 
 PACKAGE = Path(__file__).resolve().parent
@@ -47,6 +47,22 @@ def qualify_runner(image):
          '-eu', '-c', 'python3 -B /opt/dsh-maintenance/main.py self-test; docker compose version; docker buildx version'])
 
 
+def verify_application(manifest, by_service):
+    harness = next(s for s, role in manifest['roles'].items() if role == 'harness')
+    gateway = next(s for s, role in manifest['roles'].items() if role == 'gateway')
+    for script, arguments in (
+        ('verify-router-contract.mjs', ['--mode', manifest['mode']]),
+        ('verify-sidebar-terminal.mjs', ['--native']),
+        ('verify-sidebar-client.mjs', []),
+        ('verify-dictation-client.mjs', []),
+        ('verify-resident-client.mjs', ['--live']),
+        ('verify-dsh-playwright-stream.mjs', []),
+        ('verify-dsh-inference-contract.mjs', []),
+    ):
+        run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/' + script, *arguments])
+    run(['docker', 'exec', by_service[gateway]['Id'], 'node', '/opt/dsh-gateway/verify-dictation-backend.mjs'])
+
+
 def probe_release(manifest, model, root, *, portal=True):
     rows = validate_containers(manifest, model, root)
     by_service = {row['Config']['Labels']['com.docker.compose.service']: row for row in rows}
@@ -61,13 +77,12 @@ def probe_release(manifest, model, root, *, portal=True):
             continue
         require(row['State']['Running'] and row['State'].get('Health', {}).get('Status') == 'healthy',
                 'An application service is not healthy')
-    harness = next(s for s, role in manifest['roles'].items() if role == 'harness')
     gateway = next(s for s, role in manifest['roles'].items() if role == 'gateway')
     run(['docker', 'exec', '-i', by_service[gateway]['Id'], 'node', '--input-type=module'],
         data=(PACKAGE / 'probe.mjs').read_text())
-    run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/verify-router-contract.mjs',
-         '--mode', manifest['mode']])
+    verify_application(manifest, by_service)
     if portal:
+        validate_deployment(manifest, model, root)
         advertiser = validate_config(model, root)[0]
         live = copy.deepcopy(model)
         for service in live['services']:
@@ -147,8 +162,8 @@ class Updater:
         self.manifest = read_json(self.root / 'deployment.json')
         self.model = read_json(self.root / 'compose.json')
 
-    def preflight(self, dry_run=False):
-        validate_manifest(self.manifest, self.root)
+    def preflight(self, dry_run=False, *, allow_empty=False):
+        validate_deployment(self.manifest, self.model, self.root)
         validate_engine(self.manifest)
         _, _, runner, _, _ = validate_config(self.model, self.root)
         require(inspect('image', runner)['Config'].get('Labels', {}).get('io.dsh.maintenance.schema') == '1',
@@ -159,7 +174,7 @@ class Updater:
         # During interrupted cutover the running Compose root may be either the
         # previous or candidate root. Recovery validates that recorded identity.
         if not (self.root / 'transaction.json').exists():
-            validate_containers(self.manifest, self.model, self.root)
+            validate_containers(self.manifest, self.model, self.root, allow_empty=allow_empty)
         for path in self.manifest['state_paths'] + self.manifest['input_paths']:
             require(Path(path).exists() and not Path(path).is_symlink(), 'A declared state or configuration path is missing or symlinked')
         if dry_run:
@@ -187,7 +202,7 @@ class Updater:
                 images[role] = inspect('image', tag)['Id']
             qualify_runner(images['harness'])
             # Offline runtime checks do not mount production state.
-            run(['docker', 'run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node',
+            run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node',
                  images['harness'], '/opt/dsh-build/verify-router-startup.mjs'])
             run(['docker', 'run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node',
                  images['gateway'], '--check', '/opt/dsh-gateway/server.mjs'])
@@ -206,6 +221,7 @@ class Updater:
             install_labels(candidate, manifest, images['harness'])
             stage_source_artifacts(source, candidate, manifest, release_dir)
             manifest['images'] = {s: c['image'] for s, c in candidate['services'].items()}
+            manifest['bindings'] = configuration_bindings(candidate)
             shutil.copytree(source / 'maintenance', release_dir / 'maintenance', ignore=shutil.ignore_patterns('__pycache__'))
             (release_dir / 'scripts').mkdir(mode=0o700)
             shutil.copy2(source / SCRIPT, release_dir / SCRIPT)
@@ -214,8 +230,7 @@ class Updater:
             atomic_text(release_dir / 'runner-image', images['harness'] + '\n')
             atomic_text(release_dir / 'start-after-network.sh', '#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/scripts/update-and-restart.sh" --boot\n')
             (release_dir / 'start-after-network.sh').chmod(0o700)
-            validate_manifest(manifest, self.root)
-            validate_config(candidate, self.root, script_root=release_dir)
+            validate_deployment(manifest, candidate, self.root, script_root=release_dir)
             run([*compose_command(self.root, release_dir / 'compose.json'), 'config', '--quiet'])
             atomic_json(release_dir / 'provenance.json', {'repository': REPOSITORY, 'revision': revision,
                         'images': manifest['images'], 'compose_sha256': digest(release_dir / 'compose.json')})
@@ -247,8 +262,8 @@ class Updater:
         require(read_json(self.root / 'deployment.json') == self.manifest
                 and read_json(self.root / 'compose.json') == self.model,
                 'Deployment configuration changed during maintenance; services remain unchanged')
-        validate_manifest(read_json(Path(release) / 'deployment.json'), self.root)
-        validate_config(read_json(Path(release) / 'compose.json'), self.root, script_root=release)
+        validate_deployment(read_json(Path(release) / 'deployment.json'),
+                            read_json(Path(release) / 'compose.json'), self.root, script_root=release)
         old_root = Path(previous_root or self.root)
         old_model, existed = self.old_model(old_root, previous_model or self.model)
         point = self.root / 'recovery' / (time.strftime('%Y%m%dT%H%M%S-') + uuid.uuid4().hex[:8])

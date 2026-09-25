@@ -176,13 +176,14 @@ cd dsh-container
 ./scripts/deploy.sh
 ```
 
-The no-flag deploy command selects remote mode for a new deployment and reuses
-the recorded mode on an existing deployment. Use `deploy.sh`, which includes a
-no-op remote mode marker, builds Harness and the gateway, records the mode, and
-verifies the direct route. When upgrading the obsolete proxy topology, it
-verifies the direct production route before stopping and removing only the
-`deepseek-harness-ollama-router` container, verifies again, and retains the
-router image plus all persistent data for rollback.
+The no-flag deploy command selects remote mode for a new deployment and preserves
+an existing recorded mode. Set `SERVICE_PORTAL_URL` in the private `.env` before
+installation. The installer creates an operational bundle, builds a pinned
+release, snapshots state, and verifies the application and Portal capability.
+Existing custom Compose deployments use the explicit adoption procedure in
+[portable maintenance](docs/portable-maintenance.md). It preserves their effective
+configuration and rejects ambiguous service mappings; topology changes require
+an explicit deployment migration.
 
 The container-only default exposes as much of the host filesystem as the
 platform permits at the stable Linux path `/host`. Native Windows Compose
@@ -237,13 +238,11 @@ All modes bind to loopback unless `--bind-address` is supplied. The router's
 admin ports remain loopback-only by default even when Harness is exposed on a
 trusted LAN.
 
-`DSH_DEPLOYMENT_MODE` starts blank in a newly generated `.env`.
-`deploy.sh` atomically records its explicit external, remote, or managed mode
-before it can change Compose state, so even a failed first deployment retains
-an unambiguous intended topology. It refuses a duplicated or conflicting
-existing value. Maintenance requires exactly one non-empty mode and refuses
-any disagreement with the running Compose labels, including when a mode flag
-is supplied explicitly.
+`DSH_DEPLOYMENT_MODE` starts blank in a newly generated `.env`. Bootstrap accepts
+a recorded external, remote, or managed mode and rejects duplicated or conflicting
+values. The operational manifest records the selected mode before any cutover.
+Subsequent maintenance uses that manifest and rejects a conflicting mode flag;
+it does not modify the old checkout's `.env`.
 
 ## Persisted settings lifecycle
 
@@ -611,83 +610,22 @@ gateway code before deployment.
 
 ## Boot and auto-start
 
-Both containers run with `restart: unless-stopped`, so the Docker Engine
-restarts them as soon as the daemon starts after a reboot. That start happens
-before the host's LAN address exists, so the harness cannot publish its ports
-on `HARNESS_BIND_ADDRESS` yet. In external mode the problem is worse: the
-harness joins the shared Ollama network (`OLLAMA_NETWORK`, normally
-`local-ai-ollama_default`), which the host's local-ai bootstrap destroys and
-replaces on every boot, so the harness loses that attachment even while it is
-running.
+The operational bundle includes `start-after-network.sh`, which uses its manifest
+and generated Compose configuration to recreate and verify the application,
+including the Portal button. It shares the updater's lock and recovers interrupted
+transactions before another operation. Docker restart policies remain unchanged.
 
-The repository therefore ships an after-network boot service that repairs the
-deployment once the network is actually up:
+Adoption preserves an existing application-owned boot unit and redirects its
+working directory and entrypoint to the operational bundle. Unit contents are
+included in recovery snapshots. If the host user bus is unavailable, status
+records the required `systemctl --user daemon-reload`; existing enablement remains
+in place. No particular host bootstrap service is required. Other boot managers
+can invoke the same installed entrypoint once Docker and networking are ready.
 
-- `start-after-network.sh` (project root) — waits for the Docker daemon, the
-  `HARNESS_BIND_ADDRESS` LAN address, the local-ai bootstrap
-  (`local-ai-apply-default.service` or the user
-  `local-ai-apply-default-after-network.service`), and, in external mode, the
-  shared network. It then verifies the harness port binding and network
-  attachment. When either is missing it recreates the harness for the recorded
-  `DSH_DEPLOYMENT_MODE` with
-  `docker compose up -d --force-recreate --no-deps harness`, waits up to
-  900 seconds for the harness healthcheck, covering Compose's ten-minute
-  startup grace for cold profile copies and its retry window — exiting 1 with
-  a clear message on timeout so a broken image fails the unit visibly instead
-  of hanging the boot — then recreates the gateway and re-verifies binding, attachment, and
-  gateway status. A healthy deployment is a fast no-op that exits 0.
-- `deploy/deepseek-harness-after-network.service` — the canonical user unit
-  template (`Type=oneshot`, `RemainAfterExit=yes`, `Restart=on-failure`,
-  `RestartPreventExitStatus=78`, `RestartSec=10`,
-  `TimeoutStartSec=infinity`, wanted by `default.target`). Configuration
-  failures use exit 78 and therefore do not enter a restart loop; transient
-  runtime failures remain retryable.
-  The unbounded start timeout is intentional: the pre-recreate waits
-  legitimately run long early in boot, while the recreate wait is bounded
-  inside the script.
-- `scripts/install-boot-service.sh` — idempotent, content-driven installer.
-  It renders the template for this checkout into
-  `~/.config/systemd/user/`, creates the `default.target.wants` symlink, then
-  `systemctl --user daemon-reload` and `start` (or `restart`) the unit.
-  Identical files cause no writes and normally no reload. When the user bus is
-  unreachable (for example from a maintenance container without the host user
-  session) it still installs the files, prints the exact commands to run on
-  the host, and exits 0. `--dry-run` previews the rendered unit and the
-  planned actions without changing anything. `--defer-activation` converges
-  only the on-disk files and enablement; deployment and maintenance use it as
-  a preflight before any Compose mutation.
-  The installer also removes the exact obsolete
-  `10-project-path.conf` shell-wrapper drop-in from early installations. It
-  preserves other user drop-ins and refuses an unrecognized `ExecStart`
-  override with a diagnostic instead of deleting user-authored configuration.
-  It also reloads once if unchanged files leave the user manager exposing a
-  stale effective `ExecStart` from an earlier bus-unreachable migration.
-
-`scripts/deploy.sh` and `scripts/update-and-restart.sh` treat this on-disk boot
-integration as a required deployment invariant. They converge it before
-building or changing services and activate it after successful deployment.
-Maintenance performs this preflight before fetch. If the host home cannot be
-resolved, mounted, inspected, or written, maintenance stops and records
-`state=failed`, `failure_type=boot-service`, and the `boot_service` reason in
-`data/maintenance-status`; it cannot report `state=ok`. An unavailable user
-systemd bus is intentionally different: the canonical unit, recognized legacy
-drop-in migration, and `default.target` link are still converged on disk, so
-maintenance may succeed with `boot_service=warning:bus-unreachable` while
-activation is deferred.
-
-Check the service on the host as the deploying user:
-
-```sh
-systemctl --user status deepseek-harness-after-network
-systemctl --user cat deepseek-harness-after-network
-journalctl --user -u deepseek-harness-after-network --no-pager
-```
-
-A failed deployment leaves the unit as it was: if recreation fails at runtime,
-the unit shows failed and systemd retries it every 10 seconds. Permanent
-configuration failures exit 78 and remain failed without retrying. In either
-case the deployment stays down until the next successful
-`update-and-restart.sh`, `deploy.sh`, or boot-service run repairs it.
+The source-tree boot script and installer remain available for legacy installations.
+After adoption the source-tree entrypoint delegates to the operational bundle.
+See [boot migration and recovery](docs/portable-maintenance.md) before retiring
+an old checkout or changing a boot arrangement.
 
 ## Operations
 

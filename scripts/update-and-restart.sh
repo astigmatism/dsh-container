@@ -5,14 +5,16 @@ root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 manifest=
 dry_run=0
 mode_flag=
+portal_url=
 action=update
 for argument do
   [ "$argument" != --dry-run ] || dry_run=1
 done
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --manifest) manifest=$2; shift 2 ;;
-    --deployment-dir) manifest=$2/deployment.json; shift 2 ;;
+    --manifest) [ "$#" -ge 2 ] || exit 2; manifest=$2; shift 2 ;;
+    --deployment-dir) [ "$#" -ge 2 ] || exit 2; manifest=$2/deployment.json; shift 2 ;;
+    --portal-url) [ "$#" -ge 2 ] || exit 2; portal_url=$2; shift 2 ;;
     --dry-run) shift ;;
     --boot) action=boot; shift ;;
     --verify) action=verify; shift ;;
@@ -27,12 +29,14 @@ if [ -z "$manifest" ]; then
   else manifest=$root/data/deployment/deployment.json
   fi
 fi
+case "$manifest" in */deployment.json|deployment.json) ;; *) echo "Manifest must be named deployment.json" >&2; exit 2 ;; esac
 [ -f "$manifest" ] || { echo "No operational manifest. Adopt this deployment with scripts/deploy.sh --adopt --portal-url URL first." >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$manifest")" && pwd)
 manifest=$root/deployment.json
 [ ! -f "$root/adoption.json" ] || { echo "Adoption is incomplete; rerun the original deploy.sh command to resume safely." >&2; exit 1; }
 set --
 [ -z "$mode_flag" ] || set -- "$mode_flag"
+[ -z "$portal_url" ] || set -- "$@" --portal-url "$portal_url"
 if [ "$dry_run" -eq 1 ]; then
   exec python3 -B "$root/maintenance/main.py" update --manifest "$manifest" --dry-run "$@"
 fi

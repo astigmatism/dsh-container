@@ -110,3 +110,25 @@ def validate_manifest(manifest, root):
         for other in state[index + 1:]:
             require(not path.is_relative_to(other) and not other.is_relative_to(path), 'Overlapping snapshot roots')
     require(bool(manifest.get('portal_url')), 'Missing Service Portal URL')
+
+
+def configuration_bindings(model):
+    """Mount identity is registered separately from editable ports/environment."""
+    return {name: {field: service.get(field, []) for field in ('volumes', 'secrets', 'configs')}
+            for name, service in model['services'].items()}
+
+
+def validate_deployment(manifest, model, root, *, script_root=None):
+    validate_manifest(manifest, root)
+    advertiser, script, runner, user, home = validate_config(model, root, script_root=script_root)
+    require(model['name'] == manifest['project'], 'Compose project differs from manifest')
+    require(set(manifest['roles']) <= set(model['services']), 'Registered service roles are missing')
+    require(manifest['roles'].get(advertiser) == 'harness', 'Harness must advertise the updater')
+    require(user == manifest['user'] == model['services'][advertiser].get('user'),
+            'Maintenance and Harness numeric ownership must match')
+    require(manifest.get('images') == {name: config['image'] for name, config in model['services'].items()},
+            'Service image identities differ from the registered deployment')
+    require(runner == manifest['images'][advertiser], 'Maintenance image must match the qualified Harness image')
+    require(manifest.get('bindings') == configuration_bindings(model),
+            'State mounts or service membership changed; explicit adoption is required')
+    return advertiser, script, runner, user, home

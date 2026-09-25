@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from maintenance.common import Failure, LABEL, REPOSITORY, atomic_json
-from maintenance.contract import validate_config, validate_manifest, verify_portal
+from maintenance.contract import validate_config, validate_manifest, validate_deployment, configuration_bindings, verify_portal
 from maintenance.engine import Updater, install_labels, pinned_bases
 from maintenance import recovery
 from maintenance.qualification import registered_files
@@ -53,8 +53,10 @@ class Fixture(unittest.TestCase):
                          'state_paths': [str(self.data)], 'input_paths': [str(self.credentials)],
                          'artifact_paths': [], 'source_artifacts': []}
         self.model = {'name': 'fixture-app', 'services': {
-            'application': {'image': 'sha256:' + '1' * 64}, 'edge': {'image': 'sha256:' + '2' * 64}}}
+            'application': {'image': 'sha256:' + '1' * 64, 'user': self.manifest['user']}, 'edge': {'image': 'sha256:' + '2' * 64}}}
         install_labels(self.model, self.manifest, 'sha256:' + '1' * 64)
+        self.manifest['images'] = {s: c['image'] for s, c in self.model['services'].items()}
+        self.manifest['bindings'] = configuration_bindings(self.model)
         self.save()
 
     def save(self):
@@ -71,14 +73,29 @@ class Fixture(unittest.TestCase):
         (release / 'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
         manifest = copy.deepcopy(self.manifest)
         manifest['revision'] = 'b' * 40
-        atomic_json(release / 'deployment.json', manifest)
         model = copy.deepcopy(self.model)
         model['services']['application']['image'] = 'sha256:' + '3' * 64
+        install_labels(model, manifest, model['services']['application']['image'])
+        manifest['images'] = {s: c['image'] for s, c in model['services'].items()}
+        atomic_json(release / 'deployment.json', manifest)
         atomic_json(release / 'compose.json', model)
         return release
 
 
 class ContractTests(Fixture):
+    def test_registered_mount_and_ownership_drift_are_rejected(self):
+        validate_deployment(self.manifest, self.model, self.root)
+        for change in ('mount', 'user', 'image'):
+            model = copy.deepcopy(self.model)
+            if change == 'mount':
+                model['services']['application']['volumes'] = [{'type': 'bind', 'source': '/unregistered', 'target': '/data/dsh'}]
+            elif change == 'user':
+                model['services']['application']['user'] = '7654:7654'
+            else:
+                model['services']['application']['image'] = 'unregistered:latest'
+            with self.subTest(change=change), self.assertRaises(Failure):
+                validate_deployment(self.manifest, model, self.root)
+
     def test_valid_custom_service_names_and_separate_state(self):
         validate_manifest(self.manifest, self.root)
         self.assertEqual(validate_config(self.model, self.root)[0], 'application')

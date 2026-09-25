@@ -187,8 +187,14 @@ if [ "$build" -eq 1 ]; then
       /src/tests/resident-settings-migration.test.mjs
 
   # Verify the image with a UID unrelated to the base image's `node` user.
-  inventory=$(docker run --rm --user 12345:12345 --entrypoint dsh \
-    --env DSH_HOME=/opt/dsh-seed "$harness_image" plugin --profile web list)
+  # rc2 locks package.json even for inventory reads. The immutable seed belongs
+  # to the image user; an arbitrary deployment UID owns its synchronized home.
+  inventory=$(docker run --rm --user 12345:12345 --entrypoint /bin/sh \
+    --tmpfs /data/dsh:uid=12345,gid=12345,mode=0700 \
+    --env DSH_HOME=/data/dsh "$harness_image" -eu -c '
+      /usr/local/bin/dsh-sync-runtime-profile >/dev/null
+      dsh plugin --profile web list
+    ')
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
     'dsh-better-sidebar@0.21.1' \

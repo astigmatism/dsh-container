@@ -191,8 +191,13 @@ class Updater:
             manifest = copy.deepcopy(self.manifest)
             manifest['revision'] = revision
             images = {}
+            # A rebuild of the same source can produce a different OCI index
+            # (for example, new BuildKit attestations). Reusing its tag can
+            # remove the installed index from a containerd image store before
+            # cutover has retained it. Every attempt therefore owns fresh tags.
+            attempt = uuid.uuid4().hex
             for role in sorted(set(manifest['roles'].values())):
-                tag = f'local/dsh-release-{manifest["project"]}:{revision}-{role}'
+                tag = f'local/dsh-release-{manifest["project"]}:{revision}-{attempt}-{role}'
                 context = source / 'ollama-router' if role == 'router' else source
                 command = ['docker', 'build', '--pull', '--label', 'org.opencontainers.image.revision=' + revision,
                            '--tag', tag]

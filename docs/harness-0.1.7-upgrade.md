@@ -1,83 +1,88 @@
 # Harness 0.1.7-rc.2 upgrade
 
-This candidate is pinned to [the published `dsh-v0.1.7-rc.2` release](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.7-rc.2), commit
+This upgrade is pinned to [the published `dsh-v0.1.7-rc.2` release](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.7-rc.2), commit
 `477b4f420553e8a52c2fbccc464d7561b239c443`, published on npm's `next`
 channel. Both dependency locks use this exact Harness generation and Cordis
 4.0.4. Plugin versions and exact Git provenance are in `config/plugins.lock.json`.
 
 ## Qualification status — September 24, 2026
 
-**Qualification incomplete; rollout remains blocked.** This upgrade was prepared
-from the pulled `5742e98` revision. No upgraded image has been deployed and
-the Mac's original application data has not been migrated. Production was not
-modified. Docker on the Mac is now excluded at the user's request. Image and runtime
-qualification runs in GitHub CI; local checks use lightweight host tools.
+The complete `./scripts/check.sh --build` gate passed at commit `7067e1f` in
+[run 36085922811](https://github.com/astigmatism/dsh-container/actions/runs/36085922811),
+including the shipping `linux/amd64` Harness, gateway and router images,
+authenticated browser qualification and the real Compose recovery rehearsal.
+No upgraded image has been deployed to production or the Mac. Docker on the Mac
+is excluded at the user's request.
 
 Completed checks:
 
-- Host Node 24 tests: **254 passed, 1 skipped** across the application,
-  gateway and router suites. The skipped atomic Sidebar/YAML fixture requires
-  the built Harness image and remains part of the container checks.
-- The plugin graph installs with pnpm 11.7.0 and `--frozen-lockfile`, including
-  the normal supply-chain checks. Established compatible Lezer versions are
-  pinned rather than exempting new unrelated transitive releases from the age
-  policy. The exact notification Git commit and local plugin patches remain.
-- The target packages accept the cancellation, progress, resource-opening,
-  preview and Playwright source patches. The composed fresh and migrated
-  profiles pass the 70% compaction, null summary limit, zero headroom, bounded
-  recovery and pruning checks for all four native presets.
-- Settings migration tests cover explicit values, nested credential references,
-  tagged expressions, input backups, repeat starts, invalid input and interrupted
-  publication. Runtime-profile synchronization passes seven tests, including
-  preserving the writable patch while repairing managed files.
-- Migrating a copy of the actual Mac settings preserves model settings,
-  credential references, pins, permissions and DeepSeek configuration exactly.
-  The composed configuration resolves without bundle warnings. Failed active
-  model migration stops startup; an unavailable router is deferred only for an
-  already valid pair of resident routes.
+- Repository unit suites, updater preflight and delegated-runner fixtures,
+  credential migration, Compose metadata, frozen dependency installation and
+  exact provenance checks. All 273 installed Harness packages use `0.1.7-rc.2`.
+- Actual compaction construction accepts the null summary limit. Pressure,
+  70% threshold, zero headroom, bounded recovery, pruning, reasoning, request
+  concurrency and unrestricted output contracts pass.
+- All nine enabled host plugins, all seven browser plugins, maintained search
+  and router providers, and all four agent presets mounted in the rebuilt app.
+  Token remained unloaded.
+- The live catalog and rendered picker contain exactly Daytime (128K) and
+  Nighttime (128K), with a separate reasoning effort control. Appearance controls
+  change the computed accent color and preserve the theme across browser reload.
+- Profile synchronization and plugin inventory passed under deployment UID
+  12345. Browser checks passed with an unwritable `HOME=/`; Chromium uses private
+  writable state directories that are removed when it closes.
+- Native terminal rendering, streaming, session isolation, reconnect, input,
+  Ctrl-C and process cleanup passed through the running browser application.
+  Native Bash deadlines, explicit timeout budgets, retained output and forced
+  cleanup of a parent, child and grandchild passed in the shipping Linux image.
+- Playwright navigation, private subresources, screenshots, its shared browser
+  panel and authenticated WebSocket transport passed.
+- Relative and absolute file previews, encoded names, referenced sessions,
+  missing-file recovery using native Reload, text, HTML, PDF, downloads and
+  workspace containment passed.
+- Settings migration covers explicit preferences, credential references, tagged
+  expressions, backups, repeated starts, invalid input and interrupted writes.
+  Profile synchronization preserves the writable patch while repairing managed
+  files. A copy of the Mac settings retained model settings, credentials, pins,
+  permissions and DeepSeek configuration.
+- Preferences saved through the actual rc2 Settings API survived two complete
+  entrypoint restarts, including reasoning choice, Sidebar settings and credential
+  references. Token remained unloaded and its existing index retained its bytes,
+  modification time and inode.
 - The supported persistence backend migrated and reopened **108 of 110 copied
-  sessions**, containing **34,582 events**, including a fork. Original copied
-  artifacts retained their hashes. Two old unversioned sessions contain a
-  version-2 subagent descriptor that both `0.1.6-alpha.1` and `0.1.7-rc.2`
-  refuse to migrate. This is a pre-existing limitation, not a new regression.
-  Their original files remain intact; no event rewriting or deletion was used.
-- Updater, persisted-settings, deployment-mode, Service Portal, Compose-topology,
-  patch-lock consistency, shell syntax and whitespace checks pass. The full
-  repository check stops at its first Docker-backed credential test because the
-  daemon is unavailable; it has not passed as a whole.
+  sessions**, containing **34,582 events**, including a fork. Original artifacts
+  retained their hashes. Two old unversioned sessions contain a version-2
+  subagent descriptor that both old and new Harness reject. Their original files
+  remain intact; this is a pre-existing limitation.
+- Recovery tests cover incomplete snapshots, integrity failures, insufficient
+  space and complete restoration. A real CI Compose rehearsal replaced image
+  generations, changed data and credentials, then restored the previous images,
+  original files and healthy recreated bind mounts. This passed with both the
+  CI host's Compose client and the exact client bundled for portal maintenance,
+  including credentials containing literal dollar signs. Its old image is a
+  fixture derived from the new build, not a full boot of the old Harness release.
 
-Plugin qualification is still incomplete:
-
-| Plugin | Target | Result so far |
+| Plugin | Target | Verified / remaining scope |
 | --- | --- | --- |
-| Better Sidebar | 0.21.1 | Installed; preview adapter patch applies; native terminal browser checks pending |
-| Context | 0.56.1 | Installed; mounting and scrolling checks pending |
-| Favicon Status | 0.1.0-rc.8 | Installed without the old BOM workaround; browser checks pending |
-| Session Pin | 0.7.15 | Installed; persisted pins retained; browser checks pending |
-| UI Appearance | 0.1.11 | Installed; theme controls pending |
-| Playwright | 0.1.0 | Client-module and transport patch applies; navigation/screenshots pending |
-| Task Notification | 0.2.1, exact Git commit | Installed; event dispatch and actual notification delivery pending |
-| Token | 0.1.3 | Default-disabled policy checked; runtime index guard pending; v4 opt-in unsupported |
-| Loop Detector | 1.0.0, local patch | Patch and policy tests pass; live tool-loop checks pending |
-| Local Speech Input | 0.1.0 | Linked; new-composer dictation and real STT checks pending |
+| Better Sidebar | 0.21.1 | Host/client mounted; native terminal and preview paths passed |
+| Context | 0.56.1 | Host/client mounted; Context Insights data and interactive scrolling passed |
+| Favicon Status | 0.1.0-rc.8 | Host/client mounted; status transitions remain unverified |
+| Session Pin | 0.7.15, local navigation patch | Host/client mounted; toggle, browser-reload persistence and opening a pinned conversation passed |
+| UI Appearance | 0.1.11, local rc2 icon patch | Host/client mounted; theme controls, computed accent color and browser-reload persistence passed |
+| Playwright | 0.1.0 | Navigation, screenshots, shared panel and stream transport passed |
+| Task Notification | 0.2.1, exact Git commit | Host mounted; actual desktop notification delivery remains unverified |
+| Token | 0.1.3 | Default-disabled and unloaded; v4 opt-in remains unsupported |
+| Loop Detector | 1.0.0, local patch | Mounted; policy and failure-recovery fixtures passed |
+| Local Speech Input | 0.1.0 | Host/client and composer control mounted; physical microphone/STT round trip remains unverified |
 
-The first image-build attempt passed the core package and policy checks but
-stopped at the dependency age policy. That dependency issue has been corrected
-and the frozen install rechecked on the host. A complete image build has not
-passed. Both the Mac runtime image and shipping `linux/amd64` image still need
-building and authenticated boot/browser qualification.
+Production deployment additionally runs live resident-model inference, gateway
+and dictation verification. Those live
+LAN-provider checks cannot be substituted by CI fixtures. Task Notification's
+host `node-notifier` integration must not be reported as verified delivery to a
+Mac desktop or browser.
 
-Also pending: enabled host/client plugin mounting, both live models and tools,
-cancellation presentation, live compaction, preview/terminal lifecycle,
-notifications, dictation, appearance, pins, context scrolling, full attachment
-verification, persistence over two restarts and recreation, gateway login,
-Token's no-index-write check, and old-image plus pre-upgrade-snapshot rollback.
-Task Notification uses host `node-notifier`; container event handling must not
-be reported as confirmed notification delivery to a Mac desktop or browser.
-
-Private rehearsal copies and logs are under `/tmp/dsh-rc2-assessment`; they are
-not a consistent full rollback snapshot. The required snapshot must still be
-taken before any local rollout.
+The private rehearsal copies under `/tmp/dsh-rc2-assessment` are not a production
+rollback snapshot. The updater takes the deployment's own snapshot at cutover.
 
 ## Migration
 
@@ -110,8 +115,9 @@ It preserves the writable web profile. A one-time migration strips unchanged
 legacy repository defaults, preserves explicit overrides and JS expressions,
 imports legacy settings into the profile patch, and archives the inputs. Router
 discovery then refreshes advertised capabilities through the new Settings API.
-Preservation across real restarts and container recreation is an acceptance gate
-that remains to be verified.
+The CI gate saves preferences through the real settings API and checks them after
+two full entrypoint restarts. Container recreation and bind-mount restoration are
+also covered by the separate recovery rehearsal.
 
 Harness's own persistence backend reads old sessions and publishes v4 generations
 when they are opened for writing. The local rehearsal script uses that supported
@@ -131,17 +137,18 @@ unsupported until separately qualified.
 Run `./scripts/check.sh --build`, the `linux/amd64` image build, copied-data
 migration, authenticated browser checks, live resident-model/tool checks,
 settings persistence across two restarts and recreation, gateway login, and
-Token's disabled-index guard. Record results and limitations before updating the
-Mac through the repository's Compose deployment workflow.
+Token's disabled-index guard. Run container checks in CI; Docker on the Mac is
+excluded. Production updates remain separately authorized operations using the
+Service Portal or the repository's normal deployment workflow.
 
 ## Rollback
 
-1. Stop the upgraded local Harness and gateway.
+1. Stop the upgraded Harness and gateway in the selected deployment.
 2. Move the upgraded data aside as a separate recovery copy. Do not merge its v4
    sessions or new writable profile into the old installation.
-3. Restore the complete pre-upgrade `data/dsh`, `data/gateway`, `.env`, and
-   `secrets` snapshot, preserving modes and ownership.
-4. Select the recorded old images and recreate the same local Compose project
+3. Restore the complete pre-upgrade `data/dsh`, `data/gateway`,
+   `data/backend-auth`, `.env`, and `secrets` snapshot, preserving modes and ownership.
+4. Select the recorded old images and recreate the same Compose project
    with the same deployment-mode override and `--no-build`.
 5. Verify authenticated login, old session history, model settings and plugin
    preferences before resuming work.

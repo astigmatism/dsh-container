@@ -1,6 +1,8 @@
 # DSH environments
 
-Develop and test in this local repository and the Mac's local DSH containers.
+Develop in this local repository. Do not use Docker on this Mac; it consumes
+too much RAM. Run host-compatible checks locally and container builds and
+integration tests in GitHub CI.
 
 `192.168.1.5` runs production DeepSeek Harness and Service Portal.
 `192.168.1.4` runs the production model router and also has a separate
@@ -15,5 +17,5 @@ production deployment request. Open WebUI is a separate application with a
 different user-authorized workflow.
 
 Preserve unrelated work and user settings. Keep credentials out of logs and
-reports. Check the repository and running Compose project before choosing an
-environment; the Mac and production both have containers named deepseek-harness.
+reports. For any authorized container operation, verify the host, repository
+and Compose project first; container names alone do not identify an environment.

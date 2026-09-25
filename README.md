@@ -17,8 +17,9 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-The `0.1.7-rc.2` upgrade is a qualification candidate. The Mac installation has
-not been upgraded. See [qualification results and remaining gates](docs/harness-0.1.7-upgrade.md)
+The `0.1.7-rc.2` upgrade passed the full automated Linux qualification, including
+the portal updater's recovery rehearsal. No production or Mac installation has
+been upgraded. See [qualification results, limitations and rollback instructions](docs/harness-0.1.7-upgrade.md)
 before using the update workflow.
 
 - DeepSeek Harness `0.1.7-rc.2`, the official package built from GitHub tag
@@ -372,8 +373,9 @@ a hang. A timeout alone does not establish a deadlock.
 These corrections live in this repository's maintained plugin patch and Web
 profile, not in manually edited installed packages or upstream Harness source.
 Release the committed integration source through the normal update workflow
-to every Harness installation: validate the Mac build first, then update the
-production installations on `192.168.1.5` and `192.168.1.4`. The frozen plugin
+to every Harness installation: qualify the shipping Linux images in GitHub CI,
+then use the normal deployment workflow when a production update is authorized.
+Do not start Docker on the Mac for qualification. The frozen plugin
 lock and image qualification verify that subsequent builds retain the patch;
 upstream upgrades must refresh and requalify it when necessary.
 

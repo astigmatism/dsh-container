@@ -19,9 +19,10 @@ available.
 > operation. Do not force-push. Do not run `docker system prune`, a global image
 > prune, or any other system-wide Docker cleanup. Do not delete a volume or
 > anything under persistent `data/` or `secrets/`. Do not modify cloud-model,
-> model-provider, gateway, STT, or TTS credentials. Do not print, copy, or
-> transmit a secret, credential, private key, token, password, or complete
-> `.env` file. Never replace, regenerate, truncate, copy over, or otherwise
+> model-provider, gateway, STT, or TTS credentials. Do not print or transmit a
+> secret, credential, private key, token, password, or complete `.env` file.
+> Private copies are permitted only inside the reviewed updater recovery point.
+> Never replace, regenerate, truncate, copy over, or otherwise
 > overwrite `data/dsh/settings.yaml` based on an assumption. A settings mismatch
 > requires an explicit, separately reviewed configuration decision.
 >

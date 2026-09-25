@@ -15,6 +15,20 @@ compose_check() {
 case "${1:-}" in
   '') ;;
   --build) build=1 ;;
+  --host)
+    # No Docker invocation on development hosts. Container qualification is CI-only.
+    host_guard=$(mktemp -d)
+    trap 'rm -rf "$host_guard"' EXIT HUP INT TERM
+    printf '%s\n' '#!/bin/sh' 'echo "Docker is forbidden in --host checks" >&2' 'exit 99' >"$host_guard/docker"
+    chmod +x "$host_guard/docker"
+    PATH="$host_guard:$PATH"
+    export PATH
+    sh -n "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
+    python3 -B "$project_dir/tests/maintenance.test.py"
+    python3 -B "$project_dir/tests/upgrade-recovery.test.py"
+    node --test "$project_dir/gateway/external-tls.test.mjs"
+    exit 0
+    ;;
   -h|--help)
     echo "usage: ./scripts/check.sh [--build]"
     exit 0
@@ -161,6 +175,7 @@ if [ "$build" -eq 1 ]; then
   if [ "${CI:-false}" = true ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
+    python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
   fi
 
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.7-rc.2 ] || {

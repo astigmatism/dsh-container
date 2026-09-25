@@ -19,3 +19,14 @@ different user-authorized workflow.
 Preserve unrelated work and user settings. Keep credentials out of logs and
 reports. For any authorized container operation, verify the host, repository
 and Compose project first; container names alone do not identify an environment.
+
+Every Harness deployment must expose a working Service Portal Update and restart
+capability. Deployment constraints must be addressed by the shared updater and
+deployment-local configuration, never by disabling the update labels. Maintenance
+fetches a pinned source revision into temporary storage, verifies replacement
+images, snapshots application state, and restores state and images on failure.
+It must not require a permanent source checkout or edit deployment sources in
+place. Keep destination identities and local deployment settings outside Git;
+the intentional model-router and speech-service defaults remain application
+dependencies. Qualify all supported topologies and custom deployment adoption
+with synthetic fixtures before releasing changes.

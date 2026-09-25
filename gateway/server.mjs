@@ -4,6 +4,7 @@ import { createServer as createHttpsServer } from 'node:https'
 import { connect as netConnect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { externalTls } from './external-tls.mjs'
 import { authorityTrusted, externallyTrusted, httpsAuthority, isTopLevelGetNavigation } from './request-trust.mjs'
 import { appendBackendCookie, createBackendAuthenticator } from './backend-auth.mjs'
 import {
@@ -123,6 +124,11 @@ function openssl(args) {
 }
 
 function ensureTls() {
+  const mode = process.env.HARNESS_TLS_MODE || 'auto'
+  if (mode === 'external') {
+    return externalTls(tlsDir, process.env.HARNESS_TLS_VERIFY_NAME || process.env.HARNESS_TLS_IP)
+  }
+  if (mode !== 'auto') throw new Error('HARNESS_TLS_MODE must be auto or external')
   mkdirSync(tlsDir, { recursive: true })
   const caKey = join(tlsDir, 'ca.key')
   const caCert = join(tlsDir, 'ca.crt')

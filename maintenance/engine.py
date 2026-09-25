@@ -383,9 +383,11 @@ class Updater:
             transaction['phase'] = 'complete'
             atomic_json(self.root / 'transaction.json', transaction)
             gate.unlink()
+            sync_directory(gate.parent)
             self.status('ok', revision=manifest['revision'], recovery_point=str(point),
                         boot_activation='host-daemon-reload-required' if manifest.get('boot_unit') else 'unchanged')
             (self.root / 'transaction.json').unlink()
+            sync_directory(self.root)
         except BaseException:
             self.recover()
             raise
@@ -408,7 +410,9 @@ class Updater:
             gate = maintenance_gate(read_json(self.root / 'deployment.json'), read_json(self.root / 'compose.json'))
             require(str(gate) == transaction['gate'], 'Completed transaction gate differs from deployment')
             gate.unlink(missing_ok=True)
+            sync_directory(gate.parent)
             file.unlink()
+            sync_directory(file.parent)
             return
         self.status('recovering', recovery_point=str(point))
         try:

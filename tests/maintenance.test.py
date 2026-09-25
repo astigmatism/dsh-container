@@ -355,6 +355,24 @@ class TransactionTests(Fixture):
         self.assertEqual((self.data / 'session').read_text(), 'original session')
         self.assertFalse((self.root / 'transaction.json').exists())
 
+    def test_interruption_after_commit_never_rolls_back_new_user_writes(self):
+        updater, release = Updater(self.root), self.candidate()
+        def interrupt_status(*args, **kwargs):
+            # Ingress is already open. A user write cannot be rolled back just
+            # because the worker dies before retiring its completed journal.
+            self.assertFalse((self.data/'backend/.deployment-maintenance').exists())
+            (self.data/'session').write_text('committed user write')
+            raise Failure('interrupted after commit')
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch.object(updater, 'status', side_effect=interrupt_status), \
+             patch('maintenance.engine.run') as command, patch('maintenance.engine.probe_release'), \
+             patch('maintenance.engine.validate_engine'), patch('maintenance.engine.containers', return_value=[]), \
+             self.assertRaisesRegex(Failure, 'interrupted after commit'):
+            updater.cutover(release)
+        self.assertEqual((self.data/'session').read_text(), 'committed user write')
+        self.assertEqual(sum('up' in call.args[0] for call in command.call_args_list), 1)
+        self.assertFalse((self.root/'transaction.json').exists())
+
     def test_dry_run_is_immutable_and_does_not_build(self):
         updater = Updater(self.root)
         before = recovery.inventory(self.base)

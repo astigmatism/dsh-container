@@ -54,7 +54,9 @@ try:
                   'commit', '-qm', 'Old Compose fixture'])
     commit = recovery.run(['git', '-C', str(project), 'rev-parse', 'HEAD']).strip()
     recovery.run([*command, 'up', '-d', '--wait', '--wait-timeout', '30'])
-    old_id = json.loads(recovery.run(['docker', 'inspect', 'deepseek-harness']))[0]['Image']
+    original = json.loads(recovery.run(['docker', 'inspect', 'deepseek-harness']))[0]
+    old_id = original['Image']
+    assert 'PRIVATE_VALUE=fixture-$literal' in original['Config']['Env'], 'original credential fixture'
     point = recovery.prepare(project, 'remote', commit)
     assert point
     recovery.capture(point)

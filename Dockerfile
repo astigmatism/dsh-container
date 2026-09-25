@@ -57,6 +57,7 @@ RUN sed -i 's/\r$//' /opt/dsh-build/install-dsh-runtime.sh \
 # instead of silently dropping behavior.
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
 COPY scripts/patch-dsh-preset-policy.mjs /opt/dsh-build/patch-dsh-preset-policy.mjs
+COPY scripts/patch-dsh-session-pin.mjs /opt/dsh-build/patch-dsh-session-pin.mjs
 COPY scripts/patch-unrestricted-policy.mjs /opt/dsh-build/patch-unrestricted-policy.mjs
 COPY scripts/verify-unrestricted-wire.mjs /opt/dsh-build/verify-unrestricted-wire.mjs
 COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
@@ -140,6 +141,7 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 RUN cd /opt/dsh-seed/profiles/web \
     && node /opt/dsh-build/verify-sidebar-terminal.mjs \
     && node /opt/dsh-build/patch-dsh-preset-policy.mjs \
+    && node /opt/dsh-build/patch-dsh-session-pin.mjs \
     && node /opt/dsh-build/patch-dsh-file-previews.mjs \
     && node /opt/dsh-build/patch-dsh-token-session-format.mjs \
     && node /opt/dsh-build/patch-dsh-playwright-webserver.mjs \

@@ -148,6 +148,11 @@ try {
   assert.equal(await pin.getAttribute('aria-pressed'), 'false');
   await pin.click();
   await page.waitForFunction(() => document.querySelector('button.__dsh-session-pin-header__[aria-pressed="true"]'));
+  await select(sessions[1]);
+  await page.getByRole('button', { name: /^Pinned sessions/ }).click();
+  await page.locator(`.__dsh-session-pin-panel__ [data-session-id="${sessions[0]}"]`).click();
+  await page.waitForFunction(id => window.__previewTestContext.get('sidebarRight').mounted.getSnapshot() === id, sessions[0]);
+  console.log('Verified pinned session navigation selects the requested conversation.');
 
   await verifyNativeTerminal(page, sessions[0], sessions[1]);
   const browserState = await page.evaluate(sessionId => window.__previewTestContext.connection.rpc.call(

@@ -104,7 +104,8 @@ class RecoveryTests(unittest.TestCase):
         gateway = {'Config': {'Labels': {**labels, 'com.docker.compose.service': 'gateway'}},
                    'Image': 'sha256:old-gateway'}
         spec = {'services': {name: {'image': 'mutable-tag', 'build': '.',
-                                   'environment': {'PASSWORD': '$value'}} for name in ('harness', 'gateway')}}
+                                   'environment': {'PASSWORD': '$$value$${literal}'}}
+                for name in ('harness', 'gateway')}}
         def command(args):
             self.calls.append(args)
             if args[0] == 'git': return 'services: {}'
@@ -117,17 +118,12 @@ class RecoveryTests(unittest.TestCase):
         saved = json.loads((point / 'compose.json').read_text())
         self.assertNotIn('build', saved['services']['harness'])
         self.assertEqual(saved['services']['gateway']['pull_policy'], 'never')
-        self.assertEqual(saved['services']['gateway']['environment']['PASSWORD'], '$$value')
+        self.assertEqual(saved['services']['gateway']['environment']['PASSWORD'], '$$value$${literal}')
         self.assertEqual((point / 'compose.json').stat().st_mode & 0o777, 0o600)
         self.assertEqual(point.stat().st_mode & 0o777, 0o700)
         self.assertTrue(any(command[3:5] == ['sha256:old-harness', saved['services']['harness']['image']]
                             for command in self.calls if command[:3] == ['docker', 'image', 'tag']))
         self.assertFalse(any('stop' in command for command in self.calls))
-
-    def test_config_dollars_are_literal_after_second_compose_read(self):
-        self.assertEqual(recovery.escape_compose({'environment': {'PASSWORD': '$a${b}'}}),
-                         {'environment': {'PASSWORD': '$$a$${b}'}})
-
 
 if __name__ == '__main__':
     unittest.main()

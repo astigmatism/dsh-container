@@ -86,16 +86,6 @@ def inventory(root):
     return result
 
 
-def escape_compose(value):
-    if isinstance(value, str):
-        return value.replace('$', '$$')
-    if isinstance(value, dict):
-        return {key: escape_compose(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [escape_compose(item) for item in value]
-    return value
-
-
 def compose(point, *arguments):
     return run(['docker', 'compose', '--project-directory', str(point.parent.parent.parent),
                 '-f', str(point / 'compose.json'), *arguments])
@@ -149,7 +139,9 @@ def prepare(project, mode, commit):
         config['image'] = tag
         config['pull_policy'] = 'never'
         config.pop('build', None)
-    write_json(point / 'compose.json', escape_compose(spec))
+    # Compose config already escapes dollar signs for a subsequent Compose read.
+    # Escaping again would silently change passwords and healthcheck commands.
+    write_json(point / 'compose.json', spec)
     write_json(point / 'state.json', {'stage': 'prepared', 'project': str(project), 'from_commit': commit,
                                     'mode': mode, 'old_version': labels.get('org.opencontainers.image.version')})
     return point

@@ -27,6 +27,7 @@ case "${1:-}" in
       sh -n "$shell_file"
     done
     python3 -B "$project_dir/tests/maintenance.test.py"
+    (cd "$project_dir" && python3 -B -c 'from maintenance.qualification import registered_files; registered_files(".")')
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
     node --test "$project_dir/tests/external-tls.integration.mjs"
     exit 0

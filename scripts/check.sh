@@ -184,6 +184,7 @@ if [ "$build" -eq 1 ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
+    python3 "$project_dir/tests/previous-release-docker.test.py" "$harness_image" "$gateway_image"
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
   fi
 

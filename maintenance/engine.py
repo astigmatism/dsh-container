@@ -309,7 +309,9 @@ class Updater:
         require(not gate.exists(), 'Another transaction already owns the gateway maintenance gate')
         point = self.root / 'recovery' / (time.strftime('%Y%m%dT%H%M%S-') + uuid.uuid4().hex[:8])
         point.mkdir(parents=True, mode=0o700)
-        paths = list(dict.fromkeys(self.manifest['state_paths'] + self.manifest['input_paths']
+        # Read-only configuration inputs may be changed by their owner while
+        # acceptance runs. Never restore a snapshot over those external writes.
+        paths = list(dict.fromkeys(self.manifest['state_paths']
                 + self.manifest['artifact_paths'] + [str(self.root / p) for p in ('compose.json', 'deployment.json', SCRIPT, 'maintenance', 'runner-image', 'start-after-network.sh')]))
         # Never snapshot a parent and its child twice.
         paths = [p for p in paths if not any(Path(p).is_relative_to(Path(q)) and p != q for q in paths)]

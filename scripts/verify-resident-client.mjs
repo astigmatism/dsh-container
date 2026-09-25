@@ -19,7 +19,6 @@ const { browser, close } = await launchVerificationBrowser(chromium);
 const context = await browser.newContext();
 const page = await context.newPage();
 let sessionId;
-let originalDefault;
 let fixture;
 let workspaceId;
 const browserErrors = [];
@@ -40,7 +39,6 @@ try {
   const expected = await residentClientExpectations(await readSettings(settingsPath), { live });
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
   const catalog = await rpc('modelCatalog');
-  originalDefault = catalog.default;
   assert.deepEqual(catalog.failures, []);
   assert.deepEqual(catalog.routableProviders.sort(), expected.map(row => row.provider).sort());
   assert.deepEqual(catalog.groups.flatMap(group => group.models.map(model => ({ provider: group.id, model: model.id, name: model.name }))),
@@ -57,7 +55,7 @@ try {
   // before opening its session-specific model controls. Offline image tests
   // intentionally have no inference endpoint; only live mode requires replies.
   await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
-    'Text-only verification. Do not use tools or access files. Reply with READY.' }] });
+    'Text-only verification. Do not use tools or access files. Reply with exactly READY and no other text.' }] });
   if (!live) await rpc('cancel', { sessionId });
   await waitForVerificationTurn(rpc, sessionId, { phase: 'initial READY prompt', marker: 'READY',
     allowCancellation: !live, timeoutMs: live ? 600000 : 90000 });
@@ -111,7 +109,6 @@ try {
 } finally {
   if (sessionId) {
     await rpc('cancel', { sessionId }).catch(() => {});
-    if (originalDefault) await rpc('selectModel', { sessionId, ...originalDefault });
     await rpc('workspace/archiveSession', { sessionId }).catch(() => {});
   }
   if (workspaceId) await rpc('workspace/delete', { workspaceId }).catch(() => {});

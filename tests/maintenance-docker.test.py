@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from argparse import Namespace
 from unittest.mock import patch
 from urllib.request import Request, urlopen
@@ -31,6 +32,7 @@ from maintenance.contract import configuration_bindings
 PORTAL_REVISION = 'ed02de0b4842b705044b90e85ae124466c529d63'
 NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436'
 harness_image, gateway_image = sys.argv[1:3]
+previous_image = sys.argv[sys.argv.index('--previous-image') + 1] if '--previous-image' in sys.argv else None
 mode = 'managed' if '--managed' in sys.argv[3:] else 'remote'
 temporary = Path(tempfile.mkdtemp(prefix='dsh-maintenance-ci-')).resolve()
 legacy = temporary / 'checkout'
@@ -103,6 +105,9 @@ def fixture_candidate(self):
     model=copy.deepcopy(self.model)
     manifest=copy.deepcopy(self.manifest)
     manifest['revision']='b'*40
+    if (self.root/'candidate-image').exists():
+        model['services']['application']['image']=(self.root/'candidate-image').read_text().strip()
+    manifest['images']={s:c['image'] for s,c in model['services'].items()}
     atomic_json(release/'compose.json',model)
     atomic_json(release/'deployment.json',manifest)
     return release
@@ -140,6 +145,7 @@ USER node
 ''')
     run(['docker', 'build', '-t', fixture_image, fixture])
     fixture_id = json.loads(run(['docker', 'image', 'inspect', fixture_image]))[0]['Id']
+    candidate_id = json.loads(run(['docker', 'image', 'inspect', harness_image]))[0]['Id']
     gateway_id = json.loads(run(['docker', 'image', 'inspect', gateway_image]))[0]['Id']
 
     # IP-only leaf: localhost is intentionally absent. No CA key is mounted.
@@ -166,6 +172,21 @@ USER node
                       {'type': 'bind', 'source': str(temporary / 'backend'), 'target': '/run/dsh-backend-auth', 'read_only': True}],
           'healthcheck': {'test': ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3081/healthz').then(r=>{if(!r.ok)process.exit(1)})"], 'interval': '1s', 'timeout': '3s', 'retries': 30}}
     }}
+    if previous_image:
+        app = model['services']['application']
+        app['image'] = json.loads(run(['docker', 'image', 'inspect', previous_image]))[0]['Id']
+        app.pop('entrypoint')
+        app['environment'] = {'HOME': '/tmp', 'DSH_HOME': '/data/dsh',
+            'DSH_WEB_LAUNCH_TOKEN_FILE': '/run/dsh-backend-auth/launch-token'}
+        app['working_dir'] = '/tmp'
+        app['healthcheck']['test'] = ['CMD-SHELL', 'curl -fsS -o /dev/null "http://127.0.0.1:3080/?token=$$(cat /run/dsh-backend-auth/launch-token)"']
+        fixture_path = temporary / 'provider.mjs'
+        shutil.copy2(source / 'tests/fixtures/verification-router.mjs', fixture_path)
+        model['services']['provider'] = {'image': candidate_id, 'user': f'{uid}:{gid}',
+            'entrypoint': ['node', '/fixture.mjs'],
+            'networks': {'default': {'aliases': ['ai-router']}},
+            'volumes': [{'type': 'bind', 'source': str(fixture_path), 'target': '/fixture.mjs', 'read_only': True}],
+            'healthcheck': {'test': ['CMD', 'node', '-e', "fetch('http://127.0.0.1:11434/health').then(r=>{if(!r.ok)process.exit(1)})"], 'interval': '1s', 'timeout': '3s', 'retries': 30}}
     if mode == 'managed':
         router_state = temporary / 'router-state'
         router_state.mkdir()
@@ -179,47 +200,72 @@ USER node
             'volumes': [{'type': 'bind', 'source': str(router_state), 'target': '/app/data'},
                         {'type': 'bind', 'source': str(model_store), 'target': '/models', 'read_only': True}],
             'healthcheck': copy.deepcopy(model['services']['application']['healthcheck'])}
-    # Start a checkout-based deployment with custom ports, credentials and an
-    # absent update capability. Adoption must preserve it without source edits.
-    model['services']['application']['labels'] = {LABEL + 'enabled': 'false'}
-    atomic_json(legacy / 'compose.json', model)
-    before_checkout = (legacy / 'compose.json').read_bytes()
-    run(['docker', 'compose', '--project-directory', legacy, '-f', legacy / 'compose.json',
-         'up', '-d', '--wait', '--wait-timeout', '120'])
-    roles = ['application=harness', 'edge=gateway'] + (['router=router'] if mode == 'managed' else [])
-    args = Namespace(project_directory=legacy, deployment_dir=None, compose_file=[str(legacy/'compose.json')],
-        env_file=None, mode=mode, portal_url=portal_url, role=roles, state_path=[], external_path=[],
-        adopt=True, dry_run=True, boot_unit=None)
-    baseline = recovery.inventory(legacy)
-    prepare(args, source)
-    assert recovery.inventory(legacy) == baseline and not root.exists()
-
-    def adopted_candidate(updater):
-        release = updater.root / 'releases/bootstrap'
-        release.mkdir(parents=True)
-        for name in ('scripts', 'maintenance'):
-            shutil.copytree(updater.root / name, release / name)
-        (release / 'runner-image').write_text(fixture_id + '\n')
-        (release / 'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
-        manifest = copy.deepcopy(updater.manifest)
-        manifest['revision'] = 'a'*40
-        atomic_json(release / 'deployment.json', manifest)
-        atomic_json(release / 'compose.json', updater.model)
-        return release
-
-    def fixture_application(manifest, rows):
-        run(['docker', 'exec', rows['application']['Id'], 'node', '/opt/dsh-build/verify-router-contract.mjs'])
-
-    args.dry_run = False
-    with patch.object(Updater, 'build_candidate', adopted_candidate), patch('maintenance.engine.verify_application', fixture_application):
+    if previous_image:
+        # Rehearse the registered Portal adapter against the actual previous
+        # application release, with deployment/source/credentials split apart.
+        # Synthetic scenarios below separately exercise the adoption installer.
+        root.mkdir(parents=True)
+        manifest = {'schema': 1, 'root': str(root), 'repository': REPOSITORY, 'branch': 'main',
+            'revision': '5742e98463c1dcc8a39f7a0e816e304794702530', 'project': project, 'mode': mode,
+            'roles': {'application': 'harness', 'edge': 'gateway'}, 'user': f'{uid}:{gid}',
+            'portal_url': portal_url, 'engine_id': run(['docker','info','--format','{{.ID}}']).strip(),
+            'state_paths': [str(state), str(credentials), str(temporary/'backend')],
+            'input_paths': [str(fixture_path)], 'external_paths': [],
+            'artifact_paths': [], 'source_artifacts': []}
+        install_labels(model, manifest, fixture_id)
+        manifest['images'] = {s:c['image'] for s,c in model['services'].items()}
+        manifest['bindings'] = configuration_bindings(model)
+        (root/'scripts').mkdir()
+        shutil.copy2(source/'scripts/update-and-restart.sh', root/'scripts/update-and-restart.sh')
+        shutil.copytree(source/'maintenance', root/'maintenance', ignore=shutil.ignore_patterns('__pycache__'))
+        (root/'runner-image').write_text(fixture_id+'\n')
+        (root/'candidate-image').write_text(candidate_id+'\n')
+        (root/'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
+        atomic_json(root/'compose.json', model)
+        atomic_json(root/'deployment.json', manifest)
+        compose('up', '-d', '--wait', '--wait-timeout', '180')
+    else:
+        # Start a checkout-based deployment with custom ports, credentials and an
+        # absent update capability. Adoption must preserve it without source edits.
+        model['services']['application']['labels'] = {LABEL + 'enabled': 'false'}
+        atomic_json(legacy / 'compose.json', model)
+        before_checkout = (legacy / 'compose.json').read_bytes()
+        run(['docker', 'compose', '--project-directory', legacy, '-f', legacy / 'compose.json',
+             'up', '-d', '--wait', '--wait-timeout', '120'])
+        roles = ['application=harness', 'edge=gateway'] + (['router=router'] if mode == 'managed' else [])
+        args = Namespace(project_directory=legacy, deployment_dir=None, compose_file=[str(legacy/'compose.json')],
+            env_file=None, mode=mode, portal_url=portal_url, role=roles, state_path=[], external_path=[],
+            adopt=True, dry_run=True, boot_unit=None)
+        baseline = recovery.inventory(legacy)
         prepare(args, source)
-    assert (legacy / 'compose.json').read_bytes() == before_checkout
-    (legacy / 'compose.json').unlink()  # Updates now have no source Compose input.
-    installed = json.loads((root / 'deployment.json').read_text())
-    assert installed['mode'] == mode
-    if mode == 'managed':
-        assert str(router_state) in installed['state_paths']
-        assert str(model_store) not in installed['state_paths'] + installed['input_paths']
+        assert recovery.inventory(legacy) == baseline and not root.exists()
+
+        def adopted_candidate(updater):
+            release = updater.root / 'releases/bootstrap'
+            release.mkdir(parents=True)
+            for name in ('scripts', 'maintenance'):
+                shutil.copytree(updater.root / name, release / name)
+            (release / 'runner-image').write_text(fixture_id + '\n')
+            (release / 'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
+            manifest = copy.deepcopy(updater.manifest)
+            manifest['revision'] = 'a'*40
+            atomic_json(release / 'deployment.json', manifest)
+            atomic_json(release / 'compose.json', updater.model)
+            return release
+
+        def fixture_application(manifest, rows):
+            run(['docker', 'exec', rows['application']['Id'], 'node', '/opt/dsh-build/verify-router-contract.mjs'])
+
+        args.dry_run = False
+        with patch.object(Updater, 'build_candidate', adopted_candidate), patch('maintenance.engine.verify_application', fixture_application):
+            prepare(args, source)
+        assert (legacy / 'compose.json').read_bytes() == before_checkout
+        (legacy / 'compose.json').unlink()  # Updates now have no source Compose input.
+        installed = json.loads((root / 'deployment.json').read_text())
+        assert installed['mode'] == mode
+        if mode == 'managed':
+            assert str(router_state) in installed['state_paths']
+            assert str(model_store) not in installed['state_paths'] + installed['input_paths']
     unrelated = project + '-unrelated'
     run(['docker', 'run', '-d', '--name', unrelated, '--entrypoint', 'node', fixture_id,
          '-e', 'setInterval(()=>{},1000)'])
@@ -233,15 +279,38 @@ USER node
         current = next(row for row in api(host_portal+'/api/services')['services'] if row['project']==project and row['name'].endswith('application-1'))
         result = api(host_portal + '/api/projects/' + project + '/update', 'POST')
         job = result.get('job', result)
-        for _ in range(180):
+        for _ in range(900):
             response = api(host_portal + '/api/maintenance/' + job['id'])
             record = response.get('job', response)
             if record['state'] not in ('queued', 'running'):
                 return record
             time.sleep(1)
         raise AssertionError('Portal maintenance job timed out')
+    def user_sessions(*args):
+        container = compose('ps', '-q', 'application').strip()
+        return run(['docker','exec','-i',container,'node','--input-type=module','-',*args],
+            data=(source/'tests/fixtures/verification-session.mjs').read_text()).strip()
+    if previous_image:
+        before_sessions = user_sessions('--populate')
     result = update()
     assert result['state'] == 'succeeded', result
+    if previous_image:
+        assert user_sessions() == before_sessions, 'Upgrade created or removed ordinary conversations'
+        assert (state/'.container-settings-v1.json').is_file(), 'Actual legacy settings were not migrated'
+        # Cancel/archive a normal chat during isolated candidate acceptance.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(update)
+            for _ in range(120):
+                if run(['docker','ps','-q','--filter','label=io.dsh.verification=isolated']).strip():
+                    user_sessions('--cancel-archive')
+                    break
+                time.sleep(0.5)
+            else:
+                raise AssertionError('Repeated update did not use isolated acceptance')
+            result = future.result()
+        assert result['state'] == 'succeeded', result
+        assert user_sessions() == before_sessions, 'Ordinary cancellation interfered with verification'
+
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
@@ -253,6 +322,8 @@ USER node
     assert json.loads((root/'compose.json').read_text())['services']['application']['labels'][LABEL+'enabled'] == 'true'
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
+    if previous_image:
+        assert user_sessions() == before_sessions, 'Failed update changed ordinary conversations'
     assert json.loads(run(['docker','inspect',unrelated]))[0]['Id'] == unrelated_id
     assert json.loads(run(['docker','inspect',unrelated]))[0]['State']['Running']
     if mode == 'managed':

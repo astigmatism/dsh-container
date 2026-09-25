@@ -27,8 +27,11 @@ grep -Fq "HOME: process.env.DSH_BROWSER_HOME || '/tmp'" \
   || fail "dictation client verifier does not give Chromium a writable home"
 grep -Fq 'scripts/verify-dictation-backend.mjs /opt/dsh-gateway/' "$project_dir/Dockerfile" \
   || fail "gateway image does not contain the dictation backend verifier"
-grep -Fq 'dictationButtons: document.querySelectorAll("[data-local-speech-button]").length' \
+grep -Fq 'node /opt/dsh-build/verify-sidebar-client.mjs || return 1' \
   "$project_dir/scripts/verify-plugin-boot.sh" \
+  || fail "image qualification no longer requires the shared browser verifier"
+grep -Fq "page.locator('[data-local-speech-button]').first().waitFor()" \
+  "$project_dir/scripts/verify-sidebar-client.mjs" \
   || fail "image qualification no longer checks the rendered dictation control"
 grep -Fq "input.matches('[data-composer-input][role=\"textbox\"]')" \
   "$project_dir/plugin/dsh-local-speech/client.js" \

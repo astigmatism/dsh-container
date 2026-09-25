@@ -143,6 +143,12 @@ try {
   await page.waitForFunction(id => !!window.__previewTestContext.sessions.list.getSnapshot().byId[id]?.cwd, sessions[0]);
   await select(sessions[0]);
   console.log('Loaded the installed sidebar and referenced session directories.');
+  const pin = page.locator('button.__dsh-session-pin-header__:visible');
+  await pin.waitFor();
+  assert.equal(await pin.getAttribute('aria-pressed'), 'false');
+  await pin.click();
+  await page.waitForFunction(() => document.querySelector('button.__dsh-session-pin-header__[aria-pressed="true"]'));
+
   await verifyNativeTerminal(page, sessions[0], sessions[1]);
   const browserState = await page.evaluate(sessionId => window.__previewTestContext.connection.rpc.call(
     '/dsh-playwright', 'state', { sessionId },
@@ -183,6 +189,11 @@ try {
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.__previewTestContext?.get('sidebarRight'));
   await select(sessions[0]);
+  await page.waitForFunction(() => document.querySelector('button.__dsh-session-pin-header__[aria-pressed="true"]'));
+  await pin.click();
+  await page.waitForFunction(() => document.querySelector('button.__dsh-session-pin-header__[aria-pressed="false"]'));
+  console.log('Verified Session Pin toggle and persistence across browser reload.');
+
   await open(sessions[0], 'image #?% ü.png');
   await waitForImage('image #?% ü.png');
   console.log('Verified real relative/absolute image previews, encoded names, referenced sessions, and restored tabs.');
@@ -221,8 +232,18 @@ try {
   assert.deepEqual(await response.body(), archive);
   await open(sessions[0], 'report.pdf');
   await page.locator('[data-pdf-preview] canvas').first().waitFor();
-  assert.deepEqual(errors, []);
   console.log('Verified text/HTML/PDF/download adapter paths and existing workspace containment.');
+  await page.setViewportSize({ width: 1500, height: 500 });
+  await page.getByRole('button', { name: 'Context Insights', exact: true }).click();
+  const insights = page.locator('.lc-ov-body');
+  await insights.waitFor();
+  await insights.hover();
+  await page.mouse.wheel(0, 500);
+  await page.waitForFunction(() => document.querySelector('.lc-ov-body')?.scrollTop > 0);
+  await page.locator('.lc-ov-card').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  assert.deepEqual(errors, []);
+  console.log('Verified Context Insights data rendering and scrolling.');
 } catch (error) {
   console.error(String(error?.stack ?? error).split(secret).join('<redacted>'));
   console.error((await page.locator('body').innerText().catch(() => '')).slice(-4000));

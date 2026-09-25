@@ -22,6 +22,13 @@ class QualificationError(RuntimeError):
     pass
 
 
+def private_text(path, value):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(value)
+
+
 def docker(*args, data=None, timeout=900):
     result = subprocess.run(['docker', *map(str, args)], input=data, capture_output=True, timeout=timeout)
     if result.returncode:
@@ -128,6 +135,7 @@ def qualify(container, image=None, diagnostics=None):
     command, extra_networks = candidate_command(source, image, name)
     created = False
     stage = 'create disposable runtime'
+    probe_output = ''
     try:
         docker(*command)
         created = True
@@ -165,6 +173,7 @@ def qualify(container, image=None, diagnostics=None):
                 args.append('--live')
             result = subprocess.run(['docker', *args], capture_output=True, timeout=2100)
             output = redact((result.stdout + result.stderr).decode(errors='replace'), source)
+            probe_output += f'[{stage}]\n' + output
             print(output, end='', flush=True)
             if result.returncode:
                 raise QualificationError(f'{script} failed in disposable runtime (exit {result.returncode})')
@@ -175,10 +184,11 @@ def qualify(container, image=None, diagnostics=None):
             directory = Path(diagnostics)
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             try:
+                private_text(directory / 'verification.log', redact(probe_output, source))
+                private_text(directory / 'failure.json', json.dumps({'stage': stage, 'image': image}))
                 output = subprocess.run(['docker', 'logs', '--tail', '200', name], capture_output=True, timeout=30)
                 logs = (output.stdout + output.stderr).decode(errors='replace')
-                (directory / 'runtime.log').write_text(redact(logs, source))
-                (directory / 'failure.json').write_text(json.dumps({'stage': stage, 'image': image}))
+                private_text(directory / 'runtime.log', redact(logs, source))
                 docker('cp', f'{name}:/tmp/verification-diagnostics/.', directory)
                 for path in directory.iterdir():
                     if path.is_file():

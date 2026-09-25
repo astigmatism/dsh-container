@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,21 @@ for name in ('deepseek-harness', 'deepseek-harness-gateway'):
     if subprocess.run(['docker', 'inspect', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
         sys.exit('Refusing recovery rehearsal on a worker with an existing deployment')
 project = Path(tempfile.mkdtemp(prefix='dsh-upgrade-recovery-ci-')).resolve()
+# Portal maintenance runs the Docker/Compose clients bundled in the Harness
+# image. Repeat the same rehearsal through those exact binaries, including
+# config serialization, rather than assuming they match the CI host's version.
+bundled_cli = '--bundled-cli' in sys.argv[2:]
+if bundled_cli:
+    host_docker = shutil.which('docker')
+    binary = project / 'bin/docker'
+    binary.parent.mkdir()
+    command = [host_docker, 'run', '--rm', '-i', '--user', '0:0',
+               '--volume', '/var/run/docker.sock:/var/run/docker.sock',
+               '--volume', f'{project}:{project}', '--workdir', str(project),
+               '--entrypoint', 'docker', image]
+    binary.write_text('#!/bin/sh\nexec ' + shlex.join(command) + ' "$@"\n')
+    binary.chmod(0o700)
+    os.environ['PATH'] = str(binary.parent) + os.pathsep + os.environ['PATH']
 old_image = 'local/dsh-recovery-fixture:old'
 point = None
 command = ['docker', 'compose', '--project-directory', str(project), '-f', str(project / 'compose.yaml')]
@@ -78,7 +94,7 @@ try:
         assert (project / root / 'state').read_text() == 'old data'
         assert (point / 'failed-runtime' / root / 'state').read_text() == 'migrated data'
     assert (project / '.env').read_text() == "PRIVATE_VALUE='fixture-$literal'\n"
-    print('Real Compose recovery restored previous image IDs, data, credentials and healthy recreated bind mounts.')
+    print(f'Real Compose recovery ({"bundled portal client" if bundled_cli else "host client"}) restored previous image IDs, data, credentials and healthy recreated bind mounts.')
 finally:
     subprocess.run([*command, 'down'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if point:

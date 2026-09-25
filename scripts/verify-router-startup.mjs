@@ -12,6 +12,9 @@ import { readSettings, verifyConfiguredRoutes } from './verify-router-contract.m
 const exec = promisify(execFile);
 const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-router-startup-'));
 const runtime = path.join(parent, 'runtime');
+const tokenIndexPath = path.join(runtime, 'storages/dsh_token_index.json');
+const tokenIndex = JSON.stringify({ unit: { name: 'dsh_token_index', version: 1 },
+  global: { v: 1, data: { tz: 'UTC', foldVersion: 1, builtAt: 1 } }, tables: { shards: {} } });
 const primaryId = 'qwen3.8-27b-q8_0';
 const secondaryId = 'qwen3.8-27b-abliterated-q6_k';
 const entries = [primaryId, secondaryId].map((id, index) => ({ id, x_ollama_router: {
@@ -88,6 +91,9 @@ async function rpc(method, args = {}) {
 try {
   await fs.symlink('/opt/dsh-local-speech', path.join(parent, 'dsh-local-speech'));
   await exec('/usr/local/bin/dsh-sync-runtime-profile', { env: { ...process.env, DSH_HOME: runtime } });
+  await fs.mkdir(path.dirname(tokenIndexPath), { recursive: true });
+  await fs.writeFile(tokenIndexPath, tokenIndex, { mode: 0o600 });
+  const tokenIndexBefore = await fs.stat(tokenIndexPath);
   const provider = { api: 'openai-responses', baseURL, apiKeyEnv: 'STARTUP_FIXTURE_KEY', reasoning: 'medium', maxConcurrency: 2,
     models: [{ id: 'local-active', name: 'Old profile', contextWindow: 262144, maxTokens: 32768, input: ['text', 'image'] }] };
   const settings = {
@@ -152,8 +158,12 @@ try {
     const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
     assert.equal(token.enabled, false);
     assert.notEqual(token.fiberPhase, 'active');
+    assert.equal(await fs.readFile(tokenIndexPath, 'utf8'), tokenIndex, 'disabled Token index bytes');
+    const tokenIndexAfter = await fs.stat(tokenIndexPath);
+    assert.equal(tokenIndexAfter.mtimeMs, tokenIndexBefore.mtimeMs, 'disabled Token index was not rewritten');
+    assert.equal(tokenIndexAfter.ino, tokenIndexBefore.ino, 'disabled Token index was not replaced');
   }
-  console.log('Settings saved through the rc2 API, model choice, plugin preferences and credential references survived two complete entrypoint restarts; Token stayed unloaded.');
+  console.log('Settings saved through the rc2 API, model choice, plugin preferences and credential references survived two complete entrypoint restarts; Token stayed unloaded and its index stayed unchanged.');
 
 } catch (error) {
   // This isolated home contains synthetic settings only; strip launch URLs.

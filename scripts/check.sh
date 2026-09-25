@@ -158,6 +158,7 @@ if [ "$build" -eq 1 ]; then
 
   if [ "${CI:-false}" = true ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
+    python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
   fi
 
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.7-rc.2 ] || {

@@ -26,7 +26,7 @@ case "${1:-}" in
     sh -n "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
     python3 -B "$project_dir/tests/maintenance.test.py"
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
-    node --test "$project_dir/gateway/external-tls.test.mjs"
+    node --test "$project_dir/tests/external-tls.integration.mjs"
     exit 0
     ;;
   -h|--help)
@@ -171,6 +171,10 @@ if [ "$build" -eq 1 ]; then
   docker build --target harness --tag "$harness_image" "$project_dir"
   docker build --target gateway --tag "$gateway_image" "$project_dir"
   docker build --tag "$router_image" "$project_dir/ollama-router"
+
+  docker run --rm --network none --read-only --tmpfs /tmp \
+    --volume "$project_dir:/src:ro" --entrypoint node "$gateway_image" \
+    --test /src/tests/external-tls.integration.mjs
 
   if [ "${CI:-false}" = true ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"

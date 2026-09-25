@@ -88,26 +88,29 @@ try:
         else:
             raise AssertionError('Provider failure incorrectly passed qualification')
         assert docker('exec', '-i', source, 'python3', '-c', SNAPSHOT) == before, 'Failure cleanup modified production state'
-        docker('exec', router, 'node', '-e', "fetch('http://127.0.0.1:11434/test/hold',{method:'POST'})")
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(isolated.qualify, source, None, directory)
-            for attempt in range(180):
-                names = docker('ps', '-q', '--filter', 'label=io.dsh.verification=isolated').decode().split()
-                if names:
-                    result = subprocess.run(['docker','exec','-i',names[0], 'node', '--input-type=module', '-', '--cancel-verification'],
-                        input=(ROOT/'tests/fixtures/verification-session.mjs').read_bytes(), capture_output=True)
-                    if result.returncode == 0:
-                        break
-                time.sleep(1)
-            else:
-                raise AssertionError('Isolated cancellation fixture did not start')
-            try:
-                future.result()
-            except isolated.QualificationError:
-                assert json.loads((Path(directory)/'resident.json').read_text())['code'] == 'verification-cancelled'
-            else:
-                raise AssertionError('Canceled verification incorrectly passed')
-        assert docker('exec', '-i', source, 'python3', '-c', SNAPSHOT) == before, 'Cancellation modified production state'
+        for injection, expected_code in (('--cancel-verification', 'verification-cancelled'),
+                                         ('--remove-verification-workspace', 'missing-workspace')):
+            docker('exec', router, 'node', '-e', "fetch('http://127.0.0.1:11434/test/hold',{method:'POST'})")
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(isolated.qualify, source, None, directory)
+                for attempt in range(180):
+                    names = docker('ps', '-q', '--filter', 'label=io.dsh.verification=isolated').decode().split()
+                    if names:
+                        result = subprocess.run(['docker','exec','-i',names[0], 'node', '--input-type=module', '-', injection],
+                            input=(ROOT/'tests/fixtures/verification-session.mjs').read_bytes(), capture_output=True)
+                        if result.returncode == 0:
+                            docker('exec', router, 'node', '-e', "fetch('http://127.0.0.1:11434/test/success',{method:'POST'})")
+                            break
+                    time.sleep(1)
+                else:
+                    raise AssertionError('Isolated cancellation fixture did not start')
+                try:
+                    future.result()
+                except isolated.QualificationError:
+                    assert json.loads((Path(directory)/'resident.json').read_text())['code'] == expected_code
+                else:
+                    raise AssertionError('Canceled verification incorrectly passed')
+            assert docker('exec', '-i', source, 'python3', '-c', SNAPSHOT) == before, 'Cancellation modified production state'
         # A handled interruption tears down the entire isolated lifecycle.
         process = subprocess.Popen([sys.executable, str(ROOT/'scripts/verify-isolated-runtime.py'),
             '--container', source, '--diagnostics', directory])

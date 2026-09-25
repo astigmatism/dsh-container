@@ -182,13 +182,21 @@ def qualify(container, image=None, diagnostics=None):
                 docker('cp', f'{name}:/tmp/verification-diagnostics/.', directory)
                 for path in directory.iterdir():
                     if path.is_file():
+                        if path.suffix in ('.json', '.log', '.txt'):
+                            path.write_text(redact(path.read_text(), source))
                         path.chmod(0o600)
-            except (QualificationError, OSError):
+            except (QualificationError, OSError, subprocess.TimeoutExpired):
                 print('Some isolated diagnostics could not be collected.', file=sys.stderr)
         raise
     finally:
         if created:
-            docker('rm', '--force', name)
+            primary_error = sys.exc_info()[1]
+            try:
+                docker('rm', '--force', name)
+            except (QualificationError, subprocess.TimeoutExpired):
+                if primary_error is None:
+                    raise QualificationError('Isolated acceptance cleanup failed') from None
+                print('Isolated runtime cleanup also failed; inspect labeled verification containers.', file=sys.stderr)
 
 
 def main():

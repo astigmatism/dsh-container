@@ -33,7 +33,8 @@ http.createServer(async (request, response) => {
   }
   if (request.url === '/health') { response.end('{"ok":true}'); return; }
   if (request.url !== '/v1/responses') { response.writeHead(404).end(); return; }
-  if (mode === 'hold') return; // Cancellation fixture owns this pending request.
+  while (mode === 'hold' && !response.destroyed) await new Promise(resolve => setTimeout(resolve, 100));
+  if (response.destroyed) return;
   if (mode === 'fail') {
     response.writeHead(400, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ error: { message: 'deliberate fixture failure', type: 'invalid_request_error' } })); return;

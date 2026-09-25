@@ -10,7 +10,9 @@ current client still supports the old selector.
 
 Verification now runs the candidate image in a disposable container. It copies
 only deployment preferences: either legacy settings and the user profile patch,
-or the migrated profile patch and its migration marker. It does not copy user
+or the migrated profile patch and its migration marker, plus the private provider
+credential store when present. Credential values are redacted from diagnostic
+logs. It does not copy user
 sessions, workspaces, storage, host mounts, Docker socket access or published
 ports. It retains the deployment UID/GID, environment and provider networks.
 All browser-created drafts and test conversations disappear with that container.

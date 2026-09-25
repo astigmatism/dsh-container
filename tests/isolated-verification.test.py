@@ -37,7 +37,10 @@ class IsolationTests(unittest.TestCase):
             isolated.candidate_command(source, 'image', 'disposable')
 
     def test_diagnostics_redact_provider_and_launch_tokens(self):
-        value = isolated.redact('provider-secret http://host/?token=temporary\nprivate', self.source())
+        source = self.source()
+        source['_credential_values'] = ['credential-store-secret']
+        value = isolated.redact('credential-store-secret provider-secret http://host/?token=temporary\nprivate', source)
+        self.assertNotIn('credential-store-secret', value)
         self.assertNotIn('provider-secret', value)
         self.assertNotIn('temporary', value)
         self.assertNotIn('private', value)

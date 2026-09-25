@@ -75,6 +75,8 @@ root = pathlib.Path('/data/dsh')
 if (root / '.container-settings-pending.json').exists():
     raise RuntimeError('Settings migration is pending')
 names = ['profiles/web/cordis.patch.yml']
+if (root / '.credentials.yaml').exists():
+    names.append('.credentials.yaml')
 names += ['.container-settings-v1.json'] if (root / '.container-settings-v1.json').exists() else ['settings.yaml']
 with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as archive:
     for name in names:
@@ -90,8 +92,24 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as archive:
         archive.addfile(info, io.BytesIO(data))
 '''
 
+EXPORT_CREDENTIAL_VALUES = r'''
+const fs = require('fs');
+const file = '/data/dsh/.credentials.yaml';
+if (!fs.existsSync(file)) { console.log('[]'); process.exit(0); }
+const YAML = require('module').createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json')('yaml');
+const values = [];
+function collect(value) {
+  if (typeof value === 'string' && value.length >= 8) values.push(value);
+  else if (value && typeof value === 'object') Object.values(value).forEach(collect);
+}
+collect(YAML.parse(fs.readFileSync(file, 'utf8')));
+console.log(JSON.stringify(values));
+'''
+
 
 def redact(text, source):
+    for value in sorted(source.get('_credential_values', []), key=len, reverse=True):
+        text = text.replace(value, '<redacted>')
     for item in source['Config'].get('Env', []):
         key, _, value = item.partition('=')
         if value and re.search(r'password|secret|token|api.?key', key, re.I):
@@ -118,6 +136,7 @@ def qualify(container, image=None, diagnostics=None):
         docker('start', name)
         stage = 'copy deployment preferences'
         settings = docker('exec', '-i', container, 'python3', '-c', EXPORT_SETTINGS)
+        source['_credential_values'] = json.loads(docker('exec', container, 'node', '-e', EXPORT_CREDENTIAL_VALUES))
         docker('exec', '-i', name, 'tar', '-x', '--no-same-owner', '-C', '/data/dsh', '-f', '-', data=settings)
         docker('exec', name, 'touch', '/tmp/verification-ready')
         stage = 'boot disposable runtime'

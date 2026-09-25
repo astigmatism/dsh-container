@@ -113,6 +113,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/initialize-sidebar-settings.mjs
     node --check scripts/verify-sidebar-terminal.mjs
     node --check scripts/verify-sidebar-client.mjs
+    node --check scripts/verification-browser.mjs
     node --check scripts/verify-file-previews.mjs
     node --check scripts/verify-resident-client.mjs
     node --check scripts/migrate-resident-models.mjs
@@ -301,7 +302,7 @@ if [ "$build" -eq 1 ]; then
   # dsh-playwright snapshot dropped its dependencies.
   # Session UI needs Chromium to see an attached network interface; its host
   # connection pauses when navigator.onLine is false in network-less builds.
-  docker run --rm --env DSH_VERIFY_RESIDENT_CATALOG=true --entrypoint /bin/sh "$harness_image" -eu -c '
+  docker run --rm --env HOME=/ --env DSH_VERIFY_RESIDENT_CATALOG=true --entrypoint /bin/sh "$harness_image" -eu -c '
     /usr/local/bin/dsh-verify-plugin-boot
   '
 

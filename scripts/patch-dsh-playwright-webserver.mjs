@@ -42,13 +42,46 @@ export function patchSource(input) {
   return source;
 }
 
+/** The agent's HOME may be a read-only host mount; Chrome owns separate state. */
+export function patchBrowserHome(input) {
+  if (input.includes('dsh-browser-private-home-v1')) return input;
+  let source = replaceOnce(input,
+    'import { existsSync } from "node:fs";',
+    `import { existsSync } from "node:fs";
+import { mkdtemp as dshBrowserMkdtemp, rm as dshBrowserRm } from "node:fs/promises";
+import { tmpdir as dshBrowserTmpdir } from "node:os";
+import { join as dshBrowserJoin } from "node:path";`, 'browser home imports');
+  source = replaceOnce(source,
+    `\t\tconst browser = await chromium.launch({
+\t\t\theadless: true,
+\t\t\texecutablePath: resolveExecutable(this.config.browserExecutablePath)
+\t\t});`,
+    `\t\t// dsh-browser-private-home-v1: writable caches independent of agent HOME.
+\t\tconst browserHome = await dshBrowserMkdtemp(dshBrowserJoin(dshBrowserTmpdir(), "dsh-browser-home-"));
+\t\tlet browser;
+\t\ttry {
+\t\t\tbrowser = await chromium.launch({
+\t\t\t\theadless: true,
+\t\t\t\texecutablePath: resolveExecutable(this.config.browserExecutablePath),
+\t\t\t\tenv: { ...process.env, HOME: browserHome,
+\t\t\t\t\tXDG_CONFIG_HOME: dshBrowserJoin(browserHome, "config"), XDG_CACHE_HOME: dshBrowserJoin(browserHome, "cache") }
+\t\t\t});
+\t\t} catch (error) {
+\t\t\tawait dshBrowserRm(browserHome, { recursive: true, force: true });
+\t\t\tthrow error;
+\t\t}
+\t\tbrowser.once("disconnected", () => { void dshBrowserRm(browserHome, { recursive: true, force: true }).catch(() => {}); });`,
+    'browser launch home');
+  return source;
+}
+
 async function main() {
   const runtime = process.env.DSH_RUNTIME_ROOT ?? "/usr/local/lib/node_modules/@deepseek-ai/dsh";
   const connection = JSON.parse(await readFile(`${runtime}/node_modules/@deepseek-ai/dsh-client-connection/package.json`, "utf8"));
   if (connection.version !== "0.1.7-rc.2") throw new Error("Browser RPC owner patch requires client-connection 0.1.7-rc.2");
   const target = process.argv[2] ?? DEFAULT_TARGET;
   const before = await readFile(target, "utf8");
-  const after = patchSource(before);
+  const after = patchBrowserHome(patchSource(before));
   if (after !== before) await writeFile(target, after);
   if (!after.includes(PATCH_MARKER)) throw new Error("dsh-playwright web-transport scope patch did not apply");
   const directory = target.slice(0, -'/lib/index.js'.length);

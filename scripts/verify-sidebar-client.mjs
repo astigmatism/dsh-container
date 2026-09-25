@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { launchVerificationBrowser } from './verification-browser.mjs';
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
 const require = createRequire(`${profile}/package.json`);
@@ -15,8 +16,7 @@ if (process.argv.includes('--live')) {
   await import('./verify-file-previews.mjs');
 } else {
   const { chromium } = require('playwright-core');
-  const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'], env: { ...process.env, HOME: '/tmp' } });
+  const { browser, close } = await launchVerificationBrowser(chromium);
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const page = await context.newPage();
@@ -57,5 +57,5 @@ if (process.argv.includes('--live')) {
   } catch (error) {
     console.error(String(error?.stack ?? error).split(secret).join('<redacted>'));
     process.exitCode = 1;
-  } finally { await browser.close(); }
+  } finally { await close(); }
 }

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { launchVerificationBrowser } from './verification-browser.mjs'
 
 const tokenFile = process.env.DSH_WEB_LAUNCH_TOKEN_FILE || '/run/dsh-backend-auth/launch-token'
 const profileRoot = process.env.DSH_PROFILE_ROOT || '/data/dsh/profiles/web'
@@ -13,17 +14,12 @@ const require = createRequire(`${profileRoot}/package.json`)
 const { chromium } = require(`${profileRoot}/node_modules/playwright-core`)
 const errors = []
 let browser
+let closeBrowser
 
 try {
-  browser = await chromium.launch({
-    executablePath: '/usr/bin/chromium',
-    headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-    // The Harness uses /host as HOME so agent file operations start at the
-    // mounted host filesystem. That directory can be read-only to this UID,
-    // while Chromium requires a writable home for its crash-state directory.
-    env: { ...process.env, HOME: process.env.DSH_BROWSER_HOME || '/tmp' },
-  })
+  const launched = await launchVerificationBrowser(chromium)
+  browser = launched.browser
+  closeBrowser = launched.close
   const page = await browser.newPage()
   page.on('pageerror', error => errors.push(`pageerror: ${error.message}`))
   page.on('console', message => {
@@ -69,5 +65,5 @@ try {
   console.error(detail)
   process.exitCode = 1
 } finally {
-  await browser?.close()
+  await closeBrowser?.()
 }

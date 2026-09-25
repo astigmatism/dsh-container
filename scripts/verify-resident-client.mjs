@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
+import { launchVerificationBrowser } from './verification-browser.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -14,8 +15,7 @@ const { chromium } = require('playwright-core');
 const secret = process.env.DSH_BOOT_TOKEN ?? (await readFile('/run/dsh-backend-auth/launch-token', 'utf8')).trim();
 const live = process.argv.includes('--live');
 const settingsPath = process.env.DSH_VERIFY_SETTINGS ?? resolve(profile, '../../settings.yaml');
-const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true,
-  args: ['--no-sandbox', '--disable-dev-shm-usage'], env: { ...process.env, HOME: '/tmp' } });
+const { browser, close } = await launchVerificationBrowser(chromium);
 const context = await browser.newContext();
 const page = await context.newPage();
 let sessionId;
@@ -128,5 +128,5 @@ try {
   }
   if (workspaceId) await rpc('workspace/delete', { workspaceId }).catch(() => {});
   if (fixture) await rm(fixture, { recursive: true, force: true });
-  await browser.close();
+  await close();
 }

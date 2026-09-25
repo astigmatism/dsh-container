@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { launchVerificationBrowser } from './verification-browser.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3999';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/opt/dsh-seed/profiles/web';
@@ -13,7 +14,7 @@ const secret = process.env.DSH_BOOT_TOKEN;
 assert.ok(secret, 'Run only against a disposable plugin-boot server');
 const require = createRequire(`${profile}/package.json`);
 const { chromium } = require('playwright-core');
-const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+const { browser, close } = await launchVerificationBrowser(chromium);
 const context = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
 context.setDefaultTimeout(30000);
 const page = await context.newPage();
@@ -256,7 +257,7 @@ try {
 } finally {
   for (const sessionId of sessions) await rpc('workspace/archiveSession', { sessionId }).catch(() => {});
   for (const workspaceId of workspaces) await rpc('workspace/delete', { workspaceId }).catch(() => {});
-  await browser.close();
+  await close();
   await new Promise(resolve => localSite.close(resolve));
   await rm(root, { recursive: true, force: true });
 }

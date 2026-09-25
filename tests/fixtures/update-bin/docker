@@ -8,6 +8,12 @@ case "${1:-}" in
     exit "${FAKE_DOCKER_INFO_EXIT:-0}"
     ;;
   inspect)
+    if [ "$#" -eq 2 ] && [ "${2:-}" = deepseek-harness ]; then
+      # Ordinary updater fixtures represent a current-format runtime. Legacy
+      # recovery and data/image pinning have dedicated boundary fixtures.
+      printf '%s\n' '[{"Config":{"Labels":{"org.opencontainers.image.version":"0.1.7-rc.2"}}}]'
+      exit 0
+    fi
     if [ "${2:-}" = aaaaaaaaaaaa ]; then
       cat "${FAKE_DOCKER_LOG%/*}/gateway-inspect.json"
       exit 0

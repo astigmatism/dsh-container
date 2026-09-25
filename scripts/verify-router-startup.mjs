@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readSettings, verifyConfiguredRoutes } from './verify-router-contract.mjs';
 const exec = promisify(execFile);
@@ -37,6 +38,53 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const baseURL = `http://127.0.0.1:${server.address().port}/v1`;
 let child;
 let bootLog = '';
+const webBase = 'http://127.0.0.1:3080';
+let cookie;
+function start() {
+  child = spawn('/usr/local/bin/dsh-entrypoint', [], {
+    cwd: parent, detached: true, env: { ...process.env, DSH_HOME: runtime, DSH_TELEMETRY_DISABLED: '1', STARTUP_FIXTURE_KEY: 'fixture-only' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  child.stdout.on('data', chunk => { bootLog += chunk; });
+  child.stderr.on('data', chunk => { bootLog += chunk; });
+
+}
+async function stop() {
+  if (!child?.pid) return;
+  const current = child;
+  const closed = new Promise(resolve => current.once('close', resolve));
+  try { process.kill(-current.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 3000))]);
+  try { process.kill(-current.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  child = undefined;
+}
+async function authenticate() {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error('Harness exited during persistence qualification');
+    try {
+      const token = (await fs.readFile(path.join(runtime, 'web-launch-token'), 'utf8')).trim();
+      const response = await fetch(`${webBase}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+      cookie = response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+      if (cookie) {
+        await rpc('settings/describe');
+        return;
+      }
+    } catch { /* Wait for the process and its settings owner to finish mounting. */ }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error('Authenticated settings API did not become ready');
+}
+async function rpc(method, args = {}) {
+  const response = await fetch(`${webBase}/api/${method}`, { method: 'POST',
+    headers: { 'content-type': 'application/json', cookie, origin: webBase },
+    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args } }) });
+  assert.equal(response.status, 200, method);
+  const { result } = await response.json();
+  assert.equal(result.ok, true, `${method}: ${result.error?.message}`);
+  return result.value;
+}
+
 try {
   await fs.symlink('/opt/dsh-local-speech', path.join(parent, 'dsh-local-speech'));
   await exec('/usr/local/bin/dsh-sync-runtime-profile', { env: { ...process.env, DSH_HOME: runtime } });
@@ -54,12 +102,7 @@ try {
   };
   const settingsPath = path.join(runtime, 'settings.yaml');
   await fs.writeFile(settingsPath, JSON.stringify(settings), { mode: 0o600 });
-  child = spawn('/usr/local/bin/dsh-entrypoint', [], {
-    cwd: parent, detached: true, env: { ...process.env, DSH_HOME: runtime, DSH_TELEMETRY_DISABLED: '1', STARTUP_FIXTURE_KEY: 'fixture-only' },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  child.stdout.on('data', chunk => { bootLog += chunk; });
-  child.stderr.on('data', chunk => { bootLog += chunk; });
+  start();
   // No browser or agent creation: migration must complete before DSH launches.
   let lastError;
   for (let i = 0; i < 300; i++) {
@@ -88,17 +131,36 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (lastError) throw lastError;
+  await authenticate();
+  await rpc('settings/update', { ns: 'agent-default-model', patch: { reasoningEffort: 'low' } });
+  await rpc('settings/update', { ns: 'better-sidebar', patch: { tabsEnabled: { subagent: false, sidechat: true } } });
+  const retained = await rpc('settings/describe');
+  const model = retained.namespaces.find(row => row.ns === 'agent-default-model').value;
+  const sidebar = retained.namespaces.find(row => row.ns === 'better-sidebar').value;
+  assert.equal(model.reasoningEffort, 'low');
+  assert.deepEqual(sidebar.tabsEnabled, { subagent: false, sidechat: true });
+  for (let restart = 0; restart < 2; restart++) {
+    await stop();
+    start();
+    await authenticate();
+    const actual = await rpc('settings/describe');
+    assert.deepEqual(actual.namespaces.find(row => row.ns === 'agent-default-model').value, model);
+    assert.deepEqual(actual.namespaces.find(row => row.ns === 'better-sidebar').value, sidebar);
+    const migrated = await readSettings(settingsPath);
+    assert.equal(migrated['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
+    const inventory = await rpc('pluginInventory/list');
+    const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
+    assert.equal(token.enabled, false);
+    assert.notEqual(token.fiberPhase, 'active');
+  }
+  console.log('Settings saved through the rc2 API, model choice, plugin preferences and credential references survived two complete entrypoint restarts; Token stayed unloaded.');
+
 } catch (error) {
   // This isolated home contains synthetic settings only; strip launch URLs.
   const diagnostic = bootLog.split('\n').slice(-30).map(line => line.replace(/https?:\/\/\S+/g, '[endpoint]').replace(/fixture-only[^\s]*/g, '[fixture value]')).join('\n');
   throw new Error(`${error.message.replace(/https?:\/\/\S+/g, '[endpoint]')}${diagnostic ? '\n' + diagnostic : ''}`);
 } finally {
-  if (child?.pid) {
-    const closed = new Promise(resolve => child.once('close', resolve));
-    try { process.kill(-child.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-    await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 1000))]);
-    try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-  }
+  await stop();
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
   await fs.rm(parent, { recursive: true, force: true });

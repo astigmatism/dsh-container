@@ -23,7 +23,9 @@ case "${1:-}" in
     chmod +x "$host_guard/docker"
     PATH="$host_guard:$PATH"
     export PATH
-    sh -n "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
+    for shell_file in "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh "$project_dir/start-after-network.sh"; do
+      sh -n "$shell_file"
+    done
     python3 -B "$project_dir/tests/maintenance.test.py"
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
     node --test "$project_dir/tests/external-tls.integration.mjs"

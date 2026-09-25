@@ -143,7 +143,7 @@ class ContractTests(Fixture):
 
     def test_future_compose_must_be_registered(self):
         (self.root / 'config').mkdir()
-        atomic_json(self.root / 'config/deployment-profiles.json', {'schema': 1, 'profiles': {'portable': ['compose.yaml']}, 'separate_projects': ['speech/']})
+        atomic_json(self.root / 'config/deployment-profiles.json', {'schema': 1, 'profiles': {'portable': ['compose.yaml']}, 'separate_projects': ['speech/compose.yaml']})
         (self.root / 'compose.yaml').write_text('services:\n  harness: {}\n')
         (self.root / 'new-target.yaml').write_text('services:\n  harness: {}\n')
         with patch('maintenance.qualification.run', return_value='compose.yaml\nnew-target.yaml\n'), self.assertRaises(Failure):
@@ -274,6 +274,12 @@ class AdoptionTests(Fixture):
         self.args.mode = None
         self.args.role = ['application=harness']
         with self.assertRaisesRegex(Failure, 'unambiguous'): self.prepare()
+
+    def test_unrelated_service_cannot_be_silently_adopted(self):
+        self.model['services']['unrelated'] = {'image': 'sha256:' + '9'*64}
+        with self.assertRaisesRegex(Failure, 'unmapped services'): self.prepare()
+        self.args.owned_service = ['unrelated']
+        self.prepare()
 
 
 class SourceTests(unittest.TestCase):

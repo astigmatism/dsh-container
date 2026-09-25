@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import stat
 
-from .common import Failure, atomic_json, digest, read_json
+from .common import Failure, atomic_json, digest, read_json, sync_path, sync_directory
 from .contract import require
 
 
@@ -45,6 +45,8 @@ def copy_path(source, destination):
     else:
         copy_file(source, destination)
     require(inventory(source) == inventory(destination), 'Snapshot copy failed integrity or ownership verification')
+    sync_path(destination)
+    sync_directory(destination.parent)
 
 
 def preserve_owner(source, target):
@@ -93,9 +95,9 @@ def capture(point, paths):
             require(before == inventory(path) == inventory(payload / str(index)),
                     'Persistent state changed while taking the stopped-writer snapshot')
         records.append({'path': str(path), 'inventory': before})
+    for record in records:
+        require(inventory(record['path']) == record['inventory'], 'Persistent state changed during the snapshot transaction')
     atomic_json(point / 'snapshot.json', records)
-    if hasattr(os, 'sync'):
-        os.sync()
     return records
 
 
@@ -141,8 +143,7 @@ def restore(point):
                 require(stage.exists() and inventory(target) == inventory(failed),
                         'Interrupted file restore found changed destination state')
                 stage.replace(target)
-            if hasattr(os, 'sync'):
-                os.sync()
+            sync_directory(target.parent)
             state['done'].append(index)
             atomic_json(state_file, state)
             continue
@@ -154,7 +155,6 @@ def restore(point):
             if stage.exists():
                 stage.rename(target)
         require(inventory(target) == record['inventory'], 'Restored state failed integrity verification')
-        if hasattr(os, 'sync'):
-            os.sync()
+        sync_directory(target.parent)
         state['done'].append(index)
         atomic_json(state_file, state)

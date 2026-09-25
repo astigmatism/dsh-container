@@ -97,6 +97,16 @@ def prepare(args, source):
     model = json.loads(run([*command, 'config', '--format', 'json']))
     previous = copy.deepcopy(model)
     roles = parse_roles(args.role, model)
+    owned = set(roles) | set(getattr(args, 'owned_service', []))
+    require(owned <= set(model['services']), 'An explicitly owned service is absent')
+    pending = list(owned)
+    while pending:
+        for dependency in model['services'][pending.pop()].get('depends_on', {}):
+            if dependency not in owned:
+                owned.add(dependency)
+                pending.append(dependency)
+    require(owned == set(model['services']),
+            'Compose includes unmapped services; explicitly identify application dependencies with --owned-service or separate unrelated services')
     harness = next(s for s, role in roles.items() if role == 'harness')
     user = model['services'][harness].get('user', '')
     require(bool(re.fullmatch(r'\d+:\d+', user)), 'Harness must declare its numeric UID:GID')

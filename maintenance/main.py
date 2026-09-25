@@ -83,6 +83,7 @@ def main():
     parser.add_argument('--worker-action', choices=('update', 'boot', 'verify'), default='update')
     parser.add_argument('--portal-url', default=os.environ.get('SERVICE_PORTAL_URL', ''))
     parser.add_argument('--role', action='append', default=[])
+    parser.add_argument('--owned-service', action='append', default=[])
     parser.add_argument('--state-path', action='append', default=[])
     parser.add_argument('--external-path', action='append', default=[])
     parser.add_argument('--adopt', action='store_true')

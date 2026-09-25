@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 
-from .common import Failure, LABEL, REPOSITORY, atomic_json, atomic_text, compose_command, digest, inspect, read_json, run
+from .common import Failure, LABEL, REPOSITORY, atomic_json, atomic_text, compose_command, digest, inspect, read_json, run, sync_path, sync_directory
 from .contract import SCRIPT, require, validate_config, validate_manifest, validate_deployment, configuration_bindings, portal_services, verify_portal
 from . import recovery
 
@@ -214,8 +214,11 @@ class Updater:
                 if service in manifest['roles']:
                     config['image'] = images[manifest['roles'][service]]
                 else:
-                    require('@sha256:' in config['image'], 'Unmanaged dependency images must be digest-pinned')
-                    run(['docker', 'pull', config['image']])
+                    if re.fullmatch(r'sha256:[0-9a-f]{64}', config['image']):
+                        inspect('image', config['image'])
+                    else:
+                        require('@sha256:' in config['image'], 'Fixed dependency images must be digest-pinned')
+                        run(['docker', 'pull', config['image']])
                 config['pull_policy'] = 'never'
                 if manifest['roles'].get(service) == 'harness':
                     config.setdefault('environment', {})['HOST_EXEC_IMAGE'] = images['harness']
@@ -227,10 +230,14 @@ class Updater:
             (release_dir / 'scripts').mkdir(mode=0o700)
             shutil.copy2(source / SCRIPT, release_dir / SCRIPT)
             atomic_json(release_dir / 'compose.json', candidate)
-            atomic_json(release_dir / 'deployment.json', manifest)
             atomic_text(release_dir / 'runner-image', images['harness'] + '\n')
             atomic_text(release_dir / 'start-after-network.sh', '#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/scripts/update-and-restart.sh" --boot\n')
             (release_dir / 'start-after-network.sh').chmod(0o700)
+            manifest['maintenance_artifacts'] = {str(path.relative_to(release_dir)): digest(path)
+                for path in [*sorted((release_dir / 'maintenance').rglob('*.py')),
+                             release_dir / 'maintenance/probe.mjs', release_dir / SCRIPT,
+                             release_dir / 'runner-image', release_dir / 'start-after-network.sh']}
+            atomic_json(release_dir / 'deployment.json', manifest)
             validate_deployment(manifest, candidate, self.root, script_root=release_dir)
             run([*compose_command(self.root, release_dir / 'compose.json'), 'config', '--quiet'])
             atomic_json(release_dir / 'provenance.json', {'repository': REPOSITORY, 'revision': revision,
@@ -317,8 +324,9 @@ class Updater:
             run([*compose_command(self.root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
             candidate, manifest = read_json(self.root / 'compose.json'), read_json(self.root / 'deployment.json')
             probe_release(manifest, candidate, self.root)
-            if hasattr(os, 'sync'):
-                os.sync()
+            for name in ('maintenance', SCRIPT, 'start-after-network.sh'):
+                sync_path(self.root / name)
+                sync_directory((self.root / name).parent)
             transaction['phase'] = 'complete'
             atomic_json(self.root / 'transaction.json', transaction)
             self.status('ok', revision=manifest['revision'], recovery_point=str(point),

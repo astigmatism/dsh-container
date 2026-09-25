@@ -64,6 +64,32 @@ def atomic_text(path, text):
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
+    sync_directory(path.parent)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def sync_path(path):
+    """Flush only this transaction's files, never unrelated host filesystems."""
+    path = Path(path)
+    if path.is_symlink():
+        return
+    if path.is_dir():
+        for child in path.iterdir():
+            sync_path(child)
+        sync_directory(path)
+    elif path.is_file():
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def compose_command(root, model=None):

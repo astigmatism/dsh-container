@@ -17,7 +17,7 @@ def registered_files(root):
     files = run(['git', '-C', root, 'ls-files', '--cached', '--others', '--exclude-standard']).splitlines()
     for relative in files:
         path = root / relative
-        if any(relative.startswith(prefix) for prefix in registry['separate_projects']):
+        if relative in registry['separate_projects']:
             continue
         if path.suffix not in ('.yaml', '.yml') or not path.is_file():
             continue

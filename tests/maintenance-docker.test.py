@@ -86,14 +86,14 @@ http.createServer((req,res)=>{if(req.url.includes('token=')){res.writeHead(303,{
 setInterval(()=>{},1000);
 ''')
     (fixture / 'provider.mjs').write_text("import {readFileSync} from 'node:fs'; if(!readFileSync('/data/dsh/session','utf8'))process.exit(1);\n")
-    (fixture / 'driver.py').write_text('''import sys, runpy, shutil, copy, os
+    (fixture / 'driver.py').write_text('''import sys, runpy, shutil, copy, os, uuid
 from pathlib import Path
 sys.path.insert(0, '/opt')
 import maintenance.engine as engine
 from maintenance.engine import Updater
 from maintenance.common import atomic_json, run, compose_command
 def fixture_candidate(self):
-    release=self.root/'releases'/('ci-'+str(os.getpid()))
+    release=self.root/'releases'/('ci-'+uuid.uuid4().hex)
     release.mkdir(parents=True)
     for name in ('scripts','maintenance'):
         shutil.copytree(self.root/name, release/name)
@@ -246,7 +246,7 @@ USER node
     result = update()
     assert result['state'] == 'failed', result
     status = json.loads((root/'maintenance-status.json').read_text())
-    assert status['recovery'] == 'succeeded', status
+    assert status['recovery'] == 'succeeded', (status, result)
     assert json.loads((root/'compose.json').read_text())['services']['application']['labels'][LABEL+'enabled'] == 'true'
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'

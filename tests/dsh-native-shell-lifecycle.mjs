@@ -16,6 +16,8 @@ const { LocalBashExecutor } = await import(require.resolve('@deepseek-ai/dsh-bas
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'dsh-native-shell-lifecycle-'));
 const spillPaths = new Set();
 const ctx = new Context();
+// rc2 exposes a live execution handle; result() waits for final collection.
+const run = async spec => (await ctx.shell.execute(spec)).result();
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 
 async function waitFor(predicate, message, timeoutMs = 5000) {
@@ -69,7 +71,7 @@ try {
   for (const [requested, expected] of [[undefined, 120000], [570000, 570000], [700000, 600000], [5000, 5000]]) {
     const spec = ctx.shell.resolve({ command: 'printf budget-ok', ...(requested === undefined ? {} : { timeoutMs: requested }) });
     assert.equal(spec.timeoutMs, expected);
-    const result = await ctx.shell.run(spec);
+    const result = await run(spec);
     assert.equal(result.timeoutMs, expected);
     assert.equal(result.stdout.text, 'budget-ok');
     assert.equal(result.exitCode, 0);
@@ -81,7 +83,7 @@ try {
   }
   console.log('PASS native default, explicit, capped, and shorter timeout budgets');
 
-  const failed = await ctx.shell.run(ctx.shell.resolve({
+  const failed = await run(ctx.shell.resolve({
     command: `${quote(process.execPath)} -e ${quote("require('node:assert/strict').equal(1, 2)")}`,
     timeoutMs: 5000,
   }));
@@ -116,7 +118,7 @@ setTimeout(() => process.exit(99), 30000);
     const runRoot = await mkdtemp(path.join(temporaryRoot, `${cause}-`));
     const controller = new AbortController();
     const timeoutMs = cause === 'timeout' ? 10000 : 20000;
-    const running = ctx.shell.run(ctx.shell.resolve({
+    const running = run(ctx.shell.resolve({
       command: `exec ${quote(process.execPath)} ${quote(fixture)} parent ${quote(runRoot)}`,
       timeoutMs,
       signal: controller.signal,

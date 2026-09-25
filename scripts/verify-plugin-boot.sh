@@ -89,48 +89,8 @@ probe() {
 probe_browser_client() {
   token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
   [ -n "$token" ] || return 1
-  DSH_BOOT_TOKEN=$token DSH_BOOT_PORT=$port DSH_PROFILE_ROOT=$home/profiles/web \
-    node <<'NODE'
-const { chromium } = require(`${process.env.DSH_PROFILE_ROOT}/node_modules/playwright-core`);
-
-(async () => {
-  const token = process.env.DSH_BOOT_TOKEN;
-  const errors = [];
-  const browser = await chromium.launch({
-    executablePath: "/usr/bin/chromium",
-    headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  });
-  const page = await browser.newPage();
-  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console: ${message.text()}`);
-  });
-  const response = await page.goto(
-    `http://127.0.0.1:${process.env.DSH_BOOT_PORT}/?token=${token}`,
-    { waitUntil: "networkidle", timeout: 30000 },
-  );
-  await page.locator("[data-composer-input]").first().waitFor({ timeout: 30000 });
-  await page.locator("[data-local-speech-button]").first().waitFor({ timeout: 30000 });
-  const state = await page.evaluate(() => ({
-    bodyChars: (document.body?.innerText ?? "").trim().length,
-    composerInputs: document.querySelectorAll("[data-composer-input]").length,
-    dictationButtons: document.querySelectorAll("[data-local-speech-button]").length,
-    moduleLoader: typeof window.__ModuleLoader__,
-  }));
-  await browser.close();
-  if (!response?.ok()) throw new Error(`final page status ${response?.status()}`);
-  if (state.bodyChars < 20) throw new Error(`client body too small: ${state.bodyChars}`);
-  if (state.moduleLoader !== "object") throw new Error(`module loader unavailable: ${state.moduleLoader}`);
-  if (state.composerInputs < 1) throw new Error("Harness composer input was not rendered");
-  if (state.dictationButtons < 1) throw new Error("local dictation control was not mounted");
-  if (errors.length > 0) throw new Error(errors.join("\n"));
-})().catch((error) => {
-  const detail = String(error?.stack ?? error).split(process.env.DSH_BOOT_TOKEN).join("<redacted>");
-  console.error(detail);
-  process.exit(1);
-});
-NODE
+  DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+    node /opt/dsh-build/verify-sidebar-client.mjs || return 1
   DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
     node /opt/dsh-build/verify-file-previews.mjs || return 1
   if [ "${DSH_VERIFY_RESIDENT_CATALOG:-false}" = true ]; then

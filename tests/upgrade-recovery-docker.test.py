@@ -69,7 +69,9 @@ try:
     assert json.loads(recovery.run(['docker', 'inspect', 'deepseek-harness']))[0]['Image'] != old_id
     (project / '.env').write_text('PRIVATE_VALUE=new-value\n')
     recovery.restore(point)
-    assert json.loads(recovery.run(['docker', 'inspect', 'deepseek-harness']))[0]['Image'] == old_id
+    restored = json.loads(recovery.run(['docker', 'inspect', 'deepseek-harness']))[0]
+    assert restored['Image'] == old_id
+    assert 'PRIVATE_VALUE=fixture-$literal' in restored['Config']['Env'], 'literal credential restoration'
     for root in recovery.ROOTS:
         assert (project / root / 'state').read_text() == 'old data'
         assert (point / 'failed-runtime' / root / 'state').read_text() == 'migrated data'

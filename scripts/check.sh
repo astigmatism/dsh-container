@@ -25,8 +25,10 @@ case "${1:-}" in
     export PATH
     sh -n "$project_dir"/scripts/*.sh "$project_dir"/tests/*.sh
     python3 -B "$project_dir/tests/maintenance.test.py"
+    python3 -B "$project_dir/tests/isolated-verification.test.py"
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
     node --test "$project_dir/gateway/external-tls.test.mjs"
+    node --test "$project_dir/gateway/maintenance-gate.test.mjs" "$project_dir/tests/verification-state.test.mjs"
     exit 0
     ;;
   -h|--help)

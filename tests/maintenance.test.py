@@ -22,6 +22,9 @@ from maintenance.qualification import registered_files
 
 class Fixture(unittest.TestCase):
     def setUp(self):
+        qualification = patch('maintenance.engine.qualify_application')
+        self.qualifier = qualification.start()
+        self.addCleanup(qualification.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
@@ -36,6 +39,7 @@ class Fixture(unittest.TestCase):
         (self.root / 'runner-image').write_text('sha256:' + '1' * 64 + '\n')
         self.data = self.base / 'private state'
         self.data.mkdir(mode=0o700)
+        (self.data / 'backend').mkdir(mode=0o700)
         (self.data / 'session').write_text('original session')
         (self.data / 'session').chmod(0o600)
         self.credentials = self.base / 'separate credentials'
@@ -50,7 +54,9 @@ class Fixture(unittest.TestCase):
                          'state_paths': [str(self.data)], 'input_paths': [str(self.credentials)],
                          'artifact_paths': [], 'source_artifacts': []}
         self.model = {'name': 'fixture-app', 'services': {
-            'application': {'image': 'sha256:' + '1' * 64}, 'edge': {'image': 'sha256:' + '2' * 64}}}
+            'application': {'image': 'sha256:' + '1' * 64},
+            'edge': {'image': 'sha256:' + '2' * 64, 'volumes': [{'type': 'bind',
+                'source': str(self.data / 'backend'), 'target': '/run/dsh-backend-auth'}]}}}
         install_labels(self.model, self.manifest, 'sha256:' + '1' * 64)
         self.save()
 
@@ -180,6 +186,33 @@ class RecoveryTests(Fixture):
 
 
 class TransactionTests(Fixture):
+    def test_failed_candidate_acceptance_does_not_stop_production(self):
+        updater, release = Updater(self.root), self.candidate()
+        self.qualifier.side_effect = Failure('isolated inference failed')
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch('maintenance.engine.run') as command, self.assertRaisesRegex(Failure, 'isolated inference'):
+            updater.cutover(release)
+        command.assert_not_called()
+        self.assertFalse((self.root / 'transaction.json').exists())
+        self.assertEqual((self.data / 'session').read_text(), 'original session')
+
+    def test_gateway_is_gated_through_validation_then_published_without_restart(self):
+        updater, release = Updater(self.root), self.candidate()
+        gate = self.data / 'backend/.deployment-maintenance'
+        calls = []
+        def command(args, **kwargs):
+            calls.append(args)
+            if 'up' in args:
+                self.assertTrue(gate.exists(), 'Candidate accepted writes before validation')
+        def verify(*args, **kwargs):
+            self.assertTrue(gate.exists())
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch('maintenance.engine.run', side_effect=command), patch('maintenance.engine.probe_release', side_effect=verify):
+            updater.cutover(release)
+        self.assertFalse(gate.exists())
+        self.assertEqual(sum('up' in command for command in calls), 1)
+        self.assertEqual(json.loads((self.root / 'maintenance-status.json').read_text())['state'], 'ok')
+
     def test_dry_run_is_immutable_and_does_not_build(self):
         updater = Updater(self.root)
         before = recovery.inventory(self.base)

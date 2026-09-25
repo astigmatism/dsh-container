@@ -68,6 +68,7 @@ def probe_release(manifest, model, root, *, portal=True):
     run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/verify-router-contract.mjs',
          '--mode', manifest['mode']])
     if portal:
+        run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/verify-runtime-readiness.mjs'])
         advertiser = validate_config(model, root)[0]
         live = copy.deepcopy(model)
         for service in live['services']:
@@ -78,6 +79,37 @@ def probe_release(manifest, model, root, *, portal=True):
                 if key.startswith(LABEL):
                     require(by_service[service]['Config']['Labels'].get(key) == value, 'Live updater labels differ from the installed contract')
         verify_portal(manifest['portal_url'], model['name'], by_service[advertiser]['Id'])
+
+
+def maintenance_gate(manifest, model):
+    gateway = next(s for s, role in manifest['roles'].items() if role == 'gateway')
+    config = model['services'][gateway]
+    token = Path(config.get('environment', {}).get('HARNESS_BACKEND_TOKEN_FILE', '/run/dsh-backend-auth/launch-token'))
+    for mount in config.get('volumes', []):
+        target = Path(mount['target'])
+        if mount['type'] == 'bind' and token.is_relative_to(target):
+            gate = Path(mount['source']) / token.parent.relative_to(target) / '.deployment-maintenance'
+            require(any(gate.is_relative_to(Path(p)) for p in manifest['state_paths']),
+                    'Gateway maintenance gate must be inside declared application state')
+            require(not gate.is_symlink() and gate.parent.is_dir(), 'Unsafe gateway maintenance gate')
+            return gate
+    raise Failure('Gateway backend authentication must have a declared state bind for transactional maintenance')
+
+
+def qualify_application(manifest, model, root, image):
+    harness = next(s for s, role in manifest['roles'].items() if role == 'harness')
+    rows = validate_containers(manifest, model, root)
+    source = next(row['Id'] for row in rows if row['Config']['Labels']['com.docker.compose.service'] == harness)
+    diagnostics = Path(manifest['root']) / 'verification-diagnostics' / uuid.uuid4().hex
+    diagnostics.mkdir(parents=True, mode=0o700)
+    # Execute the candidate's own verifier. The outer worker only receives the
+    # Docker socket and a private diagnostic directory; its child gets neither.
+    run(['docker', 'run', '--rm', '--init', '--network', 'none', '--user', manifest['user'],
+         '--group-add', str(os.stat('/var/run/docker.sock').st_gid),
+         '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock',
+         '--mount', f'type=bind,src={diagnostics},dst=/diagnostics',
+         '--entrypoint', 'python3', image, '/opt/dsh-build/verify-isolated-runtime.py',
+         '--container', source, '--image', image, '--diagnostics', '/diagnostics'])
 
 
 def pinned_bases(source):
@@ -244,6 +276,13 @@ class Updater:
     def cutover(self, release, *, previous_root=None, previous_model=None):
         old_root = Path(previous_root or self.root)
         old_model, existed = self.old_model(old_root, previous_model or self.model)
+        candidate = read_json(Path(release) / 'compose.json')
+        candidate_manifest = read_json(Path(release) / 'deployment.json')
+        harness = next(s for s, role in candidate_manifest['roles'].items() if role == 'harness')
+        if existed:
+            qualify_application(self.manifest, old_model, old_root, candidate['services'][harness]['image'])
+        gate = maintenance_gate(candidate_manifest, candidate)
+        require(not gate.exists(), 'Another transaction already owns the gateway maintenance gate')
         point = self.root / 'recovery' / (time.strftime('%Y%m%dT%H%M%S-') + uuid.uuid4().hex[:8])
         point.mkdir(parents=True, mode=0o700)
         paths = list(dict.fromkeys(self.manifest['state_paths'] + self.manifest['input_paths']
@@ -254,7 +293,7 @@ class Updater:
         atomic_json(point / 'previous-compose.json', old_model)
         transaction = {'point': str(point), 'previous_root': str(old_root), 'previous_model': old_model,
                        'existed': existed, 'phase': 'prepared', 'paths': paths,
-                       'previous_manifest': self.manifest}
+                       'previous_manifest': self.manifest, 'gate': str(gate)}
         atomic_json(self.root / 'transaction.json', transaction)
         try:
             transaction['phase'] = 'stopping'
@@ -264,6 +303,9 @@ class Updater:
             recovery.capture(point, paths)
             transaction['phase'] = 'captured'
             atomic_json(self.root / 'transaction.json', transaction)
+            # Old writers are stopped and the snapshot is complete. Candidate
+            # ingress stays closed until every post-start check has passed.
+            atomic_text(gate, 'Deployment verification in progress\n')
             for name in ('maintenance',):
                 destination = self.root / name
                 if destination.exists():
@@ -292,9 +334,12 @@ class Updater:
             atomic_json(self.root / 'transaction.json', transaction)
             run([*compose_command(self.root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
             candidate, manifest = read_json(self.root / 'compose.json'), read_json(self.root / 'deployment.json')
+            if not existed:
+                qualify_application(manifest, candidate, self.root, candidate['services'][harness]['image'])
             probe_release(manifest, candidate, self.root)
             transaction['phase'] = 'complete'
             atomic_json(self.root / 'transaction.json', transaction)
+            gate.unlink()
             self.status('ok', revision=manifest['revision'], recovery_point=str(point),
                         boot_activation='host-daemon-reload-required' if manifest.get('boot_unit') else 'unchanged')
             (self.root / 'transaction.json').unlink()
@@ -317,6 +362,9 @@ class Updater:
                     and labels.get('com.docker.compose.service') in transaction['previous_model']['services'],
                     'Recovery found a conflicting Compose deployment; services were not changed')
         if transaction['phase'] == 'complete':
+            gate = maintenance_gate(read_json(self.root / 'deployment.json'), read_json(self.root / 'compose.json'))
+            require(str(gate) == transaction['gate'], 'Completed transaction gate differs from deployment')
+            gate.unlink(missing_ok=True)
             file.unlink()
             return
         self.status('recovering', recovery_point=str(point))

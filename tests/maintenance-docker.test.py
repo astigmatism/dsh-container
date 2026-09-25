@@ -79,6 +79,7 @@ http.createServer((req,res)=>{if(req.url.includes('token=')){res.writeHead(303,{
 setInterval(()=>{},1000);
 ''')
     (fixture / 'provider.mjs').write_text("import {readFileSync} from 'node:fs'; if(!readFileSync('/data/dsh/session','utf8'))process.exit(1);\n")
+    (fixture / 'qualification.py').write_text("print('Synthetic application acceptance; real Harness isolation is a separate required CI gate')\n")
     (fixture / 'driver.py').write_text('''import sys, runpy, shutil, copy, os
 from pathlib import Path
 sys.path.insert(0, '/opt')
@@ -108,6 +109,8 @@ RUN mv /opt/dsh-maintenance/main.py /opt/dsh-maintenance/production-main.py && l
 COPY driver.py /opt/dsh-maintenance/main.py
 COPY application.mjs /opt/fixture/application.mjs
 COPY provider.mjs /opt/dsh-build/verify-router-contract.mjs
+COPY provider.mjs /opt/dsh-build/verify-runtime-readiness.mjs
+COPY qualification.py /opt/dsh-build/verify-isolated-runtime.py
 USER node
 ''')
     run(['docker', 'build', '-t', fixture_image, fixture])

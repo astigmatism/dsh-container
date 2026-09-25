@@ -72,6 +72,7 @@ COPY scripts/verification-browser.mjs /opt/dsh-build/verification-browser.mjs
 COPY scripts/verify-resident-client.mjs /opt/dsh-build/verify-resident-client.mjs
 COPY scripts/verification-state.mjs /opt/dsh-build/verification-state.mjs
 COPY scripts/verify-runtime-readiness.mjs /opt/dsh-build/verify-runtime-readiness.mjs
+COPY scripts/verify-isolated-runtime.py /opt/dsh-build/verify-isolated-runtime.py
 COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
@@ -191,7 +192,7 @@ COPY scripts/verify-native-terminal-client.mjs /opt/dsh-build/verify-native-term
 COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 # The maintenance checkout uses a restrictive umask. Runtime verification runs
 # as the service UID, so new non-executable helpers must remain readable.
-RUN chmod 0644 /opt/dsh-build/*.mjs
+RUN chmod 0644 /opt/dsh-build/*.mjs /opt/dsh-build/*.py
 RUN /usr/local/bin/dsh-verify-plugin-boot
 
 ENV DSH_HOME=/data/dsh \
@@ -214,7 +215,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs gateway/external-tls.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/
+COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs gateway/external-tls.mjs gateway/maintenance-gate.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/
 
 USER node
 ENTRYPOINT ["node", "/opt/dsh-gateway/server.mjs"]

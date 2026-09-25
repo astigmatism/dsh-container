@@ -171,9 +171,17 @@ if [ "$build" -eq 1 ]; then
   gateway_image=local/dsh-container-check:gateway
   router_image=local/dsh-container-check:router
 
-  docker build --target harness --tag "$harness_image" "$project_dir"
-  docker build --target gateway --tag "$gateway_image" "$project_dir"
-  docker build --tag "$router_image" "$project_dir/ollama-router"
+  # Exercise the same restrictive source permissions as a real maintenance
+  # fetch, without changing the checkout or copying private deployment state.
+  python3 -B "$project_dir/tests/build-private-release.py" \
+    "$harness_image" "$gateway_image" "$router_image"
+
+  docker run --rm --network none --read-only --user 12345:12345 \
+    --entrypoint python3 "$harness_image" -B /opt/dsh-maintenance/main.py self-test
+  docker run --rm --network none --read-only --user 12345:12345 \
+    --entrypoint node "$gateway_image" --check /opt/dsh-gateway/server.mjs
+  docker run --rm --network none --read-only --user 12345:12345 \
+    --entrypoint node "$router_image" --check /app/src/server.js
 
   docker run --rm --network none --read-only --tmpfs /tmp \
     --volume "$project_dir:/src:ro" --entrypoint node "$gateway_image" \

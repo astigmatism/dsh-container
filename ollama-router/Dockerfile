@@ -19,7 +19,8 @@ COPY public ./public
 COPY runtime ./runtime
 
 RUN mkdir -p /app/data /app/runtime \
-    && chown -R node:node /app
+    && chown -R node:node /app \
+    && chmod -R a+rX /app
 
 USER node
 EXPOSE 11434 11435

@@ -99,7 +99,10 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/
 
 COPY maintenance /opt/dsh-maintenance
 LABEL io.dsh.maintenance.schema="1"
-RUN python3 -B /opt/dsh-maintenance/main.py self-test
+# Maintenance fetches source with umask 077. Public image resources must stay
+# readable by arbitrary numeric deployment users, independently of source modes.
+RUN chmod -R a+rX /opt/dsh-maintenance \
+    && python3 -B /opt/dsh-maintenance/main.py self-test
 
 COPY plugin/dsh-local-speech /opt/dsh-local-speech
 COPY entrypoint.sh /usr/local/bin/dsh-entrypoint
@@ -174,7 +177,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
-    && chmod -R a+rX /opt/dsh-seed \
+    && chmod -R a+rX /opt/dsh-seed /opt/dsh-defaults /opt/dsh-local-speech \
     && chmod -R a+rwX /opt/dsh-pnpm-store \
     && apt-get purge -y --auto-remove make g++ \
     && rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp
@@ -213,6 +216,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs gateway/external-tls.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/
+RUN chmod -R a+rX /opt/dsh-gateway
 
 USER node
 ENTRYPOINT ["node", "/opt/dsh-gateway/server.mjs"]

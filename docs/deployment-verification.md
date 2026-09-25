@@ -42,5 +42,26 @@ an arbitrary service UID and a deterministic Responses provider. It populates
 a separate production fixture, runs acceptance twice, rejects provider failure,
 and compares session/storage/settings content before and after. Unit tests cover
 cancellation and missing-fixture classification, isolation boundaries and redaction.
-The production adapter/updater must additionally qualify cutover and recovery;
-an isolated acceptance pass by itself is not evidence of rollback correctness.
+The same gate deliberately runs the incident's verifier against that disposable
+production fixture as a negative control: its persisted-state changes must fail
+the assertion that the fixed path passes. Cancellation and handled interruption
+also run against real application processes and must leave production unchanged.
+
+The mandatory `scripts/check.sh --build` gate also builds actual previous release
+`5742e98463c1dcc8a39f7a0e816e304794702530` (Harness 0.1.6-alpha.1). Only the
+maintenance dispatcher is backported for the CI bridge; its application and
+profile remain from that release. The real Portal dispatches the upgrade to the
+candidate, repeats it while an ordinary conversation is canceled/archived, and
+injects a failed post-start check. It verifies preserved conversations and
+automatic recovery using separate deployment, state and credential directories.
+Synthetic remote and managed cases separately qualify adoption, legacy update
+entrypoints, TLS, detached dispatch, and recovery without modifying unrelated
+containers or shared model data.
+
+Candidate acceptance runs while the existing deployment is available. At
+cutover, all application writers stop before the snapshot. The new gateway
+refuses writable requests and WebSocket connections until read-only post-start
+checks pass; removing its private maintenance marker commits the deployment.
+Thus rollback cannot discard writes accepted by an uncommitted candidate.
+Read-only external inputs are never restored over concurrent operator changes.
+A failed check remains a failed update even when the previous deployment recovers.

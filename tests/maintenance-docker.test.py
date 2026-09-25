@@ -247,6 +247,13 @@ USER node
         # Start a checkout-based deployment with custom ports, credentials and an
         # absent update capability. Adoption must preserve it without source edits.
         model['services']['application']['labels'] = {LABEL + 'enabled': 'false'}
+        legacy_entrypoint = None
+        if mode == 'remote':
+            legacy_entrypoint = legacy/'update-and-restart.sh'
+            legacy_entrypoint.write_text('#!/bin/sh\nexec python3 maintain.py\n')
+            legacy_entrypoint.chmod(0o700)
+            model['services']['application']['labels'].update({LABEL+'enabled':'true',
+                LABEL+'script':'update-and-restart.sh', LABEL+'image':fixture_id, LABEL+'user':f'{uid}:{gid}'})
         atomic_json(legacy / 'compose.json', model)
         before_checkout = (legacy / 'compose.json').read_bytes()
         run(['docker', 'compose', '--project-directory', legacy, '-f', legacy / 'compose.json',
@@ -259,7 +266,7 @@ USER node
         roles = ['application=harness', 'edge=gateway'] + (['router=router'] if mode == 'managed' else [])
         args = Namespace(project_directory=legacy, deployment_dir=None, compose_file=[str(legacy/'compose.json')],
             env_file=None, mode=mode, portal_url=portal_url, role=roles, state_path=[], external_path=[],
-            adopt=True, dry_run=True, boot_unit=None)
+            adopt=True, dry_run=True, boot_unit=None, legacy_entrypoint=legacy_entrypoint)
         baseline = recovery.inventory(legacy)
         prepare(args, source)
         assert recovery.inventory(legacy) == baseline and not root.exists()
@@ -339,6 +346,10 @@ USER node
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
+    if not previous_image and mode == 'remote':
+        # Qualify the exact historical deployment-directory adapter path too.
+        # Its forwarder is installed transactionally and preserves arguments.
+        run([legacy_entrypoint, '--verify'])
     (root/'inject-portal-failure').write_text('fixture only')
     result = update()
     assert result['state'] == 'failed', result

@@ -17,7 +17,8 @@ Bootstrap requires Python 3.11+, Git, Docker Engine and Compose v2 on the
 installation host. Use reviewed source, run configuration once for a new
 installation, and set `SERVICE_PORTAL_URL` in the private `.env` file. Existing
 installations must retain their credentials and configuration; do not regenerate
-them. Finish active application work before installing or updating.
+them. Candidate qualification leaves the current application available; cutover
+briefly stops application writers and gates new writes until validation completes.
 
 From the reviewed source directory, preview and install a portable deployment:
 
@@ -40,7 +41,7 @@ For an existing custom Compose deployment, use the generic adoption interface:
   --deployment-dir /srv/example-app/operations \
   --portal-url https://portal.example.test \
   --role application=harness --role edge=gateway \
-  --dry-run
+    --dry-run
 ```
 
 These are synthetic paths and names. Remove `--dry-run` to install. Repeat
@@ -54,6 +55,15 @@ maintenance owns. Declare another fixed-image application dependency with
 Unmapped services fail adoption before any files or containers change.
 Named-volume application state must be migrated to explicit bind
 mounts before adoption; it is never silently omitted from recovery.
+
+If an existing installation advertises a deployment-local adapter such as
+`update-and-restart.sh` invoking `maintain.py`, add
+`--legacy-entrypoint /srv/example-app/update-and-restart.sh`. Adoption verifies
+that this is the currently advertised regular script. It snapshots that script
+and installs a source-controlled forwarding entrypoint in the same transaction;
+rollback restores the original. The adapter no longer refreshes source or runs
+its own unprotected build/start/verify sequence. The Portal keeps its existing
+Update and restart action, backed by the qualified detached maintenance runtime.
 
 Known application-state bind destinations are classified automatically. Declare
 additional writable application state with `--state-path PATH`. Declare host
@@ -117,7 +127,8 @@ Configuration and image identities are retained in `deployment.json`; operationa
 artifacts and image provenance are retained under `releases/`.
 
 Before cutover the worker stops application writers and verifies a complete
-snapshot of declared state, configuration and operational files under `recovery/`.
+snapshot of declared writable state and operational files under `recovery/`.
+Read-only external configuration inputs are never rolled back over operator edits.
 Managed deployments include mutable router state. Shared model libraries are not
 pruned. Recreation uses existing verified images with `--no-build --pull never
 --wait`. Health alone is insufficient: authenticated access, model discovery and

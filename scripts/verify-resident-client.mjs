@@ -55,6 +55,7 @@ try {
   // intentionally have no inference endpoint; only live mode requires replies.
   await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
     'Text-only verification. Do not use tools or access files. Reply with READY.' }] });
+  if (!live) await rpc('cancel', { sessionId });
   const readyDeadline = Date.now() + (live ? 600000 : 90000);
   while ((await rpc('list')).items.find(item => item.sessionId === sessionId)?.running) {
     assert.ok(Date.now() < readyDeadline, 'verification session reached idle');

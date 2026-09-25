@@ -189,11 +189,15 @@ try {
 
   await open(sessions[0], 'missing.png');
   await page.locator('[data-textpreview-failed]').waitFor();
+  // Native rc2 reserves Retry for transient errors. Missing files expose the
+  // persistent header Reload, which remains available during automatic refresh.
+  const reload = page.locator('[data-textpreview-tool="reload"]:visible');
+  await reload.waitFor();
   await writeFile(`${root}/one/missing.png`, png);
-  await page.locator('[data-textpreview-retry]').click();
+  await reload.click();
   await image().waitFor();
   assert.equal(await image().evaluate(img => img.naturalWidth), 1);
-  console.log('Verified missing-image error and Retry recovery.');
+  console.log('Verified missing-image error and native Reload recovery.');
 
   await open(sessions[0], 'note.txt');
   await page.getByText('PREVIEW_one', { exact: true }).waitFor();

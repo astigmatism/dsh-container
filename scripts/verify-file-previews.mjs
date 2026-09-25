@@ -248,8 +248,21 @@ try {
   await page.waitForFunction(() => document.querySelector('.lc-ov-left')?.scrollTop > 0);
   await page.locator('.lc-ov-card').getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 1500, height: 1000 });
-  assert.deepEqual(errors, []);
   console.log('Verified Context Insights data rendering and scrolling.');
+
+  const appearanceBefore = await page.locator('#dsw-appearance-styles').textContent();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByText('Appearance', { exact: true }).click();
+  await page.getByRole('tab', { name: /^Dark Mode/ }).click();
+  await page.getByRole('button', { name: 'Ocean', exact: true }).click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('dsh-ui-appearance.settings'))?.dark?.preset === 'ocean');
+  await page.waitForFunction(before => document.getElementById('dsw-appearance-styles')?.textContent !== before, appearanceBefore);
+  const appearanceAfter = await page.locator('#dsw-appearance-styles').textContent();
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(expected => document.getElementById('dsw-appearance-styles')?.textContent === expected, appearanceAfter);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-ui-appearance.settings')).dark.preset), 'ocean');
+  console.log('Verified Appearance preset controls, applied styles and persistence across browser reload.');
+  assert.deepEqual(errors, []);
 } catch (error) {
   console.error(String(error?.stack ?? error).split(secret).join('<redacted>'));
   console.error((await page.locator('body').innerText().catch(() => '')).slice(-4000));

@@ -119,6 +119,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/migrate-resident-models.mjs
     node --check scripts/migrate-profile-settings.mjs
     node --check scripts/patch-dsh-session-pin.mjs
+    node --check scripts/patch-dsh-appearance.mjs
     node --check scripts/patch-dsh-preset-policy.mjs
     node --check scripts/verify-native-terminal-client.mjs
     node --check scripts/verify-session-migration.mjs

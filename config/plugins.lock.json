@@ -11,7 +11,7 @@
     "dsh-playwright": "0.1.0 (local panel patch; web-transport scopes v6, rc.2 client modules and private Chromium home)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-session-pin": "0.7.15 (rc2 session/workspace navigation patch)",
-    "dsh-ui-appearance": "0.1.11",
+    "dsh-ui-appearance": "0.1.11 (rc2 settings icon patch)",
     "dsh-better-sidebar": "0.21.1"
   },
   "sourceHeads": {

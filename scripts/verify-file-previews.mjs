@@ -250,16 +250,21 @@ try {
   await page.setViewportSize({ width: 1500, height: 1000 });
   console.log('Verified Context Insights data rendering and scrolling.');
 
-  const appearanceBefore = await page.locator('#dsw-appearance-styles').textContent();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByText('Appearance', { exact: true }).click();
+  await page.getByRole('button', { name: 'Dark', exact: true }).click();
+  await page.waitForFunction(() => document.body.hasAttribute('data-ds-dark-theme'));
+  const appearanceBefore = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim());
+  await page.locator('[data-disclosure-row]').filter({ has: page.getByText('Appearance', { exact: true }) }).click();
   await page.getByRole('tab', { name: /^Dark Mode/ }).click();
   await page.getByRole('button', { name: 'Ocean', exact: true }).click();
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('dsh-ui-appearance.settings'))?.dark?.preset === 'ocean');
-  await page.waitForFunction(before => document.getElementById('dsw-appearance-styles')?.textContent !== before, appearanceBefore);
-  const appearanceAfter = await page.locator('#dsw-appearance-styles').textContent();
+  await page.waitForFunction(() => {
+    const dark = JSON.parse(localStorage.getItem('dsh-ui-appearance.settings'))?.dark;
+    return dark?.preset === 'ocean' && getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim().toLowerCase() === dark.accent.toLowerCase();
+  });
+  const appearanceAfter = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim());
+  assert.notEqual(appearanceAfter, appearanceBefore, 'preset changes the rendered accent color');
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForFunction(expected => document.getElementById('dsw-appearance-styles')?.textContent === expected, appearanceAfter);
+  await page.waitForFunction(expected => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim() === expected, appearanceAfter);
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-ui-appearance.settings')).dark.preset), 'ocean');
   console.log('Verified Appearance preset controls, applied styles and persistence across browser reload.');
   assert.deepEqual(errors, []);

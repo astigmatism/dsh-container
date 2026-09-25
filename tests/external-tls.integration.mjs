@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { externalTls } from './external-tls.mjs';
+import { externalTls } from '../gateway/external-tls.mjs';
 
 test('external TLS validates the identity and key without changing files or needing a CA key', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-external-tls-'));

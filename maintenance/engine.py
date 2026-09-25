@@ -284,6 +284,13 @@ class Updater:
         return previous, bool(rows)
 
     def cutover(self, release, *, previous_root=None, previous_model=None):
+        # Recheck after potentially long builds, before any service interruption.
+        # A concurrent operator edit is never silently overwritten.
+        require(read_json(self.root / 'deployment.json') == self.manifest
+                and read_json(self.root / 'compose.json') == self.model,
+                'Deployment configuration changed during maintenance; services remain unchanged')
+        validate_manifest(read_json(Path(release) / 'deployment.json'), self.root)
+        validate_config(read_json(Path(release) / 'compose.json'), self.root, script_root=release)
         old_root = Path(previous_root or self.root)
         old_model, existed = self.old_model(old_root, previous_model or self.model)
         candidate = read_json(Path(release) / 'compose.json')

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from argparse import Namespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,6 +19,8 @@ from maintenance.contract import validate_config, validate_manifest, verify_port
 from maintenance.engine import Updater, install_labels, pinned_bases
 from maintenance import recovery
 from maintenance.qualification import registered_files
+from maintenance.install import prepare
+from maintenance.engine import fetch_source
 
 
 class Fixture(unittest.TestCase):
@@ -183,6 +186,101 @@ class RecoveryTests(Fixture):
         link = self.base / 'symlink'
         link.symlink_to(self.data)
         with self.assertRaises(Failure): recovery.capture(point, [link])
+
+    def test_unchanged_inputs_keep_their_inode_and_timestamp(self):
+        point = self.point()
+        before = (self.credentials / 'auth').stat()
+        recovery.capture(point, [self.credentials / 'auth'])
+        recovery.restore(point)
+        after = (self.credentials / 'auth').stat()
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+
+
+class AdoptionTests(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.source = self.base / 'reviewed source'
+        (self.source / 'scripts').mkdir(parents=True)
+        shutil.copy2(self.script, self.source / 'scripts/update-and-restart.sh')
+        self.compose = self.source / 'custom.yaml'
+        self.compose.write_text('services: {}\n')
+        self.env = self.source / 'private.env'
+        self.env.write_text('DSH_DEPLOYMENT_MODE=external\nSERVICE_PORTAL_URL=http://portal.test\nPRIVATE=preserve-me\n')
+        self.model['services']['application']['user'] = self.manifest['user']
+        self.model['services']['application']['volumes'] = [{'type': 'bind', 'source': str(self.data), 'target': '/data/dsh'}]
+        self.model['services']['edge']['volumes'] = [{'type': 'bind', 'source': str(self.credentials), 'target': '/data/gateway'}]
+        self.args = Namespace(project_directory=self.source, deployment_dir=self.base / 'new operations',
+            compose_file=[str(self.compose)], env_file=str(self.env), mode=None, portal_url='',
+            role=['application=harness', 'edge=gateway'], state_path=[], external_path=[],
+            adopt=True, dry_run=True, boot_unit=None)
+        self.commands = []
+
+    def command(self, args, **kwargs):
+        self.commands.append(args)
+        if 'config' in args: return json.dumps(self.model)
+        if 'info' in args: return 'fixture-engine\n'
+        if 'rev-parse' in args: return 'a'*40+'\n'
+        if 'ps' in args: return ''
+        raise AssertionError(args)
+
+    def prepare(self):
+        with patch('maintenance.install.run', side_effect=self.command), patch('maintenance.install.portal_services'):
+            prepare(self.args, self.source)
+
+    def test_custom_adoption_dry_run_keeps_every_byte_and_preserves_mode(self):
+        before = recovery.inventory(self.base)
+        self.prepare()
+        self.assertEqual(before, recovery.inventory(self.base))
+        self.assertEqual(self.args.mode, 'external')
+        self.assertEqual(self.args.portal_url, 'http://portal.test')
+        self.assertFalse(self.args.deployment_dir.exists())
+        self.assertFalse(any('up' in c or 'build' in c or 'fetch' in c for c in self.commands))
+
+    def test_ordinary_install_cannot_disable_the_contract(self):
+        self.args.adopt = False
+        self.model['services']['application']['labels'][LABEL+'enabled'] = 'false'
+        with self.assertRaisesRegex(Failure, 'enabled'): self.prepare()
+
+    def test_adoption_repairs_disabled_contract_without_touching_original(self):
+        self.model['services']['application']['labels'][LABEL+'enabled'] = 'false'
+        self.prepare()
+        self.assertEqual(self.model['services']['application']['labels'][LABEL+'enabled'], 'false')
+
+    def test_ambiguous_writable_mount_requires_classification(self):
+        workspace = self.base / 'workspace'
+        workspace.mkdir()
+        self.model['services']['application']['volumes'].append({'type': 'bind', 'source': str(workspace), 'target': '/custom'})
+        with self.assertRaisesRegex(Failure, 'Classify'): self.prepare()
+        self.args.external_path = [str(workspace)]
+        self.prepare()
+
+    def test_conflicting_mode_and_role_are_rejected_without_writes(self):
+        self.args.mode = 'managed'
+        with self.assertRaisesRegex(Failure, 'conflicts'): self.prepare()
+        self.args.mode = None
+        self.args.role = ['application=harness']
+        with self.assertRaisesRegex(Failure, 'unambiguous'): self.prepare()
+
+
+class SourceTests(unittest.TestCase):
+    def test_resolve_main_once_then_fetch_that_exact_commit(self):
+        calls = []
+        def command(args, **kwargs):
+            calls.append(args)
+            if 'ls-remote' in args: return 'c'*40+'\trefs/heads/main\n'
+            if 'rev-parse' in args: return 'c'*40+'\n'
+            return ''
+        with patch('maintenance.engine.run', side_effect=command):
+            self.assertEqual(fetch_source(Path('/tmp/synthetic-source')), 'c'*40)
+        self.assertEqual(sum('ls-remote' in c for c in calls), 1)
+        fetch = next(c for c in calls if 'fetch' in c)
+        self.assertEqual(fetch[-1], 'c'*40)
+        self.assertFalse(any('merge' in c or 'reset' in c for c in calls))
+
+    def test_source_failure_never_attempts_checkout(self):
+        with patch('maintenance.engine.run', return_value='not a revision') as command, self.assertRaises(Failure):
+            fetch_source(Path('/tmp/synthetic-source'))
+        self.assertEqual(command.call_count, 1)
 
 
 class TransactionTests(Fixture):

@@ -35,10 +35,15 @@ def launch(root, dry_run=False, action='update'):
             'Updater image lacks the qualified runtime; bootstrap required')
     paths = {str(root): False}
     # Parent mounts permit whole-root restoration without renaming a mountpoint.
-    for path in manifest['state_paths'] + manifest['input_paths'] + manifest['artifact_paths']:
+    for path in manifest['state_paths'] + manifest['artifact_paths']:
         parent = str(Path(path).parent)
         require(parent != '/', 'State/configuration directly under filesystem root needs a narrower deployment directory')
         paths[parent] = False
+    for path in manifest['input_paths']:
+        # Imported configuration and read-only credential inputs are never
+        # rewritten by the transaction. Do not expose their entire parent home.
+        if path not in paths:
+            paths[path] = True
     name = 'dsh-maintenance-' + uuid.uuid4().hex[:12]
     command = ['docker', 'run', '--rm', '--init', '--name', name,
                '--label', 'io.service-portal.maintenance=true', '--user', user,
@@ -108,13 +113,19 @@ def main():
             signal.signal(sig, interrupted)
         Updater(root).update(args.dry_run)
     else:
-        updater = Updater(root)
-        updater.preflight()
-        require(not (root / 'transaction.json').exists(), 'Interrupted update requires recovery before boot or verification')
-        if args.action == 'boot':
-            run([*compose_command(root), 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
-        probe_release(manifest, updater.model, root)
-        print('Deployment and mandatory Portal capability verified')
+        import fcntl
+        with (root / '.maintenance.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Failure('Maintenance is active; boot/verification must wait') from None
+            updater = Updater(root)
+            updater.preflight()
+            require(not (root / 'transaction.json').exists(), 'Interrupted update requires recovery before boot or verification')
+            if args.action == 'boot':
+                run([*compose_command(root), 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
+            probe_release(manifest, updater.model, root)
+            print('Deployment and mandatory Portal capability verified')
 
 
 if __name__ == '__main__':

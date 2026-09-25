@@ -83,8 +83,9 @@ setInterval(()=>{},1000);
     (fixture / 'driver.py').write_text('''import sys, runpy, shutil, copy, os
 from pathlib import Path
 sys.path.insert(0, '/opt')
+import maintenance.engine as engine
 from maintenance.engine import Updater
-from maintenance.common import atomic_json
+from maintenance.common import atomic_json, run, compose_command
 def fixture_candidate(self):
     release=self.root/'releases'/('ci-'+str(os.getpid()))
     release.mkdir(parents=True)
@@ -95,12 +96,23 @@ def fixture_candidate(self):
     model=copy.deepcopy(self.model)
     manifest=copy.deepcopy(self.manifest)
     manifest['revision']='b'*40
-    if (self.root/'inject-portal-failure').exists():
-        model['services']['application']['labels']['io.service-portal.update.enabled']='false'
     atomic_json(release/'compose.json',model)
     atomic_json(release/'deployment.json',manifest)
     return release
 Updater.build_candidate=fixture_candidate
+production_probe=engine.probe_release
+def fixture_probe(manifest,model,root,**kwargs):
+    if kwargs.get('portal',True) and (Path(root)/'inject-portal-failure').exists():
+        # Simulate post-start external drift. The candidate passed the real
+        # pre-cutover contract gate; the live container now loses its button.
+        Path(manifest['state_paths'][0],'session').write_text('migrated fixture history')
+        drift=copy.deepcopy(model)
+        drift['services']['application']['labels']['io.service-portal.update.enabled']='false'
+        file=Path(root)/'synthetic-drift.json'
+        atomic_json(file,drift)
+        run([*compose_command(root,file),'up','-d','--force-recreate','--no-build','--pull','never','--wait','--wait-timeout','60'])
+    return production_probe(manifest,model,root,**kwargs)
+engine.probe_release=fixture_probe
 runpy.run_path('/opt/dsh-maintenance/production-main.py',run_name='__main__')
 ''')
     (fixture / 'Dockerfile').write_text(f'''FROM {harness_image}
@@ -176,6 +188,7 @@ USER node
     assert result['state'] == 'succeeded', result
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
+    assert (state/'session').read_text() == 'original fixture history'
     assert (state/'session').read_text() == 'original fixture history'
     (root/'inject-portal-failure').write_text('fixture only')
     result = update()

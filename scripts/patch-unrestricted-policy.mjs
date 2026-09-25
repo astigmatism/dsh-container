@@ -42,7 +42,13 @@ export function patchResponses(input) {
 }
 
 export function patchCompaction(input) {
-  if (input.includes(marker)) return input;
+  // The runtime validator is separate from schema normalization. Repair older
+  // patched bundles too: the broad v1 replacement hit the resolved-value check
+  // first and left this load-time null rejection in place.
+  const validation = 'if (maxTokens !== void 0) assertPositiveInteger(`${name}.maxTokens`, maxTokens);';
+  const nullableValidation = 'if (maxTokens != null) assertPositiveInteger(`${name}.maxTokens`, maxTokens);';
+  if (input.includes(marker)) return input.includes(validation)
+    ? replace(input, validation, nullableValidation) : input;
   let s;
   if (input.includes('const maxTokens = config.maxTokens ?? headroomTokens;')) {
     s = replace(input, 'const maxTokens = config.maxTokens ?? headroomTokens;',
@@ -57,7 +63,7 @@ export function patchCompaction(input) {
   }
   s = replace(s, 'maxTokens: override?.maxTokens ?? config.maxTokens,',
     'maxTokens: override?.maxTokens === null ? void 0 : override?.maxTokens ?? config.maxTokens,');
-  s = replace(s, 'if (maxTokens !== void 0) assertPositiveInteger', 'if (maxTokens != null) assertPositiveInteger');
+  s = replace(s, validation, nullableValidation);
   s = replace(s, 'const maxTokensSchema = z.number().step(1).min(1);',
     'const maxTokensSchema = z.union([z.number().step(1).min(1), z.const(null)]);');
   return s;

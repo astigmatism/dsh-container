@@ -101,6 +101,10 @@ try {
   const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
   assert.equal(token?.enabled, false);
   assert.notEqual(token?.fiberPhase, 'active');
+  for (const name of ['dsh-web-search-free.js', 'dsh-router-model-discovery.js']) {
+    assert.ok(inventory.entries.some(row => row.moduleName?.endsWith(name) && row.enabled && row.fiberPhase === 'active'),
+      `${name} maintained provider must mount`);
+  }
   for (const preset of inventory.agentPresets) assert.equal(preset.broken, undefined, `${preset.id} preset mounts`);
   console.log('All nine enabled host plugins mounted; Token remained unloaded.');
   for (const folder of ['one', 'two']) {

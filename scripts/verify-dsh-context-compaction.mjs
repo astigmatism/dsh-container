@@ -36,6 +36,19 @@ function config(thresholdRatio = 0.70) {
   };
 }
 
+// Exercise the actual constructor before the method-level pressure fixtures.
+// Object.create alone bypasses the upstream load-time policy validator.
+const { Context } = await import(`file://${DSH_ROOT}/@deepseek-ai/cordis/lib/index.js`);
+for (const maxTokens of [null, 2048]) {
+  const ctx = new Context();
+  try {
+    const engine = new BasicCompactionEngine(ctx, { ...config(), auto: false, maxTokens,
+      modelPolicies: [{ provider: 'fixture', model: 'fixture', maxTokens: null }] });
+    assert.equal(engine.config.maxTokens, maxTokens === null ? undefined : maxTokens);
+    assert.equal(engine.config.modelPolicies[0].maxTokens, null);
+  } finally { await ctx.fiber.dispose(); }
+}
+
 function userEvent(seq) {
   return {
     type: "user/message",

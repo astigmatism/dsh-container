@@ -80,7 +80,8 @@
 
 - insert:
     - id: web-search-duckduckgo
-      name: '../../../.dsh-plugins/dsh-web-search-free.js'
+      # Bundle paths resolve from profiles/web/node_modules/dsh-container-profile.
+      name: '../../../../.dsh-plugins/dsh-web-search-free.js'
       config:
         baseURL: https://html.duckduckgo.com/html/
 
@@ -107,7 +108,7 @@
 
 - insert:
     - id: router-model-discovery
-      name: '../../../.dsh-plugins/dsh-router-model-discovery.js'
+      name: '../../../../.dsh-plugins/dsh-router-model-discovery.js'
       config:
         providers: [ local-ollama, local-everyday ]
         model: local-active

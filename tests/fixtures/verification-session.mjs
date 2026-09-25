@@ -39,8 +39,8 @@ if (process.argv.includes('--remove-verification-workspace')) {
   await rpc('workspace/delete', { workspaceId: workspace.workspaceId });
 }
 if (process.argv.includes('--cancel-archive')) {
-  for (const { sessionId } of (await rpc('session/list')).items) {
-    await rpc('session/cancel', { sessionId });
+  for (const { sessionId, running } of (await rpc('session/list')).items) {
+    if (running) await rpc('session/cancel', { sessionId });
     await rpc('workspace/archiveSession', { sessionId });
   }
 }

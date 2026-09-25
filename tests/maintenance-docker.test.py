@@ -8,6 +8,7 @@ Docker/Compose and Service Portal code is the shipping implementation.
 import copy
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -320,8 +321,10 @@ USER node
         raise AssertionError('Portal maintenance job timed out')
     def user_sessions(*args):
         container = compose('ps', '-q', 'application').strip()
-        return run(['docker','exec','-i',container,'node','--input-type=module','-',*args],
-            data=(source/'tests/fixtures/verification-session.mjs').read_text()).strip()
+        result = subprocess.run(['docker','exec','-i',container,'node','--input-type=module','-',*args],
+            input=(source/'tests/fixtures/verification-session.mjs').read_text(), text=True, capture_output=True)
+        assert result.returncode == 0, re.sub(r'([?&]token=)[^\s]+', r'\1<redacted>', result.stderr)
+        return result.stdout.strip()
     if previous_image:
         before_sessions = user_sessions('--populate')
     result = update()
@@ -369,8 +372,9 @@ USER node
 finally:
     if sys.exc_info()[0] is not None:
         for name in ('application', 'edge', 'provider'):
-            subprocess.run(['docker','compose','--project-directory',str(root),'-f',str(root/'compose.json'),
-                            'logs','--tail','80',name])
+            logs = subprocess.run(['docker','compose','--project-directory',str(root),'-f',str(root/'compose.json'),
+                            'logs','--tail','80',name], capture_output=True, text=True)
+            print(re.sub(r'([?&]token=)[^\s]+', r'\1<redacted>', logs.stdout + logs.stderr))
         for name in ('maintenance-status.json',):
             if (root/name).exists(): print((root/name).read_text())
     subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root/'compose.json'), 'down'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

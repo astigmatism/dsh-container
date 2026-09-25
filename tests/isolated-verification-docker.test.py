@@ -4,6 +4,7 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -138,6 +139,7 @@ try:
 finally:
     if sys.exc_info()[0] is not None:
         for name in (source, router):
-            subprocess.run(['docker', 'logs', '--tail', '80', name])
+            logs = subprocess.run(['docker', 'logs', '--tail', '80', name], capture_output=True, text=True)
+            print(re.sub(r'([?&]token=)[^\s]+', r'\1<redacted>', logs.stdout + logs.stderr))
     subprocess.run(['docker', 'rm', '-f', source, router], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

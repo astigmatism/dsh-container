@@ -48,7 +48,11 @@ These are synthetic paths and names. Remove `--dry-run` to install. Repeat
 recognized automatically; otherwise map every source-built service with
 `--role SERVICE=harness`, `gateway`, or `router`. Managed router initialization
 and router services share the router role. Other application images must be
-digest-pinned. Named-volume application state must be migrated to explicit bind
+digest-pinned. Role mappings and their Compose dependencies identify the services
+maintenance owns. Declare another fixed-image application dependency with
+`--owned-service SERVICE`; separate unrelated services into their own project.
+Unmapped services fail adoption before any files or containers change.
+Named-volume application state must be migrated to explicit bind
 mounts before adoption; it is never silently omitted from recovery.
 
 Known application-state bind destinations are classified automatically. Declare
@@ -76,6 +80,8 @@ as `$$`; retain that representation when editing private environment values.
 
 The default operational directory is `data/deployment` beneath the selected
 project directory. An explicit `--deployment-dir` may choose another directory.
+`--manifest DIR/deployment.json` is equivalent. A bundle inside a Git checkout
+must use an ignored directory; installation rejects an unignored destination.
 Existing operational files are not overwritten. An interrupted adoption records
 `adoption.json`; rerun the same bootstrap command to resume, including recovery
 of an interrupted cutover. The original deployment stays active during building.
@@ -94,9 +100,9 @@ framework is installed.
 
 Use the Portal button, or the installed `scripts/update-and-restart.sh`.
 The source-tree wrapper also finds the default operational bundle. It accepts
-`--manifest FILE`, `--deployment-dir DIR`, and the existing topology flags;
-explicit topology must match the manifest. Host invocation uses the installed
-immutable runner image. The Portal's detached runner needs only its usual project
+`--manifest FILE`, `--deployment-dir DIR`, `--portal-url URL`, and the existing topology flags;
+explicit topology and Portal URL must match the manifest. Host invocation uses
+the installed immutable runner image. The Portal's detached runner needs only its usual project
 and Docker socket mounts; the dispatcher supplies required state mounts to the
 transaction worker. Python, Git and build tools are packaged in that image.
 

@@ -18,7 +18,7 @@ export function externalTls(directory, identity) {
       throw new Error('key mismatch');
     }
     if (!identity || typeof identity !== 'string') throw new Error('missing identity');
-    const result = spawnSync('openssl', ['verify', '-purpose', 'sslserver', '-CAfile', caCert,
+    const result = spawnSync('openssl', ['verify', '-purpose', 'sslserver', '-CAfile', caCert, '-untrusted', serverCert,
       isIP(identity) ? '-verify_ip' : '-verify_hostname', identity, serverCert], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error('untrusted identity');
   } catch {

@@ -28,6 +28,9 @@ class Fixture(unittest.TestCase):
         qualification = patch('maintenance.engine.qualify_application')
         self.qualifier = qualification.start()
         self.addCleanup(qualification.stop)
+        portal = patch('maintenance.engine.portal_services', return_value=[])
+        portal.start()
+        self.addCleanup(portal.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
@@ -146,7 +149,7 @@ class ContractTests(Fixture):
 
     def test_future_compose_must_be_registered(self):
         (self.root / 'config').mkdir()
-        atomic_json(self.root / 'config/deployment-profiles.json', {'schema': 1, 'profiles': {'portable': ['compose.yaml']}, 'separate_projects': ['speech/']})
+        atomic_json(self.root / 'config/deployment-profiles.json', {'schema': 1, 'profiles': {'portable': ['compose.yaml']}, 'separate_projects': ['speech/compose.yaml']})
         (self.root / 'compose.yaml').write_text('services:\n  harness: {}\n')
         (self.root / 'new-target.yaml').write_text('services:\n  harness: {}\n')
         with patch('maintenance.qualification.run', return_value='compose.yaml\nnew-target.yaml\n'), self.assertRaises(Failure):
@@ -241,7 +244,7 @@ class AdoptionTests(Fixture):
         raise AssertionError(args)
 
     def prepare(self):
-        with patch('maintenance.install.run', side_effect=self.command), patch('maintenance.install.portal_services'):
+        with patch('maintenance.install.run', side_effect=self.command), patch('maintenance.install.portal_services'), patch('maintenance.install.validate_engine'):
             prepare(self.args, self.source)
 
     def test_custom_adoption_dry_run_keeps_every_byte_and_preserves_mode(self):
@@ -277,6 +280,12 @@ class AdoptionTests(Fixture):
         self.args.mode = None
         self.args.role = ['application=harness']
         with self.assertRaisesRegex(Failure, 'unambiguous'): self.prepare()
+
+    def test_unrelated_service_cannot_be_silently_adopted(self):
+        self.model['services']['unrelated'] = {'image': 'sha256:' + '9'*64}
+        with self.assertRaisesRegex(Failure, 'unmapped services'): self.prepare()
+        self.args.owned_service = ['unrelated']
+        self.prepare()
 
 
 class SourceTests(unittest.TestCase):
@@ -327,6 +336,24 @@ class TransactionTests(Fixture):
         self.assertFalse(gate.exists())
         self.assertEqual(sum('up' in command for command in calls), 1)
         self.assertEqual(json.loads((self.root / 'maintenance-status.json').read_text())['state'], 'ok')
+    def test_interrupted_transaction_is_recovered_before_any_new_build(self):
+        updater, release = Updater(self.root), self.candidate()
+        def fail(manifest, model, root, **kwargs):
+            (self.data / 'session').write_text('interrupted migration')
+            raise Failure('simulated interruption')
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch.object(updater, 'recover'), patch('maintenance.engine.run'), \
+             patch('maintenance.engine.probe_release', side_effect=fail), self.assertRaises(Failure):
+            updater.cutover(release)
+        self.assertTrue((self.root / 'transaction.json').exists())
+        restarted = Updater(self.root)
+        with patch.object(restarted, 'build_candidate') as build, patch('maintenance.engine.run'), \
+             patch('maintenance.engine.validate_engine'), patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.probe_release'), self.assertRaisesRegex(Failure, 'Recovered interrupted'):
+            restarted.update()
+        build.assert_not_called()
+        self.assertEqual((self.data / 'session').read_text(), 'original session')
+        self.assertFalse((self.root / 'transaction.json').exists())
 
     def test_dry_run_is_immutable_and_does_not_build(self):
         updater = Updater(self.root)

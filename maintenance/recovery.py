@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import stat
 
-from .common import Failure, atomic_json, digest, read_json
+from .common import Failure, atomic_json, digest, read_json, sync_path, sync_directory
 from .contract import require
 
 
@@ -45,6 +45,8 @@ def copy_path(source, destination):
     else:
         copy_file(source, destination)
     require(inventory(source) == inventory(destination), 'Snapshot copy failed integrity or ownership verification')
+    sync_path(destination)
+    sync_directory(destination.parent)
 
 
 def preserve_owner(source, target):
@@ -93,9 +95,9 @@ def capture(point, paths):
             require(before == inventory(path) == inventory(payload / str(index)),
                     'Persistent state changed while taking the stopped-writer snapshot')
         records.append({'path': str(path), 'inventory': before})
+    for record in records:
+        require(inventory(record['path']) == record['inventory'], 'Persistent state changed during the snapshot transaction')
     atomic_json(point / 'snapshot.json', records)
-    if hasattr(os, 'sync'):
-        os.sync()
     return records
 
 
@@ -132,6 +134,19 @@ def restore(point):
             copy_path(original, stage)
         if stage.exists():
             require(inventory(stage) == record['inventory'], 'Interrupted recovery staging failed integrity verification')
+        if target.is_file() and not target.is_symlink() and original.is_file():
+            # Keep manifest, Compose, and dispatcher paths continuously present
+            # so a killed recovery can still be launched from the Portal.
+            if not failed.exists():
+                os.link(target, failed)
+            if inventory(target) != record['inventory']:
+                require(stage.exists() and inventory(target) == inventory(failed),
+                        'Interrupted file restore found changed destination state')
+                stage.replace(target)
+            sync_directory(target.parent)
+            state['done'].append(index)
+            atomic_json(state_file, state)
+            continue
         if failed.exists() and target.exists():
             require(inventory(target) == record['inventory'], 'Interrupted restore found changed destination state')
         else:
@@ -140,5 +155,6 @@ def restore(point):
             if stage.exists():
                 stage.rename(target)
         require(inventory(target) == record['inventory'], 'Restored state failed integrity verification')
+        sync_directory(target.parent)
         state['done'].append(index)
         atomic_json(state_file, state)

@@ -251,6 +251,11 @@ USER node
         before_checkout = (legacy / 'compose.json').read_bytes()
         run(['docker', 'compose', '--project-directory', legacy, '-f', legacy / 'compose.json',
              'up', '-d', '--wait', '--wait-timeout', '120'])
+        def live_gateway_environment():
+            identity = run(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + project,
+                            '--filter', 'label=com.docker.compose.service=edge']).strip()
+            return json.loads(run(['docker', 'inspect', identity]))[0]['Config']['Env']
+        original_gateway_environment = live_gateway_environment()
         roles = ['application=harness', 'edge=gateway'] + (['router=router'] if mode == 'managed' else [])
         args = Namespace(project_directory=legacy, deployment_dir=None, compose_file=[str(legacy/'compose.json')],
             env_file=None, mode=mode, portal_url=portal_url, role=roles, state_path=[], external_path=[],
@@ -279,6 +284,7 @@ USER node
         with patch.object(Updater, 'build_candidate', adopted_candidate), patch('maintenance.engine.verify_application', fixture_application):
             prepare(args, source)
         assert (legacy / 'compose.json').read_bytes() == before_checkout
+        assert sorted(live_gateway_environment()) == sorted(original_gateway_environment)
         (legacy / 'compose.json').unlink()  # Updates now have no source Compose input.
         installed = json.loads((root / 'deployment.json').read_text())
         assert installed['mode'] == mode

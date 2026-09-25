@@ -21,7 +21,7 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$script_dir
 if [ -f "$project_dir/data/deployment/runner-image" ] && [ ! -f "$project_dir/data/deployment/adoption.json" ]; then
-  exec "$project_dir/data/deployment/scripts/update-and-restart.sh" --boot
+  exec "$project_dir/data/deployment/scripts/update-and-restart.sh" --boot "$@"
 fi
 env_file=$project_dir/.env
 unit_name=deepseek-harness-after-network

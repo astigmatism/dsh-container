@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import shutil
 
-from .common import LABEL, REPOSITORY, SCHEMA, atomic_json, read_json, run
+from .common import Failure, LABEL, REPOSITORY, SCHEMA, atomic_json, read_json, run
 from .contract import SCRIPT, require, validate_config, validate_deployment, configuration_bindings, portal_services
 from .engine import Updater, install_labels, validate_engine, validate_containers
 
@@ -45,6 +45,13 @@ def prepare(args, source):
         args.deployment_dir = args.manifest.resolve().parent
     root = Path(args.deployment_dir or original_root / 'data/deployment').resolve()
     require(not (root / '.git').exists() and root != source.resolve(), 'Operational artifacts must be outside the source checkout root')
+    for parent in root.parents:
+        if (parent / '.git').exists():
+            try:
+                run(['git', '-C', parent, 'check-ignore', '--quiet', '--no-index', root / 'deployment.json'])
+            except Exception:
+                raise Failure('An operational bundle inside a checkout must use a Git-ignored directory') from None
+            break
     if (root / 'adoption.json').is_file():
         previous = read_json(root / 'adoption.json')
         require(Path(previous['root']).resolve() == original_root, 'Pending adoption belongs to a different project directory')
@@ -90,6 +97,16 @@ def prepare(args, source):
     model = json.loads(run([*command, 'config', '--format', 'json']))
     previous = copy.deepcopy(model)
     roles = parse_roles(args.role, model)
+    owned = set(roles) | set(getattr(args, 'owned_service', []))
+    require(owned <= set(model['services']), 'An explicitly owned service is absent')
+    pending = list(owned)
+    while pending:
+        for dependency in model['services'][pending.pop()].get('depends_on', {}):
+            if dependency not in owned:
+                owned.add(dependency)
+                pending.append(dependency)
+    require(owned == set(model['services']),
+            'Compose includes unmapped services; explicitly identify application dependencies with --owned-service or separate unrelated services')
     harness = next(s for s, role in roles.items() if role == 'harness')
     user = model['services'][harness].get('user', '')
     require(bool(re.fullmatch(r'\d+:\d+', user)), 'Harness must declare its numeric UID:GID')
@@ -175,6 +192,7 @@ def prepare(args, source):
         validate_config(previous, original_root, script_root=source)
     install_labels(model, manifest, model['services'][harness]['image'])
     validate_deployment(manifest, model, root, script_root=source)
+    validate_engine(manifest)
     require(all(not Path(store).is_relative_to(Path(p)) and not Path(p).is_relative_to(Path(store))
                 for store in model_stores for p in manifest['state_paths'] + manifest['input_paths']),
             'Shared model libraries must remain outside snapshot roots')

@@ -178,7 +178,7 @@ function contractHarness(apply, config = {}) {
           id: `compaction-${turn}-${step}`,
           role: "user",
           content: [{ type: "text", text: "sanitized checkpoint" }],
-          source: { kind: "plugin", plugin: "dsh-compaction-basic" },
+          source: { kind: "compact-basic" },
         },
         surfaceOp: { op: "replace", start: 1, end: 2 },
       });
@@ -233,6 +233,55 @@ function punctuationBlock(label, length = 64) {
   }
   return output;
 }
+
+test("all loop-detector guidance uses a V4 producer-owned message source", async () => {
+  const { apply } = await loadGeneratedPlugin();
+  const expectedSource = { kind: "plugin:dsh-loop-detector" };
+  const assertSource = (message, trigger) => {
+    assert.deepEqual(message.source, expectedSource, `${trigger} emitted an invalid V4 source`);
+  };
+
+  const progress = contractHarness(apply, { minLen: 10000 });
+  progress.begin("Implement the requested change and test it.");
+  await progress.preStep();
+  for (let index = 1; index <= 12; index += 1) {
+    progress.continuation(`Still investigating ${index} ${fixedBlock(`progress-${index}`, 180)}`);
+  }
+  const checkpoint = await progress.preStep();
+  assert.equal(checkpoint.messages.length, 1);
+  assert.match(checkpoint.messages[0].content[0].text, /^\[implementation-checkpoint\]/);
+  assertSource(checkpoint.messages[0], "progress checkpoint");
+
+  const compaction = contractHarness(apply, { minLen: 10000 });
+  compaction.begin("Implement the requested change after inspecting the source.");
+  await compaction.preStep();
+  await compaction.tool("read", { file_path: "src/app.js" });
+  compaction.compact();
+  const recovered = await compaction.preStep();
+  assert.equal(recovered.messages.length, 1);
+  assert.match(recovered.messages[0].content[0].text, /Compaction preserved/);
+  assertSource(recovered.messages[0], "compaction progress fact");
+
+  const output = contractHarness(apply);
+  const repeatedOutput = `${uniqueCodePrelude(12)}${"repeat this semantic phrase; ".repeat(4)}`;
+  output.feed(repeatedOutput);
+  assert.equal(output.steers.length, 1);
+  assert.match(output.steers[0].content[0].text, /Repeated output was detected/);
+  assertSource(output.steers[0], "repeated output correction");
+
+  const search = contractHarness(apply);
+  search.begin("Research the Harness source format.");
+  for (const query of [
+    "deepseek harness v4 source kind",
+    "deepseek harness v4 source kinds",
+    "deepseek harness v4 source kind syntax",
+  ]) {
+    assert.equal((await search.tool("web_search", { query })).dispatched, true);
+  }
+  assert.equal(search.steers.length, 1);
+  assert.match(search.steers[0].content[0].text, /Repeated searches on the same topic/);
+  assertSource(search.steers[0], "repeated search correction");
+});
 
 test("generated plugin ignores the exact resizable-sidebar separator across reasoning chunks", async () => {
   const { apply } = await loadGeneratedPlugin();

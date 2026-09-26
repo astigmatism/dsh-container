@@ -386,7 +386,7 @@ index 0000000000000000000000000000000000000000..273b02d080f572549bf12a2bf8717d64
 +      type: 'text',
 +      text: `[implementation-checkpoint] No source mutation or new test result has occurred yet (${safeCounts(state)}; trigger=${trigger}). If the required discovery is complete, begin a concrete edit/write/test. Otherwise continue gathering distinct evidence tied to a specific implementation unknown. Do not stop solely because of this checkpoint, and keep the configured reasoning effort unchanged.`,
 +    }],
-+    source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++    source: { kind: 'plugin:dsh-loop-detector' },
 +  })
 +}
 +
@@ -400,7 +400,7 @@ index 0000000000000000000000000000000000000000..273b02d080f572549bf12a2bf8717d64
 +      type: 'text',
 +      text: `[semantic-progress] Compaction preserved the progress guard state: ${status}; ${safeCounts(state)}; ${blocker}. If required discovery is complete, begin a concrete edit/write/test. Otherwise continue gathering distinct evidence tied to a specific implementation unknown. Do not stop solely because of this checkpoint.`,
 +    }],
-+    source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++    source: { kind: 'plugin:dsh-loop-detector' },
 +  })
 +}
 +
@@ -572,7 +572,7 @@ index 0000000000000000000000000000000000000000..273b02d080f572549bf12a2bf8717d64
 +          type: 'text',
 +          text: '[loop-detector] Repeated output was detected. Stop the current approach and answer again without repeating any text already produced. Give a concise, complete final answer.',
 +        }],
-+        source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++        source: { kind: 'plugin:dsh-loop-detector' },
 +      }))
 +    } else {
 +      literalRetries.delete(sessionId)
@@ -627,7 +627,7 @@ index 0000000000000000000000000000000000000000..273b02d080f572549bf12a2bf8717d64
 +          type: 'text',
 +          text: '[loop-detector] Repeated searches on the same topic were detected. Stop searching and answer directly from the information already collected. Do not call web_search again.',
 +        }],
-+        source: { kind: 'plugin', plugin: 'dsh-loop-detector' },
++        source: { kind: 'plugin:dsh-loop-detector' },
 +      }))
 +    } else {
 +      literalRetries.delete(sessionId)

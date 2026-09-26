@@ -21,6 +21,16 @@ if (process.argv.includes("--effective-config")) {
 const profileRoot = process.env.DSH_PROFILE_ROOT ?? "/opt/dsh-seed/profiles/web";
 const pluginPath = path.join(profileRoot, "node_modules/dsh-loop-detector/lib/index.js");
 const { apply, inject, DEFAULT_PROGRESS_LIMITS } = await import(pathToFileURL(pluginPath).href);
+const v4Path = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js";
+const { assertV4RowAdmission } = await import(pathToFileURL(v4Path).href);
+
+function assertV4PluginMessage(message, trigger) {
+  assert.deepEqual(message.source, { kind: "plugin:dsh-loop-detector" }, `${trigger} source`);
+  assert.doesNotThrow(
+    () => assertV4RowAdmission({ type: "user/message", data: message }),
+    `${trigger} must pass the installed Harness V4 writer admission`,
+  );
+}
 
 assert.deepEqual(inject, ["agents", "fs", "tools"]);
 
@@ -37,11 +47,14 @@ assert.deepEqual(DEFAULT_PROGRESS_LIMITS, {
 const handlers = new Map();
 const cancels = [];
 const warnings = [];
+const steers = [];
 const session = { id: "installed-semantic-progress", header: { cwd: "/workspace" } };
 const agent = {
   id: session.id,
   session,
-  steer() {},
+  steer(message) {
+    steers.push(message);
+  },
   cancel(cause) {
     cancels.push(cause);
   },
@@ -68,7 +81,7 @@ const ctx = {
   },
 };
 
-apply(ctx, { minLen: 10000, ...DEFAULT_PROGRESS_LIMITS });
+apply(ctx, { minLen: 128, ...DEFAULT_PROGRESS_LIMITS });
 const event = handlers.get("session/event");
 const preStep = handlers.get("agent/pre-step");
 const execute = handlers.get("tools/execute");
@@ -123,6 +136,15 @@ const correction = await preStep(
 );
 assert.equal(correction.messages.length, 1);
 assert.match(correction.messages[0].content[0].text, /trigger=continuation_no_progress_12/);
+assertV4PluginMessage(correction.messages[0], "progress checkpoint");
+assert.throws(
+  () => assertV4RowAdmission({
+    type: "user/message",
+    data: { ...correction.messages[0], source: { kind: "plugin", plugin: "dsh-loop-detector" } },
+  }),
+  /format v4 message requires a producer-owned source kind/,
+  "installed V4 validator must reject the retired plugin source",
+);
 for (let index = 13; index <= 48; index += 1) {
   event(session, {
     type: "assistant/message",
@@ -131,6 +153,23 @@ for (let index = 13; index <= 48; index += 1) {
   });
 }
 assert.equal(cancels.length, 0, "distinct continued discovery must not be cancelled by a step count");
+event(session, {
+  type: "user/message",
+  data: {
+    id: "compaction-fact",
+    role: "user",
+    content: [{ type: "text", text: "sanitized checkpoint" }],
+    source: { kind: "compact-basic" },
+  },
+  surfaceOp: { op: "replace", start: 1, end: 2 },
+});
+const compaction = await preStep(
+  { agent, turn: 1, step: 51, signal: new AbortController().signal },
+  async () => ({ kind: "enter", messages: [] }),
+);
+assert.equal(compaction.messages.length, 1);
+assert.match(compaction.messages[0].content[0].text, /Compaction preserved/);
+assertV4PluginMessage(compaction.messages[0], "compaction progress fact");
 
 event(session, { type: "turn/end", data: { turn: 1, reason: { kind: "aborted" } } });
 begin(2, "Read-only diagnosis; do not edit files.");
@@ -162,4 +201,31 @@ const retry = await runTool("bash", { command: loop("test_second") }, timedOut);
 assert.equal(retry.result.error.info.code, "REPEATED_TEST_TIMEOUT");
 assert.match(JSON.stringify(retry.result.content), /test-output\.log/);
 assert.match(cancels.at(-1).reason, /guard=repeated_test_timeout/);
-console.log("Verified semantic progress, incident test-batch recovery, timeout output preservation, and repeated-timeout containment.");
+
+begin(4, "Answer the request concisely.");
+event(session, {
+  type: "assistant/chunk",
+  data: {
+    turn: 4,
+    step: 1,
+    chunk: { type: "text-delta", index: 0, text: "meaningful repeated output. ".repeat(8) },
+  },
+});
+assert.equal(steers.length, 1);
+assert.match(steers[0].content[0].text, /Repeated output was detected/);
+assertV4PluginMessage(steers[0], "repeated output correction");
+
+event(session, { type: "turn/end", data: { turn: 4, reason: { kind: "completed" } } });
+begin(5, "Research the Harness source format.");
+for (const query of [
+  "deepseek harness v4 source kind",
+  "deepseek harness v4 source kinds",
+  "deepseek harness v4 source kind syntax",
+]) {
+  assert.equal((await runTool("web_search", { query })).dispatched, true);
+}
+assert.equal(steers.length, 2);
+assert.match(steers[1].content[0].text, /Repeated searches on the same topic/);
+assertV4PluginMessage(steers[1], "repeated search correction");
+
+console.log("Verified installed V4 loop-detector messages, semantic progress, test-batch recovery, and timeout containment.");

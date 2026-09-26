@@ -9,7 +9,7 @@ overrides:
   '@lezer/highlight': 1.2.3
 
 patchedDependencies:
-  dsh-loop-detector@1.0.0: 8057a9f89bffb483c3dfecb5d2a1ad9e2f81dfedf233d05ea34d4454c90cc3fe
+  dsh-loop-detector@1.0.0: 23bf6c14a1c3b7d9879f9a912df0da166e2a9ec934a9d7d23dd835b4ed5da930
   dsh-playwright@0.1.0: 650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457
 
 importers:
@@ -42,7 +42,7 @@ importers:
         version: link:../../../dsh-local-speech
       dsh-loop-detector:
         specifier: 1.0.0
-        version: 1.0.0(patch_hash=8057a9f89bffb483c3dfecb5d2a1ad9e2f81dfedf233d05ea34d4454c90cc3fe)(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))
+        version: 1.0.0(patch_hash=23bf6c14a1c3b7d9879f9a912df0da166e2a9ec934a9d7d23dd835b4ed5da930)(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))
       dsh-playwright:
         specifier: 0.1.0
         version: 0.1.0(patch_hash=650411d2b5bcbbf51e2537c333085c411dd00e358d98ad80495c2319e2f50457)(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))
@@ -1590,7 +1590,7 @@ snapshots:
       '@deepseek-ai/cordis': 4.0.4
       '@deepseek-ai/schemastery': 3.18.4
 
-  dsh-loop-detector@1.0.0(patch_hash=8057a9f89bffb483c3dfecb5d2a1ad9e2f81dfedf233d05ea34d4454c90cc3fe)(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)):
+  dsh-loop-detector@1.0.0(patch_hash=23bf6c14a1c3b7d9879f9a912df0da166e2a9ec934a9d7d23dd835b4ed5da930)(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)):
     dependencies:
       '@deepseek-ai/cordis': 4.0.4
       '@deepseek-ai/dsh-llm': 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)

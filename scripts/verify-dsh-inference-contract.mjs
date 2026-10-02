@@ -152,7 +152,7 @@ const replayContext = {
       role: "toolResult",
       toolCallId: "call_1|fc_1",
       toolName: "lookup",
-      content: [{ type: "text", text: "ready" }],
+      content: [{ type: "text", text: "ready" }, { type: "image", data: "c3ludGhldGljLWltYWdlLWJ5dGVz", mimeType: "image/png" }],
       timestamp: 2,
     },
   ],
@@ -164,5 +164,6 @@ assert.deepEqual(converted.map((item) => item.type), [
   "function_call_output",
 ]);
 assert.equal(converted[0].encrypted_content, reasoningItem.encrypted_content);
+assert.ok(converted[2].output.some(block => block.type === "input_image" && block.image_url === "data:image/png;base64,c3ludGhldGljLWltYWdlLWJ5dGVz"), "tool screenshot pixels survive Responses conversion");
 
 console.log("Verified per-request budgeting, concurrency, retry ownership, reasoning-off, and tool-continuation replay.");

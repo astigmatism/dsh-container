@@ -573,8 +573,8 @@ when private hosts are enabled.
 The CLI's dependency graph is also locked in `config/dsh-runtime.package-lock.json`
 and installed with `npm ci`. Pinning only the top-level CLI admits newer internal
 prereleases through upstream caret ranges. This lock pins every Harness package
-to 0.1.7-rc.2 and Cordis to 4.0.4, using published packages resolved on
-2026-09-24. Regenerate and review both locks with any Harness upgrade.
+to 0.2.0-rc.2 and Cordis to 4.0.4, using published packages resolved on
+2026-10-02. Regenerate and review both locks with any Harness upgrade.
 
 Ordinary `docker compose build` uses the Harness version and upstream commit
 pinned in `Dockerfile` on Windows, macOS, and Linux. Legacy `DSH_VERSION` and

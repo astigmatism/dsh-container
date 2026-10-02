@@ -16,9 +16,13 @@ export function apply(ctx) {
       if (!tool) throw new Error(`Tool unavailable: ${name}`);
       const timer = abortAfterMs ? setTimeout(() => abort.abort(), abortAfterMs) : undefined;
       try {
-        const value = await tool.execute(args, { callId: randomUUID(), agent: { session: { id: sessionId } }, signal: abort.signal });
+        const execution = { callId: randomUUID(), name, arguments: args, token: {}, agent: { session: { id: sessionId } }, signal: abort.signal };
+        const value = await tool.execute(args, execution);
+        // Exercise the installed Harness value validation and image projection,
+        // not only the plugin's renderer. No fixture code is shipped in a profile.
+        const result = ctx.tools.createSuccessResult(execution, tool, value);
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ value, content: tool.output.render(args, value) }));
+        res.end(JSON.stringify({ value: result.value, content: result.content }));
       } finally { clearTimeout(timer); }
     } catch (error) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: error.message })); }
   } }));

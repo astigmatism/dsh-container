@@ -192,6 +192,7 @@ if [ "$build" -eq 1 ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
+    python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --external
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
   fi
 
@@ -256,12 +257,12 @@ if [ "$build" -eq 1 ]; then
     const conversationPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
     const deliverablesPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
     const tokenPath = "/opt/dsh-seed/profiles/web/node_modules/@zoytown/dsh-token/lib/index.js";
-    const playwrightPath = "/opt/dsh-seed/profiles/web/node_modules/dsh-ego-browser/lib/index.js";
+    const egoPath = "/opt/dsh-seed/profiles/web/node_modules/dsh-ego-browser/lib/index.js";
     const connectionPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js";
     const conversation = await readFile(conversationPath, "utf8");
     const deliverables = await readFile(deliverablesPath, "utf8");
     const token = await readFile(tokenPath, "utf8");
-    const playwright = await readFile(playwrightPath, "utf8");
+    const ego = await readFile(egoPath, "utf8");
     const connection = await readFile(connectionPath, "utf8");
     Function(conversation);
     Function(deliverables);
@@ -294,7 +295,7 @@ if [ "$build" -eq 1 ]; then
     if (!token.includes("dsh-token-session-format-v3-compat-v1")) {
       throw new Error("dsh-token is missing format v3 compatibility");
     }
-    if (!playwright.includes("dsh-ego-container-v1")) {
+    if (!ego.includes("dsh-ego-container-v1")) {
       throw new Error("dsh-ego-browser is missing scoped web transport compatibility");
     }
     if (!connection.includes("dsh-container-web-launch-token-v1")) {

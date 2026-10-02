@@ -31,7 +31,7 @@ from maintenance.contract import configuration_bindings
 PORTAL_REVISION = 'ed02de0b4842b705044b90e85ae124466c529d63'
 NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436'
 harness_image, gateway_image = sys.argv[1:3]
-mode = 'managed' if '--managed' in sys.argv[3:] else 'remote'
+mode = 'managed' if '--managed' in sys.argv[3:] else 'external' if '--external' in sys.argv[3:] else 'remote'
 temporary = Path(tempfile.mkdtemp(prefix='dsh-maintenance-ci-')).resolve()
 legacy = temporary / 'checkout'
 legacy.mkdir()
@@ -45,6 +45,7 @@ for directory in (state, credentials, credentials / 'tls', temporary / 'backend'
 (state / 'ego-browser/profile/Default/Cookies').write_bytes(b'synthetic-browser-profile')
 (temporary / 'backend/launch-token').write_text('a' * 43)
 project = 'dsh-maintenance-ci-' + mode
+external_network = project + '-shared-network' if mode == 'external' else None
 portal_name = project + '-portal'
 fixture_image = 'local/dsh-maintenance-ci:runner'
 portal_image = 'local/dsh-maintenance-ci:portal'
@@ -175,6 +176,11 @@ USER node
                       {'type': 'bind', 'source': str(temporary / 'backend'), 'target': '/run/dsh-backend-auth', 'read_only': True}],
           'healthcheck': {'test': ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3081/healthz').then(r=>{if(!r.ok)process.exit(1)})"], 'interval': '1s', 'timeout': '3s', 'retries': 30}}
     }}
+    if external_network:
+        run(['docker', 'network', 'create', external_network])
+        model['networks'] = {'shared_model': {'name': external_network, 'external': True}}
+        model['services']['application']['networks'] = {'shared_model': {}}
+        network_id = json.loads(run(['docker', 'network', 'inspect', external_network]))[0]['Id']
     if mode == 'managed':
         router_state = temporary / 'router-state'
         router_state.mkdir()
@@ -276,11 +282,16 @@ USER node
     assert (state/'root-owned').stat().st_uid == 0
     assert json.loads(run(['docker','inspect',unrelated]))[0]['Id'] == unrelated_id
     assert json.loads(run(['docker','inspect',unrelated]))[0]['State']['Running']
+    if external_network:
+        assert json.loads(run(['docker', 'network', 'inspect', external_network]))[0]['Id'] == network_id
+        assert json.loads((root/'compose.json').read_text())['networks']['shared_model']['external'] is True
     if mode == 'managed':
         assert (router_state/'router-history').read_text() == 'original router history'
         assert (model_store/'model.blob').read_bytes() == b'synthetic shared model blob'
-    print('Real Portal runner verified: detached dispatch, external state mounts, authenticated IP-only TLS, update and automatic rollback.')
+    print(f'Real Portal runner ({mode}) verified: detached dispatch, external state mounts, authenticated IP-only TLS, update and automatic rollback.')
 finally:
     subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root/'compose.json'), 'down'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(['docker', 'rm', '-f', portal_name, project + '-unrelated'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if external_network:
+        subprocess.run(['docker', 'network', 'rm', external_network], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     shutil.rmtree(temporary)

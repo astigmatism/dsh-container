@@ -9,7 +9,7 @@ import { destination, publicAddress, startBrowserProxy } from '../plugin/dsh-ego
 import { wrapTool, currentSpace, conversationSpace, browserEnvironment, scopeSpaces } from '../plugin/dsh-ego-adapter/integration.mjs';
 
 test('network policy refuses private addresses and mixed DNS, and pins the checked address', async () => {
-  for (const address of ['127.0.0.1', '10.2.3.4', '192.168.1.5', '172.16.1.2', '169.254.169.254', '100.64.0.1', '::1', 'fc00::1', '::ffff:127.0.0.1', '2002:7f00:1::']) assert.equal(publicAddress(address), false, address);
+  for (const address of ['127.0.0.1', '10.2.3.4', '192.168.1.5', '172.16.1.2', '169.254.169.254', '100.64.0.1', '::1', 'fc00::1', '::ffff:127.0.0.1', '2002:7f00:1::', '2001::7f00:1', '2001:0000:1::', '2001:0db8::1']) assert.equal(publicAddress(address), false, address);
   assert.equal(publicAddress('8.8.8.8'), true);
   await assert.rejects(destination('fixture.invalid', false, async () => [{ address: '8.8.8.8' }, { address: '127.0.0.1' }]));
   assert.equal(await destination('fixture.invalid', false, async () => [{ address: '8.8.8.8' }]), '8.8.8.8');

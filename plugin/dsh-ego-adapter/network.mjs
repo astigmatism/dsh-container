@@ -16,7 +16,7 @@ export function publicAddress(address) {
   }
   // Only globally routable IPv6 unicast; reject local, mapped and transition ranges.
   return isIP(value) === 6 && /^[23]/.test(value) &&
-    !value.startsWith('2001:db8:') && !value.startsWith('2002:') && !value.startsWith('2001:0:');
+    !/^2001:0?db8:/.test(value) && !value.startsWith('2002:') && !/^2001:(?:0{1,4}:|:)/.test(value);
 }
 
 export async function destination(hostname, allowPrivate, resolver = lookup) {

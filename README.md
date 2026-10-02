@@ -99,7 +99,7 @@ not survive a Harness restart.
 Agent tools follow the selected preset. Standard uses Bash and background
 jobs; Minimal has a persistent Bash session. The upgrade preserves the user's
 preset selection. Better Sidebar 0.24.1 no longer supplies `terminal_*` tools.
-The native **ego browser** tab and Sidebar file activity remain available.
+The native **Agent Browser** tab and Sidebar file activity remain available.
 
 The image compiles the core `node-pty` dependency, then exercises a real PTY.
 Authenticated browser qualification checks the terminal tab, incremental output,
@@ -118,7 +118,7 @@ and the pre-upgrade data snapshot.
 
 The web profile includes `dsh-ego-browser` inside the Harness image. It drives
 headless Chromium through the `ego_*` tools and displays it in Better Sidebar's
-native **ego browser** tab, with live frames and manual mouse/keyboard control.
+native **Agent Browser** tab, with live frames and manual mouse/keyboard control.
 No additional container or published browser-control port is required.
 
 Conversation defaults and named spaces are scoped to the calling Harness session.

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
@@ -95,7 +96,7 @@ try {
     const selection = { provider: choice.provider, model: choice.model, reasoningEffort: index ? 'high' : 'off' };
     assert.deepEqual((await rpc('selectModel', { sessionId, ...selection })).selected, selection);
     const deadline = Date.now() + 15000;
-    while (JSON.stringify((await rpc('modelCatalog')).default) !== JSON.stringify(selection)) {
+    while (!isDeepStrictEqual((await rpc('modelCatalog')).default, selection)) {
       assert.ok(Date.now() < deadline, 'model and reasoning default persisted'); await delay(100);
     }
     await page.reload({ waitUntil: 'domcontentloaded' });

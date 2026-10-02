@@ -92,9 +92,23 @@ capture and the shipping HTTPS gateway with a fixture transcription backend.
 Portal rehearsals preserve and restore a synthetic browser profile alongside
 session state and previous images.
 
+On 2026-10-02, both existing resident routes returned `READY` through the router's
+Responses API with medium reasoning. Daytime also interpreted the actual
+canvas-only PNG captured by ego in [CI run 36985783667](https://github.com/astigmatism/dsh-container/actions/runs/36985783667)
+(commit `ecf9366c`): a blue circle on the left of a white canvas, vertically
+centered. The prompt supplied no shape or color hints. That image was sent as a
+Responses `function_call_output` image. This proves the screenshot pixels and
+resident vision route; the selected deployment still needs its full application
+acceptance after update. Nighttime remains text-only by the existing policy.
+
+The synthetic microphone round trip also passed in a disposable native host
+setup using the shipping gateway and fake Chromium microphone: transcription
+insertion, backend failure presentation, and recorder-failure track cleanup.
+Linux container qualification remains authoritative for the release.
+
 Outstanding acceptance must be recorded with the exact commit and CI run. Do not
-mark unexecuted cases as passing. Real resident-model screenshot interpretation
-and a physical microphone check require the selected deployment and operator.
+mark unexecuted cases as passing. A physical microphone check requires the
+selected deployment and operator.
 
 ## Release and rollback
 

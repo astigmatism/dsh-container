@@ -14,11 +14,14 @@ class Failure(RuntimeError):
     pass
 
 
-def run(args, *, cwd=None, data=None, env=None):
+def run(args, *, cwd=None, data=None, env=None, operation=None):
     result = subprocess.run([str(x) for x in args], cwd=cwd, input=data,
                             capture_output=True, text=True, env=env)
     if result.returncode:
-        raise Failure(f'{Path(str(args[0])).name} failed (exit {result.returncode}); private output withheld')
+        # Callers supply a public operation label, never arguments, environment,
+        # stdin or captured output. Subprocess diagnostics can contain secrets.
+        prefix = f'{operation}: ' if operation else ''
+        raise Failure(f'{prefix}{Path(str(args[0])).name} failed (exit {result.returncode}); private output withheld')
     return result.stdout
 
 

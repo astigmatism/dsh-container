@@ -154,3 +154,36 @@ resident models and reasoning persistence, native ego controls, screenshot
 vision, saved website logins, dictation and Portal Update/restart availability.
 Complete the physical microphone check with the operator. Append dated production
 results here, separating observed behavior from remaining limitations.
+
+## 2026-10-02 production update failure
+
+The operator's Service Portal update to `eab8a19` built both replacement images,
+created a recovery point at 15:50:23 UTC, and reached candidate startup. It then
+failed verification and completed automatic recovery at 15:53:38 UTC. The
+installed manifest returned to `bb606095`; Portal reported both previous images
+running and healthy, with Update and restart still available. No transaction
+remained pending. This is rollback evidence, not acceptance of the new release.
+
+The installed `bb606095` worker calls
+`/opt/dsh-build/verify-dsh-playwright-stream.mjs` after cutover. The 0.2 image had
+removed that entry point. Copying new maintenance files during cutover does not
+replace the Python worker already running in the old image. That caller/image
+incompatibility guarantees a failed check if preceding checks succeed. The old
+worker discarded subprocess output, so the exact first failing command in this
+production attempt cannot be recovered from its status record.
+
+The compatibility entry point now delegates to the authenticated ego route
+verifier. It installs no Playwright browser plugin or agent tools. Schema 1
+maintenance entry points must remain callable by existing workers when a plugin
+or implementation changes. Future command failures name the operation or
+verifier in both public errors and private status, while keeping arguments,
+credentials and subprocess output undisclosed. Status retains the rollback result.
+
+The additional remote-topology CI rehearsal runs the immutable `bb606095`
+maintenance package against candidate images. A deliberately missing legacy
+entry point must fail and roll back; the repaired candidate must complete and
+replace the old runner. Model inference is synthetic in this transaction test;
+the full image boot gate separately executes the legacy browser entry point
+against real Harness 0.2 and ego authentication routes. The remaining topology,
+state/image rollback, browser and dictation gates still apply. Production retry
+and physical microphone acceptance remain operator-controlled and pending.

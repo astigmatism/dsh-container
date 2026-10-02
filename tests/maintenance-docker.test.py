@@ -29,6 +29,7 @@ from maintenance import recovery
 from maintenance.contract import configuration_bindings
 
 PORTAL_REVISION = 'ed02de0b4842b705044b90e85ae124466c529d63'
+LEGACY_REVISION = 'bb6060953a9049c07f5756760ce3723df30dc667'
 NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436'
 harness_image, gateway_image = sys.argv[1:3]
 mode = 'managed' if '--managed' in sys.argv[3:] else 'external' if '--external' in sys.argv[3:] else 'remote'
@@ -94,7 +95,8 @@ from pathlib import Path
 sys.path.insert(0, '/opt')
 import maintenance.engine as engine
 from maintenance.engine import Updater
-from maintenance.common import atomic_json, run, compose_command
+from maintenance.common import atomic_json, atomic_text, run, compose_command
+from unittest.mock import patch
 def fixture_candidate(self):
     release=self.root/'releases'/('ci-'+uuid.uuid4().hex)
     release.mkdir(parents=True)
@@ -105,11 +107,30 @@ def fixture_candidate(self):
     model=copy.deepcopy(self.model)
     manifest=copy.deepcopy(self.manifest)
     manifest['revision']='b'*40
+    next_image=Path('/opt/fixture/candidate-image')
+    if next_image.exists():
+        if (self.root/'inject-missing-legacy-gate').exists():
+            next_image=Path('/opt/fixture/missing-entry-image')
+        image=next_image.read_text().strip()
+        model['services']['application']['image']=image
+        engine.install_labels(model,manifest,image)
+        manifest['images']={s:c['image'] for s,c in model['services'].items()}
+        atomic_text(release/'runner-image',image+'\\n')
     atomic_json(release/'compose.json',model)
     atomic_json(release/'deployment.json',manifest)
     return release
 Updater.build_candidate=fixture_candidate
+original_application=engine.verify_application
 def fixture_application(manifest,by_service):
+    # Execute the installed runner's actual verifier list. External inference
+    # is synthetic here; each command must still exist in the candidate image.
+    # The image boot gate executes the legacy browser entry point against the
+    # real authenticated ego plugin, including rejection cases.
+    def check_entry_point(args,**kwargs):
+        assert args[:2]==['docker','exec'] and args[3]=='node', args[:4]
+        run(args[:4]+['--check',args[4]])
+    with patch.object(engine,'run',check_entry_point):
+        original_application(manifest,by_service)
     run(['docker','exec',by_service['application']['Id'],'node','/opt/dsh-build/verify-router-contract.mjs'])
 engine.verify_application=fixture_application
 production_probe=engine.probe_release
@@ -145,6 +166,40 @@ USER node
 ''')
     run(['docker', 'build', '-t', fixture_image, fixture])
     fixture_id = json.loads(run(['docker', 'image', 'inspect', fixture_image]))[0]['Id']
+    initial_id = fixture_id
+    if mode == 'remote':
+        # The worker keeps running its installed Python after cutover. A
+        # rehearsal using only today's updater cannot catch removed APIs that
+        # an older worker still invokes against the replacement application.
+        old_source = temporary / 'legacy-maintenance-source'
+        run(['git', 'init', '--quiet', old_source])
+        run(['git', '-C', old_source, 'fetch', '--quiet', '--depth=1', REPOSITORY, LEGACY_REVISION])
+        run(['git', '-C', old_source, 'checkout', '--quiet', '--detach', LEGACY_REVISION])
+        old_fixture = temporary / 'legacy-runner'
+        old_fixture.mkdir()
+        broken_fixture = temporary / 'missing-legacy-gate'
+        broken_fixture.mkdir()
+        (broken_fixture / 'Dockerfile').write_text(f'FROM {fixture_image}\nUSER root\nRUN rm /opt/dsh-build/verify-dsh-playwright-stream.mjs\nUSER node\n')
+        broken_image = 'local/dsh-maintenance-ci:missing-legacy-gate'
+        run(['docker', 'build', '-t', broken_image, broken_fixture])
+        broken_id = json.loads(run(['docker', 'image', 'inspect', broken_image]))[0]['Id']
+        shutil.copytree(old_source / 'maintenance', old_fixture / 'maintenance')
+        shutil.copy2(fixture / 'driver.py', old_fixture / 'driver.py')
+        (old_fixture / 'candidate-image').write_text(fixture_id + '\n')
+        (old_fixture / 'missing-entry-image').write_text(broken_id + '\n')
+        (old_fixture / 'Dockerfile').write_text(f'''FROM {fixture_image}
+USER root
+COPY maintenance/ /opt/dsh-maintenance/
+RUN mv /opt/dsh-maintenance/main.py /opt/dsh-maintenance/production-main.py
+COPY driver.py /opt/dsh-maintenance/main.py
+COPY candidate-image /opt/fixture/candidate-image
+COPY missing-entry-image /opt/fixture/missing-entry-image
+RUN chmod -R a+rX /opt/dsh-maintenance /opt/fixture
+USER node
+''')
+        legacy_image = 'local/dsh-maintenance-ci:legacy-runner'
+        run(['docker', 'build', '-t', legacy_image, old_fixture])
+        initial_id = json.loads(run(['docker', 'image', 'inspect', legacy_image]))[0]['Id']
     gateway_id = json.loads(run(['docker', 'image', 'inspect', gateway_image]))[0]['Id']
     run(['docker', 'run', '--rm', '--user', '0:0',
          '--mount', f'type=bind,src={state},dst=/data/dsh',
@@ -162,7 +217,7 @@ USER node
     (credentials / 'tls/issuer.key').unlink()
     baseline_tls = (credentials / 'tls/server.crt').read_bytes()
     model = {'name': project, 'services': {
-        'application': {'image': fixture_id, 'user': f'{uid}:{gid}',
+        'application': {'image': initial_id, 'user': f'{uid}:{gid}',
           'entrypoint': ['node', '/opt/fixture/application.mjs'],
           'volumes': [{'type': 'bind', 'source': str(state), 'target': '/data/dsh'},
                       {'type': 'bind', 'source': str(temporary / 'backend'), 'target': '/run/dsh-backend-auth'}],
@@ -219,7 +274,7 @@ USER node
         release.mkdir(parents=True)
         for name in ('scripts', 'maintenance'):
             shutil.copytree(updater.root / name, release / name)
-        (release / 'runner-image').write_text(fixture_id + '\n')
+        (release / 'runner-image').write_text(initial_id + '\n')
         (release / 'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
         manifest = copy.deepcopy(updater.manifest)
         manifest['revision'] = 'a'*40
@@ -261,8 +316,24 @@ USER node
                 return record
             time.sleep(1)
         raise AssertionError('Portal maintenance job timed out')
+    if mode == 'remote':
+        (root / 'inject-missing-legacy-gate').write_text('fixture only')
+        result = update()
+        assert result['state'] == 'failed', result
+        status = json.loads((root / 'maintenance-status.json').read_text())
+        assert status['recovery'] == 'succeeded', status
+        assert json.loads((root / 'compose.json').read_text())['services']['application']['image'] == initial_id
+        assert (state / 'session').read_text() == 'original fixture history'
+        assert (state / 'ego-browser/profile/Default/Cookies').read_bytes() == b'synthetic-browser-profile'
+        (root / 'inject-missing-legacy-gate').unlink()
+        print('Pinned legacy updater rejected the missing browser verifier and restored the prior generation.')
     result = update()
     assert result['state'] == 'succeeded', result
+    if mode == 'remote':
+        active = json.loads((root / 'compose.json').read_text())
+        assert active['services']['application']['image'] == fixture_id
+        assert active['services']['application']['labels'][LABEL+'image'] == fixture_id
+        print(f'Pinned legacy updater {LEGACY_REVISION} completed candidate cutover and verification entry points.')
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'

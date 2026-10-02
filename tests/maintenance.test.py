@@ -14,13 +14,28 @@ from argparse import Namespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from maintenance.common import Failure, LABEL, REPOSITORY, atomic_json
+from maintenance.common import Failure, LABEL, REPOSITORY, atomic_json, run
 from maintenance.contract import validate_config, validate_manifest, validate_deployment, configuration_bindings, verify_portal
 from maintenance.engine import Updater, install_labels, pinned_bases, verify_recovered_release
 from maintenance import recovery
 from maintenance.qualification import registered_files
 from maintenance.install import prepare
 from maintenance.engine import fetch_source
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_command_failure_names_the_operation_without_private_inputs_or_output(self):
+        command = [sys.executable, '-c',
+                   "import sys; print('private stdout'); print('private stderr', file=sys.stderr); sys.exit(7)",
+                   'private argument']
+        with self.assertRaises(Failure) as caught:
+            run(command, data='private stdin', env=dict(os.environ, PRIVATE='private environment'),
+                operation='Application verification: verify-ego-routes.mjs')
+        message = str(caught.exception)
+        self.assertIn('Application verification: verify-ego-routes.mjs', message)
+        self.assertIn('exit 7', message)
+        for private in ('private stdout', 'private stderr', 'private argument', 'private stdin', 'private environment'):
+            self.assertNotIn(private, message)
 
 
 class Fixture(unittest.TestCase):
@@ -462,6 +477,35 @@ if '-c' in sys.argv:
             updater.update()
         command.assert_not_called()
         self.assertEqual((self.data / 'session').read_text(), 'original session')
+        status = json.loads((self.root / 'maintenance-status.json').read_text())
+        self.assertEqual(status['error'], 'build failed')
+        self.assertEqual(status['recovery'], 'not-needed')
+
+    def test_update_keeps_the_failed_verifier_and_successful_recovery_status(self):
+        updater, release = Updater(self.root), self.candidate()
+        diagnostic = 'Application verification: verify-ego-routes.mjs: docker failed (exit 1); private output withheld'
+        with patch.object(updater, 'preflight'), patch.object(updater, 'build_candidate', return_value=release), \
+             patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.probe_release', side_effect=Failure(diagnostic)), \
+             patch('maintenance.engine.verify_recovered_release'), self.assertRaisesRegex(Failure, 'verify-ego-routes'):
+            updater.update()
+        status = json.loads((self.root / 'maintenance-status.json').read_text())
+        self.assertEqual(status['error'], diagnostic)
+        self.assertEqual(status['recovery'], 'succeeded')
+        self.assertTrue(Path(status['recovery_point']).is_dir())
+        self.assertFalse((self.root / 'transaction.json').exists())
+
+    def test_unexpected_failure_does_not_record_exception_details(self):
+        updater = Updater(self.root)
+        with patch.object(updater, 'preflight'), \
+             patch.object(updater, 'build_candidate', side_effect=ValueError('private parsed content')), \
+             self.assertRaises(ValueError):
+            updater.update()
+        status = json.loads((self.root / 'maintenance-status.json').read_text())
+        self.assertEqual(status['error'], 'ValueError')
+        self.assertNotIn('private parsed content', json.dumps(status))
 
     def test_failed_cutover_restores_entire_generation(self):
         updater, release = Updater(self.root), self.candidate()

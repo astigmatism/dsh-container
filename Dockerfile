@@ -76,6 +76,7 @@ COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/verify-dsh-token-policy.mjs /opt/dsh-build/verify-dsh-token-policy.mjs
 COPY scripts/verify-ego-routes.mjs /opt/dsh-build/verify-ego-routes.mjs
+COPY scripts/verify-dsh-playwright-stream.mjs /opt/dsh-build/verify-dsh-playwright-stream.mjs
 COPY scripts/patch-dsh-progress-status.mjs /opt/dsh-build/patch-dsh-progress-status.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs

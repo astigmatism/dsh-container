@@ -80,6 +80,10 @@ try {
   const navigationDeadline = Date.now() + 30000;
   while (!(await sessionRow.isVisible())) {
     assert.ok(Date.now() < navigationDeadline, 'dictation fixture conversation is visible');
+    const notice = page.getByRole('dialog', { name: 'Preview Notice' });
+    if (await notice.isVisible()) { await notice.getByRole('button', { name: 'Continue', exact: true }).click(); await notice.waitFor({ state: 'hidden' }); }
+    const onboarding = page.getByRole('dialog', { name: 'Add an API key to get started' });
+    if (await onboarding.isVisible()) await onboarding.getByRole('button', { name: 'Configure later', exact: true }).click();
     if (await group.getAttribute('aria-expanded') === 'false') await group.getByText(workspace.title, { exact: true }).click();
     await delay(100);
   }
@@ -107,6 +111,9 @@ try {
   await page.waitForFunction(() => window.__fixtureTracks.length >= 3 && window.__fixtureTracks.every(track => track.readyState === 'ended'));
   assert.equal(received, 2, 'failed recorder does not send audio');
   console.log('Verified synthetic microphone capture through authenticated HTTPS gateway, STT response insertion, failure presentation and microphone track cleanup.');
+} catch (error) {
+  console.error(String(error?.stack ?? error).split(process.env.DSH_BOOT_TOKEN).join('<redacted>'));
+  throw error;
 } finally {
   await close?.(); gateway.kill('SIGTERM');
   await Promise.race([new Promise(resolve => gateway.once('exit', resolve)), delay(5000)]);

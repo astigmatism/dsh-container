@@ -17,7 +17,7 @@ ego_screenshot
   -> Qwen3.8 visual reasoning
 ```
 
-`dsh-playwright` and Chromium are included in the Harness image. Remote mode
+`dsh-ego-browser` and Chromium are included in the Harness image. Remote mode
 maps `ai-router` directly to `REMOTE_OLLAMA_HOST`, whose production router must
 accept image-bearing function outputs through `/v1/responses`; it does not run
 a local adapter. Managed mode builds the vendored router in this repository.
@@ -34,8 +34,8 @@ a Compose network, or a trusted LAN, set the following deployment-local value:
 DSH_BROWSER_ALLOW_PRIVATE_HOSTS=true
 ```
 
-The upstream browser plugin exposes a Boolean private-network switch rather
-than a host allowlist. Enabling it permits every private destination and
+The container browser adapter preserves the Boolean private-network switch.
+It is not a host allowlist. Enabling it permits every private destination and
 private subresource reachable from the Harness container. Use it only on the
 existing trusted validation network and disable it for general browsing.
 

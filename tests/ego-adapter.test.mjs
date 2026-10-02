@@ -46,7 +46,7 @@ test('tool defaults, explicit spaces and screenshot pixels stay in their calling
   for (const [i, value] of values.entries()) { assert.equal(value.before, conversationSpace(['a','b'][i])); assert.equal(value.after, value.before); }
   const explicit = await wrapped.execute({ space: conversationSpace('b') }, execution('a'));
   assert.ok(explicit.args.space.startsWith(conversationSpace('a') + '-'));
-  assert.equal(wrapTool({}, { name: 'ego_login_import' }), null);
+  for (const name of ['ego_login_import', 'ego_cli', 'ego_script']) assert.equal(wrapTool({}, { name }), null);
   await mkdir(join(home, 'ego-browser/screenshots'), { recursive: true });
   const image = { kind: 'fixture-image' };
   const shot = wrapTool({ attachments: { saveImage: async args => { assert.equal(args.data.toString(), 'PIXELS'); return image; } } }, {

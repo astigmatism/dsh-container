@@ -46,7 +46,10 @@ navigation, redirects and subresources through that proxy. Existing
 capture-worker ports are loopback-only and are not published by Compose.
 
 Screenshot output includes both its file path and native image attachment.
-Desktop pop-out and desktop cookie-import actions are unavailable. Chromium's
+Desktop pop-out and desktop cookie-import actions are unavailable. The raw
+`ego_cli`/`ego_script` Node/CDP escape hatches are also unavailable: they bypass
+conversation tab selection and can make requests outside the policy proxy.
+Use the structured ego tools, including page-scoped `ego_js`, instead. Chromium's
 idle reaper uses a ten-minute default. Browser logins are durable; live browser
 processes and capture streams restart on demand.
 

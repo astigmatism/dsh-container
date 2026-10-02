@@ -53,9 +53,10 @@ export async function closeBrowser() {
 }
 
 export function wrapTool(ctx, tool) {
-  // Source-browser imports and native pop-out windows are desktop operations.
-  // They are intentionally unavailable in a headless deployment.
-  if (tool.name === 'ego_login_import') return null;
+  // Raw Node/CDP scripts bypass conversation selection and the browser network
+  // proxy. Structured tools cover the supported container workflow. Desktop
+  // cookie import is unavailable for this headless profile.
+  if (['ego_login_import', 'ego_cli', 'ego_script'].includes(tool.name)) return null;
   const screenshot = tool.name === 'ego_screenshot';
   return { ...tool,
     description: (tool.name === 'ego_space_open' ? 'Open a browser workspace within the calling conversation. Use default for its main workspace. Website logins are shared across conversations.' : tool.description) + (screenshot ? ' The captured pixels are also attached directly for visual analysis.' : ''),

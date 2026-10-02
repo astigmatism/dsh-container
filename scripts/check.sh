@@ -332,7 +332,12 @@ if [ "$build" -eq 1 ]; then
   # dsh-ego-browser snapshot dropped its dependencies.
   # Session UI needs Chromium to see an attached network interface; its host
   # connection pauses when navigator.onLine is false in network-less builds.
-  docker run --rm --env HOME=/ --env DSH_VERIFY_RESIDENT_CATALOG=true --entrypoint /bin/sh "$harness_image" -eu -c '
+  qualification_artifacts=${RUNNER_TEMP:-/tmp}/dsh-vision-evidence
+  mkdir -p "$qualification_artifacts"
+  chmod 0777 "$qualification_artifacts"
+  docker run --rm --env HOME=/ --env DSH_VERIFY_RESIDENT_CATALOG=true \
+    --env DSH_EGO_VISION_EVIDENCE=/qualification \
+    --volume "$qualification_artifacts:/qualification" --entrypoint /bin/sh "$harness_image" -eu -c '
     /usr/local/bin/dsh-verify-plugin-boot
   '
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, copyFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -57,6 +57,11 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
       const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0); return [...ctx.getImageData(100, 100, 1, 1).data];
     }, 'data:image/png;base64,' + (await readFile(shot.value.path)).toString('base64'));
     assert.deepEqual(pixel, [0, 0, 255, 255], 'canvas-only fixture pixels reached the screenshot');
+    if (process.env.DSH_EGO_VISION_EVIDENCE) {
+      await copyFile(shot.value.path, resolve(process.env.DSH_EGO_VISION_EVIDENCE, 'canvas.png'));
+      // This canvas contains only generated geometric shapes, never website data.
+      console.log('EGO_CANVAS_VISION_PNG=' + (await readFile(shot.value.path)).toString('base64'));
+    }
     await openTab(sessions[0]); await frame();
     await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/one"]').waitFor();
     assert.equal(await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/two"]').count(), 0);

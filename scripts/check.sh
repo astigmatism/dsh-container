@@ -157,6 +157,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-cancellation-presentation.mjs
     node --check scripts/patch-dsh-native-file-opening.mjs
     node --check scripts/patch-dsh-file-previews.mjs
+    node --check scripts/patch-dsh-sidebar-workspace.mjs
     node --check scripts/patch-dsh-web-auth.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
     node --check scripts/patch-dsh-ego-browser.mjs
@@ -207,6 +208,7 @@ if [ "$build" -eq 1 ]; then
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-file-previews.mjs --check
+    /opt/dsh-build/patch-dsh-sidebar-workspace.mjs --check
 
   # Use the packaged native executor for deadlines, output capture and actual
   # process-tree cleanup; mock plugin tests alone cannot verify these contracts.

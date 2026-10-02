@@ -80,6 +80,7 @@ COPY scripts/patch-dsh-progress-status.mjs /opt/dsh-build/patch-dsh-progress-sta
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
 COPY scripts/patch-dsh-file-previews.mjs /opt/dsh-build/patch-dsh-file-previews.mjs
+COPY scripts/patch-dsh-sidebar-workspace.mjs /opt/dsh-build/patch-dsh-sidebar-workspace.mjs
 COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
 COPY plugin/dsh-ego-adapter /opt/dsh-ego-adapter
@@ -157,6 +158,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && node /opt/dsh-build/patch-dsh-session-pin.mjs \
     && node /opt/dsh-build/patch-dsh-appearance.mjs \
     && node /opt/dsh-build/patch-dsh-file-previews.mjs \
+    && node /opt/dsh-build/patch-dsh-sidebar-workspace.mjs \
     && node /opt/dsh-build/patch-dsh-token-session-format.mjs \
     && node /opt/dsh-build/patch-dsh-ego-browser.mjs \
     && dsh --profile web --dump-config >/dev/null \

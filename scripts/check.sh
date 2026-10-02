@@ -208,6 +208,7 @@ if [ "$build" -eq 1 ]; then
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-file-previews.mjs --check
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-sidebar-workspace.mjs --check
 
   # Use the packaged native executor for deadlines, output capture and actual

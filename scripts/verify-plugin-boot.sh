@@ -36,6 +36,10 @@ home=$parent/runtime
 boot_log=$parent/dsh-web.log
 cookie_jar=$parent/cookies.txt
 cleanup() {
+  if [ -n "${boot_pid:-}" ]; then
+    kill "$boot_pid" 2>/dev/null || true
+    wait "$boot_pid" 2>/dev/null || true
+  fi
   rm -rf -- "$parent"
 }
 trap cleanup EXIT HUP INT TERM
@@ -147,6 +151,7 @@ fi
 
 kill "$boot_pid" 2>/dev/null || true
 wait "$boot_pid" 2>/dev/null || true
+boot_pid=
 
 if [ "$ok" -lt "$stable" ]; then
   echo "Plugin boot check failed: dsh web never served $stable consecutive HTTP 200 responses from $seed_home/profiles/web (after ${elapsed}s)." >&2
@@ -199,6 +204,7 @@ for phase in restart recreate; do
   token=
   kill "$boot_pid" 2>/dev/null || true
   wait "$boot_pid" 2>/dev/null || true
+  boot_pid=
 done
 
 echo "Plugin boot check passed: the authenticated web profile, composed browser client, and ego browser routes loaded cleanly."

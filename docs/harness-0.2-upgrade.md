@@ -9,7 +9,7 @@ not a completed deployment. Neither production host has been updated.
 | --- | --- |
 | Harness | `0.2.0-rc.2`, `639ed015397290b3745d163aafe02ffee4aa3f84` |
 | ego-browser | tag `v0.8.6`, `dfde57221443bdade5e0cbee7c773a6839ffe560` |
-| Better Sidebar | `0.24.1` |
+| Better Sidebar | `0.24.1`, restored workspace fence |
 | Context | `0.62.2` |
 | Session Pin | `0.7.16`, retained navigation patch |
 | Appearance | `0.1.17`, retained settings icon patch |
@@ -24,8 +24,8 @@ the dependency graphs. Source-anchor patches fail the build on unexpected drift.
 
 The updater stops the application before its complete state snapshot. On first
 startup, `migrate-harness-02-profile.mjs` archives the previous manifest and
-writable profile under `profile-before-02`, prepares a journal, publishes both
-files atomically, then commits a receipt. An interrupted publication resumes only
+writable profile under `profile-before-02`, prepares a journal, atomically publishes each
+file under that recoverable journal, then commits a receipt. An interrupted publication resumes only
 if each input still matches its recorded original or prepared content. Profile
 synchronization runs afterward, preserving the ordered bundle selection and
 writable preferences. Unknown extra plugins stop synchronization for review.
@@ -57,6 +57,11 @@ optional bundle selections retain their order. Experimental async questions use
 the upstream disabled default unless explicitly configured. Saved work-detail
 choices remain intact; missing/legacy `normal` values become `standard`, matching
 0.1.7's presentation rather than 0.2's changed default.
+
+Sidebar 0.24.1 removed its upstream workspace containment. The container restores
+canonical-path checks for reads, uploads, writes, mutations, archives and file
+watching, including symlink escapes. An explicit saved `workspaceFence: false`
+remains effective; the default is fenced.
 
 Token's package remains installed, but its published 0.1 peer range excludes this
 Harness release. Its bundle and overrides are inactive, without weakening the

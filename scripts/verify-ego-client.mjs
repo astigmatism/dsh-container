@@ -84,6 +84,13 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     await delay(1500);
     assert.equal(await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/other-conversation"]').count(), 0, 'SSE cannot replace the visible conversation workspace');
     const viewport = await js(sessions[0], '({width:innerWidth,height:innerHeight})');
+    // Reverse independent pointer requests unless the native client preserves
+    // their order. A mouse-up that overtakes mouse-down loses the click.
+    const delayedInput = async route => {
+      if (route.request().postDataJSON()?.type === 'mousePressed') await delay(200);
+      await route.continue();
+    };
+    await page.route('**/api/ego/input', delayedInput);
     const bounds = await live().boundingBox();
     assert.ok(bounds);
     const point = (x, y) => ({ x: bounds.x + x / viewport.width * bounds.width, y: bounds.y + y / viewport.height * bounds.height });
@@ -101,6 +108,7 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     await inputSettled('window.dragCount > 0', 'manual drag reaches the page');
     await live().hover(); await page.mouse.wheel(0, 400);
     await inputSettled('scrollY > 0', 'manual scroll reaches the page');
+    await page.unroute('**/api/ego/input', delayedInput);
     const download = await call(sessions[0], 'ego_download', { triggerSelector: '#download', savePath: root + '/ego-download.txt' });
     assert.equal(await readFile(download.value.path, 'utf8'), 'EGO_DOWNLOAD_OK');
     await call(sessions[0], 'ego_space_open', { name: 'second-tab' });

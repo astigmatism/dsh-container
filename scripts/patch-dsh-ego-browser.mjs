@@ -34,6 +34,8 @@ export function patchClient(source) {
   source = replace(source, 'var res = await fetch(SPACES_ROUTE, { cache: "no-store" });\n\t\t\t\t\tif (self.disposed',
     'var res = await fetch(SPACES_ROUTE + "?sessionId=" + encodeURIComponent(self.sessionId || ""), { cache: "no-store" });\n\t\t\t\t\tif (self.disposed');
   source = replace(source, 'var controller = controllerRef.current;', 'var controller = controllerRef.current;\ncontroller.sessionId = props.scope?.sessionId;');
+  source = replace(source, 'var self = this;\n\t\t\tfetch(INPUT_ROUTE, {', 'var self = this;\nself.inputQueue = (self.inputQueue || Promise.resolve()).then(function() {\nreturn fetch(INPUT_ROUTE, { signal: AbortSignal.timeout(10000),');
+  source = replace(source, 'self.refresh();\n\t\t\t\t}\n\t\t\t}).catch(function() {});\n\t\t};\n\t\tLivePreviewController.prototype.browserXY', 'self.refresh();\n\t\t\t\t}\n\t\t\t}); }).catch(function() {});\n\t\t};\n\t\tLivePreviewController.prototype.browserXY');
   source = replace(source, 'if (Array.isArray(list)) self._processSpaces(list);', 'if (Array.isArray(list)) self.refresh();');
   source = replace(source, '\t\t\t\t\tif (!m || !m.targetId || !m.data) return;\n\t\t\t\t\tif (Number.isFinite(m.vw)', '\t\t\t\t\tif (!m || !m.targetId || !m.data || !self.pageMeta.has(m.targetId)) return;\n\t\t\t\t\tif (Number.isFinite(m.vw)');
   source = replace(source, 'title: wt("raiseWindowHint"),', 'style: { display: "none" }, title: wt("raiseWindowHint"),');

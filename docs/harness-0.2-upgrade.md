@@ -53,7 +53,9 @@ Desktop pop-out and desktop cookie-import actions are unavailable. The raw
 `ego_cli`/`ego_script` Node/CDP escape hatches are also unavailable: they bypass
 conversation tab selection and can make requests outside the policy proxy.
 Use the structured ego tools, including page-scoped `ego_js`, instead. Chromium's
-idle reaper uses a ten-minute default. Browser logins are durable; live browser
+idle reaper uses a ten-minute default. Native Sidebar input is sent in order;
+the browser fixture deliberately delays mouse-down to ensure mouse-up and
+keyboard events cannot overtake it. Browser logins are durable; live browser
 processes and capture streams restart on demand.
 
 Schedule moves to the official Automation tasks bundle only when explicitly

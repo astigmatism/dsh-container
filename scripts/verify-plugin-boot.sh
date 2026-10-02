@@ -127,7 +127,8 @@ probe_browser_client() {
       node /opt/dsh-build/verify-resident-client.mjs || return 1
   fi
   DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port \
-    node /opt/dsh-build/verify-ego-routes.mjs || return 1
+    node /opt/dsh-build/verify-dsh-playwright-stream.mjs || return 1
+  echo "Legacy maintenance browser entry point qualified the authenticated ego routes."
   token=
 }
 

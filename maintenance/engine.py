@@ -60,8 +60,10 @@ def verify_application(manifest, by_service):
         ('verify-ego-routes.mjs', []),
         ('verify-dsh-inference-contract.mjs', []),
     ):
-        run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/' + script, *arguments])
-    run(['docker', 'exec', by_service[gateway]['Id'], 'node', '/opt/dsh-gateway/verify-dictation-backend.mjs'])
+        run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/' + script, *arguments],
+            operation='Application verification: ' + script)
+    run(['docker', 'exec', by_service[gateway]['Id'], 'node', '/opt/dsh-gateway/verify-dictation-backend.mjs'],
+        operation='Gateway verification: verify-dictation-backend.mjs')
 
 
 def probe_containers(manifest, model, root):
@@ -84,7 +86,7 @@ def probe_containers(manifest, model, root):
 def probe_gateway(manifest, by_service):
     gateway = next(s for s, role in manifest['roles'].items() if role == 'gateway')
     run(['docker', 'exec', '-i', by_service[gateway]['Id'], 'node', '--input-type=module'],
-        data=(PACKAGE / 'probe.mjs').read_text())
+        data=(PACKAGE / 'probe.mjs').read_text(), operation='Authenticated gateway verification')
 
 
 def verify_recovered_release(manifest, model, root):
@@ -231,12 +233,12 @@ class Updater:
                 if role != 'router':
                     command += ['--target', role]
                 print(f'Building {role} at {revision}', flush=True)
-                run([*command, context])
+                run([*command, context], operation='Build candidate ' + role)
                 images[role] = inspect('image', tag)['Id']
             qualify_runner(images['harness'])
             # Offline runtime checks do not mount production state.
             run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node',
-                 images['harness'], '/opt/dsh-build/verify-router-startup.mjs'])
+                 images['harness'], '/opt/dsh-build/verify-router-startup.mjs'], operation='Candidate router startup qualification')
             run(['docker', 'run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node',
                  images['gateway'], '--check', '/opt/dsh-gateway/server.mjs'])
             release_dir = self.root / 'releases' / (revision + '-' + uuid.uuid4().hex[:8])
@@ -354,7 +356,8 @@ class Updater:
                 atomic_text(unit, '\n'.join(lines) + '\n')
             transaction['phase'] = 'installed'
             atomic_json(self.root / 'transaction.json', transaction)
-            run([*compose_command(self.root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
+            run([*compose_command(self.root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'],
+                operation='Start candidate services')
             candidate, manifest = read_json(self.root / 'compose.json'), read_json(self.root / 'deployment.json')
             probe_release(manifest, candidate, self.root)
             for name in ('maintenance', SCRIPT, 'start-after-network.sh'):
@@ -423,7 +426,15 @@ class Updater:
             try:
                 release = self.build_candidate()
                 self.cutover(release)
-            except BaseException:
-                if not (self.root / 'maintenance-status.json').exists() or read_json(self.root / 'maintenance-status.json')['state'] == 'building':
-                    self.status('failed', recovery='not-needed')
+            except BaseException as error:
+                status_file = self.root / 'maintenance-status.json'
+                status = read_json(status_file) if status_file.exists() else {}
+                if status.get('state') in (None, 'building'):
+                    status = {'recovery': 'not-needed'}
+                status.pop('state', None)
+                status.pop('time', None)
+                # Match the public CLI error policy without replacing recovery
+                # results. Do not serialize arbitrary exception details.
+                status['error'] = str(error) if isinstance(error, Failure) else type(error).__name__
+                self.status('failed', **status)
                 raise

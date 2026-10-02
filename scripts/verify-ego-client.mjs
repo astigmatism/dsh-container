@@ -37,6 +37,15 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     await page.waitForFunction(() => [...document.querySelectorAll('.dsh-ego-side-liveimg')].some(img => img.getClientRects().length && img.naturalWidth > 0), null, { timeout: 45000 });
   }
   try {
+    const settings = await context.request.post(`${base}/ego/api/get`, { data: {} });
+    assert.equal(settings.status(), 200);
+    const { value: { config } } = await settings.json();
+    assert.equal(config.chromePath, '/usr/bin/chromium');
+    assert.equal(config.chromeArgs, '--no-sandbox --disable-dev-shm-usage');
+    assert.equal(config.captureBackend, 'cdp');
+    assert.equal(config.isolateSpaces, false);
+    assert.equal(config.cdpFps, 15);
+    assert.equal(config.cdpMaxWidth, 1440);
     await Promise.all([
       call(sessions[0], 'ego_navigate', { url: url + '/redirect' }),
       call(sessions[1], 'ego_navigate', { url: url + '/two' }),

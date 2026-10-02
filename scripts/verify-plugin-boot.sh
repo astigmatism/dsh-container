@@ -61,13 +61,21 @@ DSH_SETTINGS_GID=$(id -g) \
 
 node /opt/dsh-build/migrate-profile-settings.mjs "$home"
 # The tool-driving bridge is appended only to this disposable profile.
+# Cordis replaces a row's complete config object. Keep the container launch
+# settings when shortening the idle timeout for qualification.
 cat >>"$home/profiles/web/cordis.patch.yml" <<'YAML'
 - insert:
     - id: ego-qualification
       name: /opt/dsh-build/qualification-ego-host.mjs
 - id: ego-browser
   config:
+    chromePath: /usr/bin/chromium
+    chromeArgs: --no-sandbox --disable-dev-shm-usage
+    captureBackend: cdp
+    isolateSpaces: false
     idleTimeoutMin: 1
+    cdpFps: 15
+    cdpMaxWidth: 1440
 YAML
 # Neutral CWD: the repo's .env is rejected by the launcher for
 # environment-authority variables, and no other CWD layer is wanted here.

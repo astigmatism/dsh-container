@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 import { launchVerificationBrowser } from './verification-browser.mjs';
+import { installVerificationOnboarding, dismissVerificationOnboarding } from './verification-onboarding.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -35,6 +36,7 @@ async function rpc(name, request = {}) {
   return result.value;
 }
 try {
+  await installVerificationOnboarding(page, base);
   const expected = await residentClientExpectations(await readSettings(settingsPath), { live });
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
   const catalog = await rpc('modelCatalog');
@@ -71,14 +73,17 @@ try {
   // connects. Re-read its state instead of racing that restoration with one
   // blind toggle, and click the label rather than the row's action buttons.
   const navigationDeadline = Date.now() + 30000;
-  while (!(await sessionRow.isVisible())) {
-    assert.ok(Date.now() < navigationDeadline, `verification session is visible in its workspace (expanded=${await group.getAttribute('aria-expanded')})`);
-    if (await group.getAttribute('aria-expanded') === 'false') {
-      await group.getByText(created.workspace.title, { exact: true }).click();
-    }
+  while (true) {
+    assert.ok(Date.now() < navigationDeadline, 'verification session is accessible in its workspace');
+    await dismissVerificationOnboarding(page);
+    try {
+      if (await sessionRow.isVisible()) { await sessionRow.click({ timeout: 500 }); break; }
+      if (await group.count() && await group.getAttribute('aria-expanded') === 'false') {
+        await group.getByText(created.workspace.title, { exact: true }).click({ timeout: 500 });
+      }
+    } catch (error) { if (error.name !== 'TimeoutError') throw error; }
     await delay(100);
   }
-  await sessionRow.click();
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
   await trigger.click();
@@ -101,6 +106,7 @@ try {
     }
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[data-composer-input]');
+    await dismissVerificationOnboarding(page);
     assert.deepEqual((await rpc('modelCatalog')).default, selection);
   }
   console.log('Both model selections and separate reasoning preferences survived browser reconnection.');

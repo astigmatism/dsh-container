@@ -187,3 +187,25 @@ the full image boot gate separately executes the legacy browser entry point
 against real Harness 0.2 and ego authentication routes. The remaining topology,
 state/image rollback, browser and dictation gates still apply. Production retry
 and physical microphone acceptance remain operator-controlled and pending.
+
+## Preview notice during upgrade verification
+
+The second production attempt reached Harness 0.2 and obtained `READY` from
+Daytime in the updater's isolated conversation, but rolled back again at
+17:12:56 UTC on 2026-10-02. Its saved welcome acknowledgement was
+`2026-08-13.1`; Harness 0.2 requires the new `2026-09-28.1` notice. A native
+isolated profile with the same old acknowledgement reproduced the verifier's
+workspace click timing out behind that modal, before model selection began.
+
+The resident-model verifier now handles first-launch dialogs in its own browser.
+Its Preview Notice acknowledgement is confined to that browser's settings
+transport; it never writes the user's acknowledgement to the Host. Model
+discovery, model preferences and inference still use the real application APIs.
+A new browser continues showing the notice to the user. The CI image gate runs
+the real model-picker verifier with both an old acknowledgement and no
+acknowledgement, and checks that both stored and effective notice settings are
+unchanged. Earlier browser gates had already acknowledged the notice in their
+fixture, masking this transition.
+
+The displayed `0.1.7-rc.2` after rollback is accurate. A successful production
+upgrade and the remaining acceptance checks must still be recorded separately.

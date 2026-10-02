@@ -136,7 +136,7 @@ The adapter validates Harness authentication for stream, input and settings
 routes. Chromium uses a local policy proxy for navigation, redirects and
 subresources. Its child-process environment has a private browser home without
 changing the agent workspace. Idle Chromium is stopped after ten minutes without
-an ego tool call; logins persist, and browsing starts again on demand.
+an ego tool call or manual input; logins persist, and browsing starts again on demand.
 
 Chromium is installed at `/usr/bin/chromium` in the Harness image. Public web
 targets work with the secure default. To validate an application on localhost,

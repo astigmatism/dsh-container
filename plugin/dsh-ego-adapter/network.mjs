@@ -30,7 +30,7 @@ export async function destination(hostname, allowPrivate, resolver = lookup) {
 
 export async function startBrowserProxy({ allowPrivate = false } = {}) {
   const sockets = new Set();
-  const track = socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); return socket; };
+  const track = socket => { if (!sockets.has(socket)) { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); } return socket; };
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url);

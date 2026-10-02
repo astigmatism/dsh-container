@@ -37,6 +37,9 @@ export function patchClient(source) {
   source = replace(source, 'if (Array.isArray(list)) self._processSpaces(list);', 'if (Array.isArray(list)) self.refresh();');
   source = replace(source, '\t\t\t\t\tif (!m || !m.targetId || !m.data) return;\n\t\t\t\t\tif (Number.isFinite(m.vw)', '\t\t\t\t\tif (!m || !m.targetId || !m.data || !self.pageMeta.has(m.targetId)) return;\n\t\t\t\t\tif (Number.isFinite(m.vw)');
   source = replace(source, 'title: wt("raiseWindowHint"),', 'style: { display: "none" }, title: wt("raiseWindowHint"),');
+  source = replace(source, 'state.streamGeneration\n\t\t\t]);\n\t\t\tvar h = React.createElement;', 'state.streamGeneration, Boolean(state.currentSpace?.thumbnail)\n\t\t\t]);\n\t\t\tvar h = React.createElement;');
+  source = replace(source, 'Log in in the agent browser window (use the Pop out window button in this panel if you cannot find it)', 'Sign in using this live preview. Website logins are shared between conversations.');
+  source = replace(source, 'Complete the verification in the agent browser window (use the Pop out window button above to bring it to the front); the agent will continue.', 'Complete the verification in this live preview; the agent will continue.');
   return source;
 }
 export async function main(root = process.argv[2] || '/opt/dsh-seed/profiles/web/node_modules/dsh-ego-browser') {

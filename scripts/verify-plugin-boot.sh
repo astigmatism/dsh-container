@@ -61,6 +61,9 @@ cat >>"$home/profiles/web/cordis.patch.yml" <<'YAML'
 - insert:
     - id: ego-qualification
       name: /opt/dsh-build/qualification-ego-host.mjs
+- id: ego-browser
+  config:
+    idleTimeoutMin: 1
 YAML
 # Neutral CWD: the repo's .env is rejected by the launcher for
 # environment-authority variables, and no other CWD layer is wanted here.
@@ -183,6 +186,15 @@ for phase in restart recreate; do
     kill "$boot_pid" 2>/dev/null || true
     wait "$boot_pid" 2>/dev/null || true
     print_boot_log; exit 1
+  fi
+  if [ "$phase" = recreate ]; then
+    if ! DSH_PROFILE_ROOT=$home/profiles/web node /opt/dsh-build/verify-ego-idle.mjs; then
+      kill "$boot_pid" 2>/dev/null || true
+      wait "$boot_pid" 2>/dev/null || true
+      print_boot_log; exit 1
+    fi
+    DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+      node /opt/dsh-build/verify-ego-persistence.mjs
   fi
   token=
   kill "$boot_pid" 2>/dev/null || true

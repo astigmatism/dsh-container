@@ -179,7 +179,7 @@ USER node
         old_fixture.mkdir()
         broken_fixture = temporary / 'missing-legacy-gate'
         broken_fixture.mkdir()
-        (broken_fixture / 'Dockerfile').write_text(f'FROM {fixture_id}\nUSER root\nRUN rm /opt/dsh-build/verify-dsh-playwright-stream.mjs\nUSER node\n')
+        (broken_fixture / 'Dockerfile').write_text(f'FROM {fixture_image}\nUSER root\nRUN rm /opt/dsh-build/verify-dsh-playwright-stream.mjs\nUSER node\n')
         broken_image = 'local/dsh-maintenance-ci:missing-legacy-gate'
         run(['docker', 'build', '-t', broken_image, broken_fixture])
         broken_id = json.loads(run(['docker', 'image', 'inspect', broken_image]))[0]['Id']
@@ -187,7 +187,7 @@ USER node
         shutil.copy2(fixture / 'driver.py', old_fixture / 'driver.py')
         (old_fixture / 'candidate-image').write_text(fixture_id + '\n')
         (old_fixture / 'missing-entry-image').write_text(broken_id + '\n')
-        (old_fixture / 'Dockerfile').write_text(f'''FROM {fixture_id}
+        (old_fixture / 'Dockerfile').write_text(f'''FROM {fixture_image}
 USER root
 COPY maintenance/ /opt/dsh-maintenance/
 RUN mv /opt/dsh-maintenance/main.py /opt/dsh-maintenance/production-main.py

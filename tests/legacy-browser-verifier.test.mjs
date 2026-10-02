@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const exec = promisify(execFile);
@@ -28,7 +29,7 @@ for (const allowUnauthenticated of [false, true]) {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     try {
-      const result = exec(process.execPath, [entry.pathname], { timeout: 10000, env: {
+      const result = exec(process.execPath, [fileURLToPath(entry)], { timeout: 10000, env: {
         ...process.env, DSH_BOOT_TOKEN: 'synthetic-launch-token',
         DSH_VERIFY_URL: `http://127.0.0.1:${server.address().port}`,
       } });

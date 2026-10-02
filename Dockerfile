@@ -70,7 +70,9 @@ COPY scripts/initialize-sidebar-settings.mjs /opt/dsh-build/initialize-sidebar-s
 COPY scripts/verify-sidebar-terminal.mjs /opt/dsh-build/verify-sidebar-terminal.mjs
 COPY scripts/verify-sidebar-client.mjs /opt/dsh-build/verify-sidebar-client.mjs
 COPY scripts/verification-browser.mjs /opt/dsh-build/verification-browser.mjs
+COPY scripts/verification-onboarding.mjs /opt/dsh-build/verification-onboarding.mjs
 COPY scripts/verify-resident-client.mjs /opt/dsh-build/verify-resident-client.mjs
+COPY scripts/verify-resident-onboarding.mjs /opt/dsh-build/verify-resident-onboarding.mjs
 COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.mjs
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs

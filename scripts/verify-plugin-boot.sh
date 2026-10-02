@@ -124,7 +124,7 @@ probe_browser_client() {
     node /opt/dsh-build/verify-dictation-roundtrip.mjs || return 1
   if [ "${DSH_VERIFY_RESIDENT_CATALOG:-false}" = true ]; then
     DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
-      node /opt/dsh-build/verify-resident-client.mjs || return 1
+      node /opt/dsh-build/verify-resident-onboarding.mjs || return 1
   fi
   DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port \
     node /opt/dsh-build/verify-dsh-playwright-stream.mjs || return 1

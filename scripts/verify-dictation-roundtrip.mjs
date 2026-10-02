@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { launchVerificationBrowser } from './verification-browser.mjs';
 
@@ -60,8 +61,31 @@ try {
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('#username').fill('synthetic-user'); await page.locator('#password').fill('synthetic-dictation-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
+  async function rpc(method, request) {
+    const response = await context.request.post(base + '/api/' + method, { data: {
+      type: 'client-request', rpcId: randomUUID(), method, payload: { args: { request } },
+    } });
+    const { result } = await response.json(); assert.equal(result.ok, true, result.error?.message); return result.value;
+  }
+  const { workspace } = await rpc('workspace/create', { path: temporary });
+  const { sessionId } = await rpc('session/create', { workspaceId: workspace.workspaceId });
+  await rpc('session/prompt', { sessionId, requestId: randomUUID(), mode: 'queue',
+    content: [{ type: 'text', text: 'Disposable dictation fixture. Do not use tools.' }] });
+  await rpc('session/cancel', { sessionId });
+  const title = 'Synthetic dictation verification';
+  await rpc('session/rename', { sessionId, title });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  const group = page.getByRole('treeitem').filter({ has: page.getByText(workspace.title, { exact: true }) }).first();
+  const sessionRow = page.getByText(title, { exact: true });
+  const navigationDeadline = Date.now() + 30000;
+  while (!(await sessionRow.isVisible())) {
+    assert.ok(Date.now() < navigationDeadline, 'dictation fixture conversation is visible');
+    if (await group.getAttribute('aria-expanded') === 'false') await group.getByText(workspace.title, { exact: true }).click();
+    await delay(100);
+  }
+  await sessionRow.click();
   const button = page.locator('[data-local-speech-button]');
-  const composer = page.locator('[data-composer-input]').first();
+  const composer = page.locator('[data-composer-input][contenteditable="true"]').first();
   await button.waitFor(); await composer.fill('');
   for (const fail of [false, true]) {
     failure = fail;

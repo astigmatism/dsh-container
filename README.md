@@ -17,10 +17,10 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-The `0.2.0-rc.2` upgrade is undergoing qualification on its review branch.
-Do not deploy it until the [release qualification record](docs/harness-0.2-upgrade.md)
-marks it ready. Production verification is a separate step after an operator
-updates a selected deployment through Service Portal.
+The `0.2.0-rc.2` upgrade reaches canonical `main` only after its required Linux
+qualification passes. See the [qualification and rollback record](docs/harness-0.2-upgrade.md)
+for the release decision and test scope. Production verification is a separate
+step after an operator updates a selected deployment through Service Portal.
 
 - DeepSeek Harness `0.2.0-rc.2`, official package from tag `dsh-v0.2.0-rc.2`
   at `639ed015397290b3745d163aafe02ffee4aa3f84`; pnpm `11.7.0`;

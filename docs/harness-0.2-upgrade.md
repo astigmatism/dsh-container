@@ -1,7 +1,10 @@
 # Harness 0.2 and ego browser qualification
 
-Status: **release held for qualification**. This document records the candidate,
-not a completed deployment. Neither production host has been updated.
+Release decision and immutable CI evidence: [upgrade PR #4](https://github.com/astigmatism/dsh-container/pull/4).
+Its required `test-and-build` check must pass at the reviewed revision before
+merging to canonical `main`. A draft or failing PR remains held. This document
+records the migration and acceptance contract, not a completed production
+deployment. Neither production host has been updated.
 
 ## Immutable inputs
 
@@ -81,8 +84,9 @@ policies, per-provider concurrency and reasoning choices.
 
 Host checks pass for the maintenance contract, recovery, profile synchronization,
 gateway TLS, patch contracts, proxy policy, screenshot attachment adapter and
-settings migration. Linux CI builds and browser qualification are still in
-progress; passing host tests alone does not qualify this release.
+settings migration. Passing host tests alone does not qualify this release.
+The release decision in PR #4 records the exact reviewed revision and successful
+full Linux CI run; the required check also covers the final documentation commit.
 
 The Linux gates exercise the installed plugin tree, native Sidebar/terminal/file
 previews, session pins, Context/Appearance, model picker, ego conversation tabs,
@@ -90,7 +94,12 @@ shared fixture login, image attachments, live frames, manual input, downloads,
 reconnect and cancellation. Synthetic dictation uses actual Chromium microphone
 capture and the shipping HTTPS gateway with a fixture transcription backend.
 Portal rehearsals preserve and restore a synthetic browser profile alongside
-session state and previous images.
+session state and previous images. The real Docker/Compose rehearsals cover
+direct routing, an external shared model network, and a managed router. Portable
+and remote Compose configurations both use the direct-routing maintenance path;
+the topology fixtures verify their network and dependency definitions. External
+network identity, managed router state, shared model files, deployment-local TLS
+and unrelated running containers are checked across adoption, update and rollback.
 
 On 2026-10-02, both existing resident routes returned `READY` through the router's
 Responses API with medium reasoning. Daytime also interpreted the actual
@@ -118,9 +127,11 @@ updates and deletion of a future synthetic task in an isolated native Harness
 profile. The task was removed without being delivered; timed delivery was not
 part of that check.
 
-Outstanding acceptance must be recorded with the exact commit and CI run. Do not
-mark unexecuted cases as passing. A physical microphone check requires the
-selected deployment and operator.
+The release decision must name the exact commit and CI run; failed or partial
+runs do not qualify the release. A physical microphone check and full production
+acceptance remain pending until the operator selects and updates a deployment.
+Timed Automation delivery, personal website-specific login behavior and a
+physical microphone are not claimed by the synthetic fixtures.
 
 ## Release and rollback
 

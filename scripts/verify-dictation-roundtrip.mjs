@@ -97,7 +97,11 @@ try {
     failure = fail;
     const previous = await composer.textContent();
     await button.click(); await page.locator('[data-local-speech-button][data-state="recording"]').waitFor();
-    await delay(800); await button.click();
+    await delay(800);
+    // The recording pulse animates the button; a user can stop it immediately.
+    // Playwright's stable-element wait would instead wait for the recording limit.
+    const stop = await button.boundingBox(); assert.ok(stop);
+    await page.mouse.click(stop.x + stop.width / 2, stop.y + stop.height / 2);
     await page.locator(`[data-local-speech-button][data-state="${fail ? 'error' : 'idle'}"]`).waitFor();
     await page.waitForFunction(() => window.__fixtureTracks.length > 0 && window.__fixtureTracks.every(track => track.readyState === 'ended'));
     if (fail) { assert.equal(await composer.textContent(), previous); assert.match(await button.getAttribute('title'), /Synthetic STT unavailable/); }

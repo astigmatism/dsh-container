@@ -12,9 +12,8 @@ dsh-better-sidebar:
     subagent: true
     sidechat: false
 
-# DSH saves this acknowledgement atomically at runtime. Keeping the captured
-# version in the seeded writable settings file prevents a fresh deployment
-# from being trapped behind the internal-testing notice.
+# Preserve the previously acknowledged notice. Harness 0.2 may present its
+# newer preview notice; an upgrade must not acknowledge new copy for the user.
 ui-onboarding:
   welcomeNoticeVersion: "2026-08-13.1"
 

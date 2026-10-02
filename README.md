@@ -454,7 +454,7 @@ default and are persisted in `data/gateway/sessions.json`, so they survive
 gateway restarts until they expire. Override the lifetime in seconds with
 `HARNESS_SESSION_TTL_SECONDS` in the private `.env`.
 
-Harness `0.1.7-rc.2` also authenticates its own browser and RPC carrier.
+Harness `0.2.0-rc.2` also authenticates its own browser and RPC carrier.
 The container entrypoint generates a fresh 32-byte launch token on every
 start, stores it as `data/backend-auth/launch-token` with mode `0600`, and supplies
 the same value to Harness. The gateway sees that file through a read-only

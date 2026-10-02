@@ -221,7 +221,8 @@ if [ "$build" -eq 1 ]; then
   docker run --rm --network none --user 12345:12345 --entrypoint node \
     --env DSH_TEST_HARNESS=1 --volume "$project_dir:/src:ro" "$harness_image" \
     --test /src/tests/sidebar-settings.test.mjs /src/tests/profile-settings-migration.test.mjs \
-      /src/tests/resident-settings-migration.test.mjs /src/tests/profile-02-migration.test.mjs
+      /src/tests/resident-settings-migration.test.mjs /src/tests/profile-02-migration.test.mjs \
+      /src/tests/optional-bundle-composition.test.mjs
 
   # Verify the image with a UID unrelated to the base image's `node` user.
   # rc2 locks package.json even for inventory reads. The immutable seed belongs

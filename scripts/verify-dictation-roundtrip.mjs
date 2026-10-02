@@ -37,7 +37,7 @@ const gateway = spawn(process.execPath, ['/opt/dsh-qualification/gateway/server.
   STT_BASE_URL: `http://127.0.0.1:${stt.address().port}/v1`, STT_API_KEY_FILE: temporary + '/stt-key', STT_MAX_RECORD_SECONDS: '5',
 }, stdio: ['ignore', 'ignore', 'pipe'] });
 let logs = ''; gateway.stderr.on('data', chunk => logs += chunk);
-let close;
+let close, page;
 try {
   const require = createRequire(`${process.env.DSH_PROFILE_ROOT}/package.json`);
   const launched = await launchVerificationBrowser(require('playwright-core').chromium, { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
@@ -52,7 +52,7 @@ try {
   }
   const unauthorized = await context.request.post(base + '/local-stt/transcriptions', { multipart: { file: { name: 'fixture.webm', mimeType: 'audio/webm', buffer: Buffer.from('fixture') } } });
   assert.ok([401, 403].includes(unauthorized.status()));
-  const page = await context.newPage();
+  page = await context.newPage();
   await page.addInitScript(() => {
     const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     window.__fixtureTracks = [];
@@ -78,16 +78,18 @@ try {
   const group = page.getByRole('treeitem').filter({ has: page.getByText(workspace.title, { exact: true }) }).first();
   const sessionRow = page.getByText(title, { exact: true });
   const navigationDeadline = Date.now() + 30000;
-  while (!(await sessionRow.isVisible())) {
+  while (true) {
     assert.ok(Date.now() < navigationDeadline, 'dictation fixture conversation is visible');
     const notice = page.getByRole('dialog', { name: 'Preview Notice' });
     if (await notice.isVisible()) { await notice.getByRole('button', { name: 'Continue', exact: true }).click(); await notice.waitFor({ state: 'hidden' }); }
     const onboarding = page.getByRole('dialog', { name: 'Add an API key to get started' });
     if (await onboarding.isVisible()) await onboarding.getByRole('button', { name: 'Configure later', exact: true }).click();
-    if (await group.getAttribute('aria-expanded') === 'false') await group.getByText(workspace.title, { exact: true }).click();
+    try {
+      if (await sessionRow.isVisible()) { await sessionRow.click({ timeout: 500 }); break; }
+      if (await group.getAttribute('aria-expanded') === 'false') await group.getByText(workspace.title, { exact: true }).click({ timeout: 500 });
+    } catch (error) { if (error.name !== 'TimeoutError') throw error; }
     await delay(100);
   }
-  await sessionRow.click();
   const button = page.locator('[data-local-speech-button]');
   const composer = page.locator('[data-composer-input][contenteditable="true"]').first();
   await button.waitFor(); await composer.fill('');
@@ -113,7 +115,8 @@ try {
   console.log('Verified synthetic microphone capture through authenticated HTTPS gateway, STT response insertion, failure presentation and microphone track cleanup.');
 } catch (error) {
   console.error(String(error?.stack ?? error).split(process.env.DSH_BOOT_TOKEN).join('<redacted>'));
-  throw error;
+  console.error((await page?.locator('body').innerText().catch(() => '') ?? '').slice(-3500));
+  process.exitCode = 1;
 } finally {
   await close?.(); gateway.kill('SIGTERM');
   await Promise.race([new Promise(resolve => gateway.once('exit', resolve)), delay(5000)]);

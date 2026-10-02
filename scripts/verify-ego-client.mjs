@@ -27,6 +27,12 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     return result;
   }
   const js = async (id, expression) => (await call(id, 'ego_js', { expression })).value.result;
+  async function inputSettled(expression, message) {
+    const deadline = Date.now() + 10000;
+    while (!await js(sessions[0], expression)) {
+      assert.ok(Date.now() < deadline, message); await delay(100);
+    }
+  }
   async function openTab(id) {
     await select(id);
     await page.evaluate(sessionId => window.__previewTestContext.get('betterSidebar').openTab({ type: 'ego-browser:watch' }, { sessionId }), id);
@@ -83,19 +89,18 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     const point = (x, y) => ({ x: bounds.x + x / viewport.width * bounds.width, y: bounds.y + y / viewport.height * bounds.height });
     const input = point(100, 60);
     await page.mouse.click(input.x, input.y); await page.keyboard.type('MANUAL_EGO');
-    const deadline = Date.now() + 10000;
-    while (await js(sessions[0], "document.querySelector('#input').value") !== 'MANUAL_EGO') {
-      assert.ok(Date.now() < deadline, 'manual keyboard input reaches the page'); await delay(200);
-    }
+    await inputSettled("document.querySelector('#input').value === 'MANUAL_EGO'", 'manual keyboard input reaches the page');
     const button = point(100, 120);
     await page.mouse.click(button.x, button.y);
-    assert.equal(await js(sessions[0], "document.querySelector('#click').textContent"), 'CLICKED');
+    // Input forwards asynchronously through the authenticated capture worker;
+    // reading immediately can overtake the pointer event in another process.
+    await inputSettled("document.querySelector('#click').textContent === 'CLICKED'", 'manual click reaches the page');
     const drag = point(300, 100);
     await page.mouse.move(drag.x, drag.y); await page.mouse.down();
     await page.mouse.move(drag.x + 25, drag.y + 25, { steps: 5 }); await page.mouse.up();
-    assert.ok(await js(sessions[0], 'window.dragCount') > 0, 'manual drag reached the page');
-    await live().hover(); await page.mouse.wheel(0, 400); await delay(300);
-    assert.ok(await js(sessions[0], 'scrollY') > 0, 'manual scroll reached the page');
+    await inputSettled('window.dragCount > 0', 'manual drag reaches the page');
+    await live().hover(); await page.mouse.wheel(0, 400);
+    await inputSettled('scrollY > 0', 'manual scroll reaches the page');
     const download = await call(sessions[0], 'ego_download', { triggerSelector: '#download', savePath: root + '/ego-download.txt' });
     assert.equal(await readFile(download.value.path, 'utf8'), 'EGO_DOWNLOAD_OK');
     await call(sessions[0], 'ego_space_open', { name: 'second-tab' });

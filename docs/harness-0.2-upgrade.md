@@ -101,10 +101,22 @@ Responses `function_call_output` image. This proves the screenshot pixels and
 resident vision route; the selected deployment still needs its full application
 acceptance after update. Nighttime remains text-only by the existing policy.
 
+The upgraded Harness also passed live application inference in a disposable
+native host profile against both resident routes on 2026-10-02. Discovery retained
+Daytime at 163,840 tokens (displayed as 160K) and Nighttime at 131,072 (128K), with
+separate reasoning controls. Both model choices and reasoning preferences survived
+client reconnection, and both models continued the same durable conversation.
+No production settings were changed for these requests.
+
 The synthetic microphone round trip also passed in a disposable native host
 setup using the shipping gateway and fake Chromium microphone: transcription
 insertion, backend failure presentation, and recorder-failure track cleanup.
 Linux container qualification remains authoritative for the release.
+
+The optional Automation tasks service also passed creation, listing, title
+updates and deletion of a future synthetic task in an isolated native Harness
+profile. The task was removed without being delivered; timed delivery was not
+part of that check.
 
 Outstanding acceptance must be recorded with the exact commit and CI run. Do not
 mark unexecuted cases as passing. A physical microphone check requires the

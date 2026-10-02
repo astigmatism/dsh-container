@@ -34,8 +34,8 @@ importers:
         specifier: 0.62.2
         version: 0.62.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/schemastery@3.18.4)
       dsh-ego-browser:
-        specifier: github:Fisfzy/dsh-ego-browser#dfde57221443bdade5e0cbee7c773a6839ffe560
-        version: git+ssh://git@github.com/Fisfzy/dsh-ego-browser.git#dfde57221443bdade5e0cbee7c773a6839ffe560
+        specifier: https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560
+        version: https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560
       dsh-favicon-status:
         specifier: 0.1.0-rc.8
         version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.4)
@@ -594,8 +594,8 @@ packages:
       react-dom:
         optional: true
 
-  dsh-ego-browser@git+ssh://git@github.com/Fisfzy/dsh-ego-browser.git#dfde57221443bdade5e0cbee7c773a6839ffe560:
-    resolution: {commit: dfde57221443bdade5e0cbee7c773a6839ffe560, repo: git@github.com:Fisfzy/dsh-ego-browser.git, type: git}
+  dsh-ego-browser@https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560:
+    resolution: {gitHosted: true, integrity: sha512-JKUfbhVTTunSQ+xEltP3RWbf7F97gNLHbk8PmOT9Aabpm0IhCJyXT4VpkeWWwe16CFesUq72cKdZfZjIHSdNFw==, tarball: https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560}
     version: 0.8.6
     engines: {node: '>=22'}
     peerDependencies:
@@ -1598,7 +1598,7 @@ snapshots:
       '@deepseek-ai/schemastery': 3.18.4
       zod: 4.6.5
 
-  dsh-ego-browser@git+ssh://git@github.com/Fisfzy/dsh-ego-browser.git#dfde57221443bdade5e0cbee7c773a6839ffe560:
+  dsh-ego-browser@https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560:
     dependencies:
       '@deepseek-ai/schemastery': 3.18.4
       schemastery: 3.18.0

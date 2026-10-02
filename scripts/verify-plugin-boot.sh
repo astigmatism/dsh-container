@@ -66,6 +66,9 @@ YAML
 # environment-authority variables, and no other CWD layer is wanted here.
 cd "$parent"
 
+start_harness() {
+  : >"$boot_log"
+  rm -f "$cookie_jar"
 (
   unset DISPLAY WAYLAND_DISPLAY
   # The disposable browser fixture verifies local pages and private subresources.
@@ -73,6 +76,9 @@ cd "$parent"
     exec dsh web --no-open --port "$port"
 ) >"$boot_log" 2>&1 &
 boot_pid=$!
+
+}
+start_harness
 
 authenticate() {
   token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
@@ -154,5 +160,33 @@ if [ "$browser_ok" -ne 1 ]; then
   exit 1
 fi
 
+
+# Reopen exactly the same profile, then repeat from a copied persisted home.
+# Each previous process must release Chromium before the next one starts.
+for phase in restart recreate; do
+  if [ "$phase" = recreate ]; then
+    cp -a "$home" "$parent/recreated"
+    home=$parent/recreated
+  fi
+  DSH_SEED_HOME=$seed_home DSH_HOME=$home /usr/local/bin/dsh-sync-runtime-profile
+  start_harness
+  ready=0
+  for attempt in $(seq 1 180); do
+    if probe; then ready=1; break; fi
+    kill -0 "$boot_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then print_boot_log; exit 1; fi
+  token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
+  if ! DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+    node /opt/dsh-build/verify-ego-persistence.mjs; then
+    kill "$boot_pid" 2>/dev/null || true
+    wait "$boot_pid" 2>/dev/null || true
+    print_boot_log; exit 1
+  fi
+  token=
+  kill "$boot_pid" 2>/dev/null || true
+  wait "$boot_pid" 2>/dev/null || true
+done
 
 echo "Plugin boot check passed: the authenticated web profile, composed browser client, and ego browser routes loaded cleanly."

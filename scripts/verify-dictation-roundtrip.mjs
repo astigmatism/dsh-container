@@ -74,6 +74,14 @@ try {
     else assert.match(await composer.textContent(), /Synthetic microphone round trip succeeded\./);
   }
   assert.equal(received, 2);
+  await page.evaluate(() => {
+    const original = window.MediaRecorder;
+    window.MediaRecorder = class extends original { constructor() { throw new Error('Synthetic recorder failure'); } };
+  });
+  await button.click();
+  await page.waitForFunction(() => document.querySelector('[data-local-speech-button]')?.title === 'Synthetic recorder failure');
+  await page.waitForFunction(() => window.__fixtureTracks.length >= 3 && window.__fixtureTracks.every(track => track.readyState === 'ended'));
+  assert.equal(received, 2, 'failed recorder does not send audio');
   console.log('Verified synthetic microphone capture through authenticated HTTPS gateway, STT response insertion, failure presentation and microphone track cleanup.');
 } finally {
   await close?.(); gateway.kill('SIGTERM');

@@ -184,7 +184,12 @@ window.__ModuleLoader__.load({
       const speech = await config()
       if (!speech.enabled) throw new Error(speech.reason || 'Speech transcription is not configured')
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream, recorderOptions())
+      let recorder
+      try { recorder = new MediaRecorder(stream, recorderOptions()) }
+      catch (error) {
+        for (const track of stream.getTracks()) track.stop()
+        throw error
+      }
       const chunks = []
       const limit = window.setTimeout(() => {
         if (recorder.state === 'recording') recorder.stop()
@@ -199,7 +204,12 @@ window.__ModuleLoader__.load({
         if (active?.recorder === recorder) active = null
         void transcribe(button, input, chunks, recorder.mimeType)
       }, { once: true })
-      recorder.start(250)
+      try { recorder.start(250) }
+      catch (error) {
+        window.clearTimeout(limit)
+        for (const track of stream.getTracks()) track.stop()
+        throw error
+      }
       active = { recorder, button }
       setState(button, 'recording', 'Stop recording and transcribe')
     }

@@ -49,11 +49,36 @@ export async function startBrowserProxy({ allowPrivate = false } = {}) {
     } catch { res.writeHead(403); res.end('Browser destination blocked'); }
   });
   server.on('connection', track);
+  server.on('upgrade', async (req, client, head) => {
+    try {
+      const url = new URL(req.url);
+      if (!['ws:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid WebSocket destination');
+      const address = await destination(url.hostname, allowPrivate);
+      const headers = { ...req.headers, host: url.host };
+      delete headers['proxy-authorization']; delete headers['proxy-connection'];
+      const upstream = request({ hostname: address, port: url.port || 80, method: req.method, path: url.pathname + url.search, headers });
+      upstream.on('socket', track);
+      upstream.on('upgrade', (res, socket, incoming) => {
+        client.write(`HTTP/1.1 ${res.statusCode} ${res.statusMessage}\r\n` + res.rawHeaders.reduce((text, value, i, rows) => i % 2 ? text : text + `${value}: ${rows[i + 1]}\r\n`, '') + '\r\n');
+        if (incoming.length) client.write(incoming);
+        if (head.length) socket.write(head);
+        client.pipe(socket); socket.pipe(client);
+        client.once('close', () => socket.destroy()); socket.once('close', () => client.destroy());
+        client.on('error', () => socket.destroy()); socket.on('error', () => client.destroy());
+      });
+      upstream.on('response', res => { client.end(`HTTP/1.1 ${res.statusCode} Rejected\r\nContent-Length: 0\r\n\r\n`); res.resume(); });
+      upstream.on('error', () => client.destroy());
+      upstream.setTimeout(10000, () => upstream.destroy());
+      upstream.end();
+    } catch { client.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n'); }
+  });
   server.on('connect', async (req, client, head) => {
     try {
       const target = new URL('https://' + req.url);
+      if (target.username || target.password || target.pathname !== '/') throw new Error('Invalid tunnel destination');
       const address = await destination(target.hostname, allowPrivate);
       const upstream = track(connect(Number(target.port || 443), address));
+      upstream.setTimeout(120000, () => upstream.destroy());
       upstream.once('connect', () => {
         client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         if (head.length) upstream.write(head);

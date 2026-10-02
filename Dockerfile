@@ -195,6 +195,7 @@ COPY scripts/verify-native-terminal-client.mjs /opt/dsh-build/verify-native-term
 COPY scripts/qualification-ego-host.mjs /opt/dsh-build/qualification-ego-host.mjs
 COPY gateway /opt/dsh-qualification/gateway
 COPY scripts/verify-dictation-roundtrip.mjs /opt/dsh-build/verify-dictation-roundtrip.mjs
+COPY scripts/verify-ego-persistence.mjs /opt/dsh-build/verify-ego-persistence.mjs
 COPY scripts/verify-ego-client.mjs /opt/dsh-build/verify-ego-client.mjs
 COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 # The maintenance checkout uses a restrictive umask. Runtime verification runs

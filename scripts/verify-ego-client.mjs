@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -79,6 +80,8 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     const cancelled = await context.request.post(`${base}/qualification/ego`, { data: { sessionId: sessions[0], name: 'ego_wait', args: { ms: 30000 }, abortAfterMs: 500 }, timeout: 15000 });
     assert.equal(cancelled.status(), 500); assert.ok(Date.now() - start < 12000, 'cancellation settles the subprocess');
     assert.equal(await js(sessions[0], 'location.pathname'), '/one', 'tool execution recovers after cancellation');
+    await call(sessions[0], 'ego_auth_flush');
+    await writeFile(resolve(process.env.DSH_PROFILE_ROOT, '../../ego-browser/qualification.json'), JSON.stringify({ port: site.address().port, sessionId: sessions[0] }));
     console.log('Verified ego tools, concurrent conversation tabs, shared fixture login, screenshot attachments, live Sidebar frames, manual input, download and reconnect/cancellation.');
   } finally { await new Promise(resolve => site.close(resolve)); }
 }

@@ -14,7 +14,7 @@
     "dsh-session-pin": "0.7.16",
     "dsh-ui-appearance": "0.1.17",
     "dsh-container-profile": "link:./managed",
-    "dsh-ego-browser": "github:Fisfzy/dsh-ego-browser#dfde57221443bdade5e0cbee7c773a6839ffe560",
+    "dsh-ego-browser": "https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560",
     "playwright-core": "1.56.1"
   },
   "dsh": {

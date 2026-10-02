@@ -17,16 +17,14 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-The `0.1.7-rc.2` upgrade passed the full automated Linux qualification, including
-the portal updater's recovery rehearsal. No production or Mac installation has
-been upgraded. See [qualification results, limitations and rollback instructions](docs/harness-0.1.7-upgrade.md)
-before using the update workflow.
+The `0.2.0-rc.2` upgrade is undergoing qualification on its review branch.
+Do not deploy it until the [release qualification record](docs/harness-0.2-upgrade.md)
+marks it ready. Production verification is a separate step after an operator
+updates a selected deployment through Service Portal.
 
-- DeepSeek Harness `0.1.7-rc.2`, the official package built from GitHub tag
-  `dsh-v0.1.7-rc.2` at commit
-  `477b4f420553e8a52c2fbccc464d7561b239c443`; pnpm `11.7.0`; Docker CLI
-  `29.6.0`. The release and commit are immutable build inputs rather than a
-  moving `master` reference.
+- DeepSeek Harness `0.2.0-rc.2`, official package from tag `dsh-v0.2.0-rc.2`
+  at `639ed015397290b3745d163aafe02ffee4aa3f84`; pnpm `11.7.0`;
+  Docker CLI `29.6.0`. Both package graphs are frozen in Git.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
@@ -59,38 +57,29 @@ The locked web profile contains these ten plugins:
    compatibility patch, installed but disabled by default because its
    inode/device-sensitive refold path and per-frame synchronous Zstandard
    decompression have caused repeatable multi-gigabyte Harness RSS growth
-2. `dsh-context` 0.56.1
+2. `dsh-context` 0.62.2
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
-5. `dsh-playwright` 0.1.0 with its existing panel-layout patch and a narrowly
-   anchored web-transport-scope compatibility patch, with the web-server
-   dependency declared at the profile loader boundary; it provides the shared
-   Browser Use panel and model-facing Playwright tools
+5. `dsh-ego-browser` 0.8.6 at `dfde57221443bdade5e0cbee7c773a6839ffe560`,
+   with the container adapter for conversation workspaces, persistent shared
+   logins, native screenshot attachments and authenticated browser controls
 6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
-7. `dsh-session-pin` 0.7.15
-8. `dsh-ui-appearance` 0.1.11
+7. `dsh-session-pin` 0.7.16
+8. `dsh-ui-appearance` 0.1.17
 9. `dsh-favicon-status` 0.1.0-rc.8 (published without a manifest BOM)
-10. `dsh-better-sidebar` 0.21.1 with task views and session file activity;
+10. `dsh-better-sidebar` 0.24.1 with task views and session file activity;
     terminal and image/PDF rendering use the upstream Harness implementations
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 `seed/` for the exact manifest, lockfile, provider, and patch.
 
-The upstream repositories were rechecked on 2026-09-24. Their current heads
-still publish `@zoytown/dsh-token` 0.1.3 and `dsh-playwright` 0.1.0; the exact
-observed commits are recorded in `config/plugins.lock.json`. No unpublished
-token-memory repair or newer shared-panel implementation was available to
-adopt.
-
-Token statistics are the only deliberately unavailable default feature. There
-is no fixed `@zoytown/dsh-token` release whose memory behavior can be proven
-bounded. The retained v3 reader has not been qualified for v4 versioned session files.
-`DSH_TOKEN_ENABLED=true` is an unsupported diagnostic opt-in, not a qualified
-feature of this release. Omitting the variable
-or setting it to `false` keeps both the host scanner and token-statistics UI
-unloaded; package installation alone does not enable them.
+Token remains installed but its bundle is inactive: its published peer range
+excludes Harness 0.2, and its v4 session reader and memory behavior remain
+unqualified. `DSH_TOKEN_ENABLED` is retained as a legacy deployment setting but
+does not activate Token in this release. Existing Token preferences are archived
+by the migration. No compatibility exemption is granted.
 
 After deploying a host with the incident data, run
 `./scripts/verify-dsh-token-memory.sh --require-incident-fixture`. It requires
@@ -101,7 +90,7 @@ recreation, or any write to the disabled plugin's durable index.
 
 ## Native terminal workflow
 
-Harness 0.1.7-rc.2 owns the terminal in the right sidebar. Open a conversation,
+Harness 0.2.0-rc.2 owns the terminal in the right sidebar. Open a conversation,
 add a **Terminal** tab, and select Bash. The shell runs inside the container in
 that session's workspace. Output streams as it arrives; reconnecting restores
 the retained screen, and closing the terminal ends its process. Processes do
@@ -109,8 +98,8 @@ not survive a Harness restart.
 
 Agent tools follow the selected preset. Standard uses Bash and background
 jobs; Minimal has a persistent Bash session. The upgrade preserves the user's
-preset selection. Better Sidebar 0.21.1 no longer supplies `terminal_*` tools.
-The existing Playwright **Browser Use** panel and Sidebar file activity remain.
+preset selection. Better Sidebar 0.24.1 no longer supplies `terminal_*` tools.
+The native **ego browser** tab and Sidebar file activity remain available.
 
 The image compiles the core `node-pty` dependency, then exercises a real PTY.
 Authenticated browser qualification checks the terminal tab, incremental output,
@@ -121,24 +110,33 @@ For the isolated local browser/terminal/file-preview check:
 docker exec deepseek-harness node /opt/dsh-build/verify-sidebar-client.mjs --live
 ```
 
-See [the upgrade and rollback procedure](docs/harness-0.1.7-upgrade.md) before
+See [the upgrade and rollback procedure](docs/harness-0.2-upgrade.md) before
 recreating an existing installation. Rollback requires both the previous image
 and the pre-upgrade data snapshot.
 
 ## Shared browser and visual validation
 
-The web profile includes `dsh-playwright`, which runs a headless Chromium page
-per DSH session and streams that same page into the in-app Browser Use panel.
-The model can navigate, inspect semantic snapshots, click or type, and request
-PNG screenshots through DSH's native image-attachment path. Both local model
-routes declare image input, and the production Responses router accepts
-image-bearing function-call results directly.
+The web profile includes `dsh-ego-browser` inside the Harness image. It drives
+headless Chromium through the `ego_*` tools and displays it in Better Sidebar's
+native **ego browser** tab, with live frames and manual mouse/keyboard control.
+No additional container or published browser-control port is required.
 
-The pinned alpha.1 Connection registry needs the plugin's web context passed
-explicitly when registering Browser Use controls. The version-checked build
-patch retains the existing authentication and request checks. The disposable
-browser gate exercises the panel's control RPC, local HTTP navigation, private
-subresources, and rendered screenshot, as well as the stream upgrade route.
+Conversation defaults and named spaces are scoped to the calling Harness session.
+Cookies and site storage are deliberately shared between conversations. Browser
+profiles, supporting state and screenshots live under `/data/dsh/ego-browser`,
+which the updater snapshots with the rest of Harness state. Desktop-browser
+cookie import is unavailable; sign in directly through the ego tab.
+
+`ego_screenshot` returns both a PNG file result and a native Harness image
+attachment. Both resident model routes declare image input; the router accepts
+image-bearing tool results. Actual visual interpretation must still pass the
+[visual acceptance procedure](docs/visual-validation-playbook.md) after deployment.
+
+The adapter validates Harness authentication for stream, input and settings
+routes. Chromium uses a local policy proxy for navigation, redirects and
+subresources. Its child-process environment has a private browser home without
+changing the agent workspace. Idle Chromium is stopped after ten minutes without
+an ego tool call; logins persist, and browsing starts again on demand.
 
 Chromium is installed at `/usr/bin/chromium` in the Harness image. Public web
 targets work with the secure default. To validate an application on localhost,
@@ -150,7 +148,7 @@ DSH_BROWSER_ALLOW_PRIVATE_HOSTS=true
 ```
 
 This setting permits all private hosts and private subresources reachable from
-the Harness container; the upstream plugin does not currently expose a
+the Harness container; the container adapter does not expose a
 per-domain allowlist. Enable it only for trusted validation tasks, keep the
 Harness on its existing trusted network boundary, and turn it off for general
 browsing. Inside Chromium, `localhost` refers to the Harness container. Use a
@@ -560,7 +558,7 @@ image build verifies that contract against the exact pinned browser bundles;
 an upstream layout or behavior change fails the build rather than silently
 restoring native host dispatch.
 
-The pinned `dsh-better-sidebar` 0.21.1 viewer also receives a version-checked
+The pinned `dsh-better-sidebar` 0.24.1 viewer also receives a version-checked
 build patch. Session-relative resources resolve against the referenced session's
 working directory before entering the shared image, text, HTML, PDF, and download
 adapter. Restored tabs wait for the session directory to load; absolute paths and
@@ -569,7 +567,7 @@ error with Retry. Headless hosts keep native application actions disabled withou
 showing a desktop warning on working in-app preview cards. The build and deployment
 checks verify this patch; an upstream version or bundle change requires review.
 HTML documents retain the existing opaque-origin sandbox, whose request fence
-rejects linked local assets. Full local sites with assets can run in Browser Use
+rejects linked local assets. Full local sites with assets can run in the ego browser tab
 when private hosts are enabled.
 
 The CLI's dependency graph is also locked in `config/dsh-runtime.package-lock.json`

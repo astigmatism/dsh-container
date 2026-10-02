@@ -16,7 +16,7 @@ import tempfile
 import time
 
 ROOTS = ('data/dsh', 'data/gateway', 'data/backend-auth', 'secrets')
-TARGET = '0.1.7-rc.2'
+TARGET = '0.2.0-rc.2'
 
 
 def run(args):

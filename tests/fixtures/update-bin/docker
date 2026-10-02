@@ -11,7 +11,7 @@ case "${1:-}" in
     if [ "$#" -eq 2 ] && [ "${2:-}" = deepseek-harness ]; then
       # Ordinary updater fixtures represent a current-format runtime. Legacy
       # recovery and data/image pinning have dedicated boundary fixtures.
-      printf '%s\n' '[{"Config":{"Labels":{"org.opencontainers.image.version":"0.1.7-rc.2"}}}]'
+      printf '%s\n' '[{"Config":{"Labels":{"org.opencontainers.image.version":"0.2.0-rc.2"}}}]'
       exit 0
     fi
     if [ "${2:-}" = aaaaaaaaaaaa ]; then

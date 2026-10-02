@@ -24,6 +24,16 @@ function replace(source, before, after) {
 
 export function patchSource(input) {
   if (input.includes(marker)) return input;
+  if (input.includes('function RunningStatus({ startTime, t })')) {
+    let source = replace(input, 'function RunningStatus({ startTime, t })',
+      `function RunningStatus({ startTime, rawStep, t })`);
+    source = replace(source,
+      'const label = startTime === void 0 ? t("chat.deepDiving") : t("chat.deepDivingFor", { duration: formatRunDuration(Math.max(1e3, now - startTime), t).map((part) => part.text).join("") });',
+      `// ${marker}\nconst step = rawStep === undefined ? null : { number: rawStep.step, startedAt: rawStep.start?.time ?? null, status: rawStep.status };\nconst durationText = ms => formatRunDuration(Math.max(0, ms), t).map(part => part.text).join('');\nconst label = (step ? 'Working · step ' + step.number + (step.status === 'open' && step.startedAt !== null ? ' · current step ' + durationText(now - step.startedAt) : ' · between steps') : 'Working') + (startTime === undefined ? '' : ' · total ' + durationText(now - startTime));`);
+    source = replace(source, 'const turnOutline = useProjection("turnOutline");',
+      `const runningStep = useChatNode(latestTurnAnchor ?? "", node => { const location = node?.location; return location?.kind === "turn" || location?.kind === "step" ? location.turn.steps.at(-1) : undefined; });\nconst turnOutline = useProjection("turnOutline");`);
+    return replace(source, 'startTime: runningStartTime,', 'startTime: runningStartTime, rawStep: runningStep,');
+  }
   if (input.includes('function TurnProcessNodeView({ node, turnProcess, t })')) {
     return replace(input,
       'const label = running ? duration === void 0 ? t("chat.deepDiving") : t("message.turnProcess.deepDivingFor", { duration }) :',

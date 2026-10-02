@@ -31,7 +31,7 @@ if (process.argv.includes('--live')) {
     const { result } = await response.json();
     assert.equal(result.ok, true, result.error?.message);
     const maintained = new Set(['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
-      'dsh-loop-detector', 'dsh-playwright', 'dsh-plugin-task-notification',
+      'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
       'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar']);
     for (const row of result.value.entries) {
       if (!row.enabled) continue; // Explicitly disabled user plugins stay disabled.
@@ -41,17 +41,17 @@ if (process.argv.includes('--live')) {
     }
     if (process.env.DSH_TOKEN_ENABLED !== 'true') {
       const token = result.value.entries.find(row => row.moduleName === '@zoytown/dsh-token');
-      assert.equal(token?.enabled, false, 'default Token policy');
+      assert.notEqual(token?.enabled, true, 'default Token policy');
       assert.notEqual(token?.fiberPhase, 'active');
     }
     for (const preset of result.value.agentPresets) assert.equal(preset.broken, undefined, `${preset.id} preset failed to mount`);
 
-    const loaded = await page.goto(base, { waitUntil: 'networkidle' });
+    const loaded = await page.goto(base, { waitUntil: 'domcontentloaded' });
     assert.ok(loaded?.ok(), 'authenticated browser document');
-    assert.equal(await page.evaluate(() => typeof window.__ModuleLoader__), 'object');
+    await page.waitForFunction(() => typeof window.__ModuleLoader__ === 'object');
     await page.locator('[data-composer-input]').first().waitFor();
     await page.locator('[data-local-speech-button]').first().waitFor();
-    assert.ok(await page.locator('style[data-plugin="dsh-ui-appearance"]').count());
+    await page.locator('style[data-plugin="dsh-ui-appearance"]').waitFor({ state: 'attached' });
     assert.deepEqual(errors, []);
     console.log('Verified enabled plugin and preset mounts, composed chat, speech and appearance browser integrations. Native terminal lifecycle is covered by the isolated --live gate.');
   } catch (error) {

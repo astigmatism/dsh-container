@@ -12,7 +12,7 @@ const ids = ['compaction-basic', 'command-compact', 'tool-result-pruner'];
 const policies = new Map(ids.map(id => [id, managed.find(row => row.id === id)]));
 assert.ok([...policies.values()].every(Boolean));
 const pkg = `${root}/node_modules/@deepseek-ai/dsh-web-app`;
-assert.equal(JSON.parse(fs.readFileSync(`${pkg}/package.json`)).version, '0.1.7-rc.2');
+assert.equal(JSON.parse(fs.readFileSync(`${pkg}/package.json`)).version, '0.2.0-rc.2');
 for (const preset of ['standard', 'ptc', 'cordis', 'minimal']) {
   const file = `${pkg}/presets/${preset}.patch.yml`;
   const document = YAML.parseDocument(fs.readFileSync(file, 'utf8'), options);

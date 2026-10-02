@@ -14,11 +14,11 @@ services:
         # runtime lock. Old .env or shell pins must not override that pair.
         PNPM_VERSION: "${PNPM_VERSION:-11.7.0}"
         DOCKER_CLI_IMAGE: "${DOCKER_CLI_IMAGE:-docker@sha256:d14410ab6f87a2b6c14b7150de787cd7b8bb012a8e900966d6d893e9f7fc49b6}"
-    image: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.7-rc.2-portable}"
+    image: "${HARNESS_IMAGE:-local/deepseek-harness:0.2.0-rc.2-portable}"
     labels:
       io.service-portal.update.enabled: "true"
       io.service-portal.update.script: "scripts/update-and-restart.sh"
-      io.service-portal.update.image: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.7-rc.2-portable}"
+      io.service-portal.update.image: "${HARNESS_IMAGE:-local/deepseek-harness:0.2.0-rc.2-portable}"
       io.service-portal.update.user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
       io.service-portal.update.host-home: "${HOST_HOME:-}"
     container_name: deepseek-harness
@@ -37,12 +37,12 @@ services:
       USER: "${HOST_USERNAME:-harness}"
       LOGNAME: "${HOST_USERNAME:-harness}"
       NVIDIA_SMI_IMAGE: "${NVIDIA_SMI_IMAGE:-ollama/ollama@sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82}"
-      HOST_EXEC_IMAGE: "${HARNESS_IMAGE:-local/deepseek-harness:0.1.7-rc.2-portable}"
+      HOST_EXEC_IMAGE: "${HARNESS_IMAGE:-local/deepseek-harness:0.2.0-rc.2-portable}"
       OLLAMA_DSH_API_KEY: local-only
       HARNESS_TRUSTED_HOSTS: "${HARNESS_TRUSTED_HOSTS:-127.0.0.1:3443,deepseek-harness.local:3443,localhost:3443}"
       # Leave private browser targets off for general web use. Enable this only
       # in trusted application-validation deployments that need LAN/container
-      # targets; dsh-playwright otherwise blocks private hosts and subresources.
+      # targets; ego otherwise blocks private hosts and subresources.
       DSH_BROWSER_ALLOW_PRIVATE_HOSTS: "${DSH_BROWSER_ALLOW_PRIVATE_HOSTS:-false}"
       # The newest dsh-token release has a repeatable multi-gigabyte native
       # memory failure while refolding session artifacts. Keep it fail-closed

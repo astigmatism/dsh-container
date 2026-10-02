@@ -21,6 +21,10 @@ export function loaderRow(effective, id) {
 
 export function verifyTokenPolicy(effective, expected) {
   assert.ok(expected === "enabled" || expected === "disabled", `invalid expected policy: ${expected}`);
+  if (!/^\s*- id: dsh-token\s*$/m.test(effective)) {
+    assert.equal(expected, 'disabled', 'Token bundle is intentionally inactive on Harness 0.2');
+    return '';
+  }
   const token = loaderRow(effective, "dsh-token");
   const serialized = token.match(/^\s*disabled:\s*(.+?)\s*$/m)?.[1];
   assert.ok(serialized, `dsh-token has no disabled policy; effective row:\n${token}`);

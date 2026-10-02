@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Canonical content must be restored without rewriting unchanged dependencies."""
 import os
+import json
 from pathlib import Path
 import stat
 import subprocess
@@ -61,6 +62,26 @@ class RuntimeProfileSyncTests(unittest.TestCase):
                  for p in self.runtime.rglob('*') if p.is_file() and not p.is_symlink()}
         self.assertEqual(before, after)
         self.assertIn('0 files updated, 0 obsolete entries removed', result.stdout)
+
+    def test_ordered_optional_bundles_and_disabled_plugins_survive_repeated_sync(self):
+        canonical = json.loads((SCRIPT.parent.parent / 'seed/profile/package.json').read_text())
+        (self.web / 'package.json').write_text(json.dumps(canonical))
+        self.installed.mkdir(parents=True)
+        optional = canonical['dshContainer']['optionalBundles']
+        selected = ['@deepseek-ai/dsh-base', optional[3], 'dsh-playwright',
+                    '@zoytown/dsh-token', '@deepseek-ai/dsh-web-app', optional[0], 'dsh-container-profile']
+        (self.installed / 'package.json').write_text(json.dumps({'dependencies': {'dsh-playwright': '0.1.0'}, 'dsh': {'profile': {'bundles': selected}}}))
+        expected = ['dsh-ego-browser' if value == 'dsh-playwright' else value for value in selected if value != '@zoytown/dsh-token']
+        for _ in range(2):
+            self.run_sync()
+            result = json.loads((self.installed / 'package.json').read_text())
+            self.assertEqual(result['dsh']['profile']['bundles'], expected)
+            self.assertEqual(result['dependencies'], canonical['dependencies'])
+        result['dsh']['profile']['bundles'].append('unqualified-plugin')
+        original = json.dumps(result)
+        (self.installed / 'package.json').write_text(original)
+        self.run_sync(success=False)
+        self.assertEqual((self.installed / 'package.json').read_text(), original)
 
     def test_writable_profile_survives_sync_and_managed_defaults_are_repaired(self):
         (self.web / 'cordis.patch.yml').write_text('[]\n')

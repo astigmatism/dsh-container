@@ -94,29 +94,8 @@ awk '/^patchedDependencies:/ { in_block = 1; next }
   esac
 done
 
-# 2. The patched dsh-playwright snapshot must retain its full dependency
-#    graph. Commit e89828d committed an empty patched snapshot, so pnpm
-#    installed the patched plugin without playwright-core/pngjs/ws and the
-#    container crashed on boot with "Cannot find package 'playwright-core'".
-#    The snapshot pnpm actually writes carries the package's dependencies.
-playwright_hash=$(lock_patch_hash 'dsh-playwright@0.1.0') || fail "no patched dsh-playwright entry in lockfile"
-if awk '/^snapshots:/ { in_block = 1; next }
-        in_block && /^[^ ]/ { in_block = 0 }
-        in_block && /^  dsh-playwright@0.1.0\(patch_hash=[0-9a-f]+\).*: \{\}$/ { found = 1 }
-        END { exit found ? 0 : 1 }' "$lock"; then
-  fail "patched dsh-playwright snapshot is empty (dependency graph lost)"
-fi
-awk -v wanted="  dsh-playwright@0.1.0(patch_hash=$playwright_hash)" '
-  index($0, wanted) == 1 { in_snap = 1; next }
-  in_snap && /^[^ ]/ { in_snap = 0 }
-  in_snap && /^  [^ ]/ { in_snap = 0 }
-  in_snap && $0 ~ /^      playwright-core: / { print "DEP_PLAYWRIGHT" }
-  in_snap && $0 ~ /^      pngjs: / { print "DEP_PNGJS" }
-  in_snap && $0 ~ /^      ws: / { print "DEP_WS" }
-' "$lock" > "$lock.snapcheck.$$"
-trap 'rm -f "$lock.snapcheck.$$"' EXIT
-for marker in DEP_PLAYWRIGHT DEP_PNGJS DEP_WS; do
-  grep -q "^$marker$" "$lock.snapcheck.$$" || fail "patched dsh-playwright snapshot is missing $marker"
-done
-
-echo "ok - seed profile patched-dependency lock state is consistent with the patch files"
+# Ego and its complete dependency graph are locked to the reviewed release.
+grep -Fq 'dfde57221443bdade5e0cbee7c773a6839ffe560' "$lock" || fail "missing pinned ego source"
+grep -Fq 'dsh-ego-browser:' "$lock" || fail "missing ego importer"
+if grep -Fq 'dsh-playwright' "$lock"; then fail "retired browser remains installed"; fi
+echo "ok - seed profile patch hashes and pinned ego source are consistent"

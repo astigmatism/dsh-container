@@ -57,7 +57,7 @@ def verify_application(manifest, by_service):
         ('verify-sidebar-client.mjs', []),
         ('verify-dictation-client.mjs', []),
         ('verify-resident-client.mjs', ['--live']),
-        ('verify-dsh-playwright-stream.mjs', []),
+        ('verify-ego-routes.mjs', []),
         ('verify-dsh-inference-contract.mjs', []),
     ):
         run(['docker', 'exec', by_service[harness]['Id'], 'node', '/opt/dsh-build/' + script, *arguments])

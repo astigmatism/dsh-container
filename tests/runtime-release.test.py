@@ -35,6 +35,11 @@ class RuntimeReleaseTests(unittest.TestCase):
         for name, version in profile["dependencies"].items():
             if name.startswith("@deepseek-ai/dsh-"):
                 self.assertEqual(version, PINS["DSH_VERSION"], name)
+        # A lock generated over Mac node_modules can omit Linux optional
+        # packages, silently falling back to native compilation in CI.
+        for dependency in ('@koromix/koffi-linux-x64', '@deepseek-ai/node-addon-system-linux-x64'):
+            self.assertIn('node_modules/' + dependency, LOCK['packages'])
+            self.assertTrue(LOCK['packages']['node_modules/' + dependency].get('integrity'))
 
     def test_compose_ignores_legacy_pins_and_preserves_deployment_settings(self):
         # No build/up calls: Compose renders all supported modes against fresh,

@@ -117,7 +117,7 @@ export function patchDeliverablesSource(input) {
   }
   // Upstream shapes whose produced-file chips call the chat view's in-app
   // resource opener (sidebar preview) instead of dispatching to a native host.
-  // 0.1.7-rc.2's redesign keeps that behavior while dropping the
+  // 0.2.0-rc.2's redesign keeps that behavior while dropping the
   // isLoopback/useHostDescription parameters, so it is marker-only here.
   if (
     input.includes('function ProducedFiles({ matched: paths, openFile, t })') &&

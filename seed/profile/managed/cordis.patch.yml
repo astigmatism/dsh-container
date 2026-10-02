@@ -25,14 +25,8 @@
 - id: session-title-llm
   disabled: true
 
-# @zoytown/dsh-token 0.1.3 can retain gigabytes of native memory while
-# refolding concatenated Zstandard session frames. It also invalidates its
-# durable cache when bind-mounted device/inode identities change during a
-# container recreation. There is no fixed upstream release, so token
-# statistics are fail-closed by default. Operators accepting that risk can
-# opt in explicitly; the package remains installed for a reversible rollout.
-- id: dsh-token
-  disabled: !!js "(process.env.DSH_TOKEN_ENABLED ?? 'false').toLowerCase() !== 'true'"
+# Token remains installed, but its incompatible bundle is not activated on 0.2.
+# Its v4 session reader and memory behavior are not qualified for this runtime.
 
 # The build applies these settings to each native agent preset. Keep the host
 # copies disabled: presets own the isolated compaction and pruning services.
@@ -66,17 +60,18 @@
     headChars: 4096
     tailChars: 1024
 
-# The browser remains headless inside the container while its CDP screencast is
-# rendered in DSH's Browser Use panel. Private targets are an explicit
-# deployment choice because enabling them also permits private subresources.
-- id: dsh-playwright
-  inject:
-    - webServer
+# Ego runs the existing Chromium, with persistent shared website logins.
+# Conversation/tab association and the deployment network policy live in the
+# pinned container adapter. No browser control port is published.
+- id: ego-browser
   config:
-    browserExecutablePath: /usr/bin/chromium
-    viewportWidth: 1440
-    viewportHeight: 900
-    allowPrivateHosts: !!js "(process.env.DSH_BROWSER_ALLOW_PRIVATE_HOSTS ?? 'false').toLowerCase() === 'true'"
+    chromePath: /usr/bin/chromium
+    chromeArgs: --no-sandbox --disable-dev-shm-usage
+    captureBackend: cdp
+    isolateSpaces: false
+    idleTimeoutMin: 10
+    cdpFps: 15
+    cdpMaxWidth: 1440
 
 - insert:
     - id: web-search-duckduckgo

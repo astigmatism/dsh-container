@@ -15,7 +15,7 @@ import {
   withoutSessionCookie,
 } from './session-auth.mjs'
 
-const dataDir = '/data/gateway'
+const dataDir = process.env.HARNESS_GATEWAY_DATA_DIR || '/data/gateway'
 const tlsDir = join(dataDir, 'tls')
 const authPath = join(dataDir, 'auth.json')
 const backend = new URL(process.env.HARNESS_BACKEND_URL || 'http://127.0.0.1:3080')

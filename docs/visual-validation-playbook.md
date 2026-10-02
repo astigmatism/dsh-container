@@ -9,7 +9,7 @@ result rather than inferring an answer from the DOM.
 ## Data path
 
 ```text
-dsh-playwright browser_screenshot
+ego_screenshot
   -> DSH image attachment
   -> Responses function_call_output with input_image
   -> production local-ai-ollama-router /v1/responses
@@ -17,7 +17,7 @@ dsh-playwright browser_screenshot
   -> Qwen3.8 visual reasoning
 ```
 
-`dsh-playwright` and Chromium are included in the Harness image. Remote mode
+`dsh-ego-browser` and Chromium are included in the Harness image. Remote mode
 maps `ai-router` directly to `REMOTE_OLLAMA_HOST`, whose production router must
 accept image-bearing function outputs through `/v1/responses`; it does not run
 a local adapter. Managed mode builds the vendored router in this repository.
@@ -34,8 +34,8 @@ a Compose network, or a trusted LAN, set the following deployment-local value:
 DSH_BROWSER_ALLOW_PRIVATE_HOSTS=true
 ```
 
-The upstream browser plugin exposes a Boolean private-network switch rather
-than a host allowlist. Enabling it permits every private destination and
+The container browser adapter preserves the Boolean private-network switch.
+It is not a host allowlist. Enabling it permits every private destination and
 private subresource reachable from the Harness container. Use it only on the
 existing trusted validation network and disable it for general browsing.
 
@@ -52,7 +52,7 @@ For an internal target, require the setting explicitly:
 ```
 
 The script verifies the pinned plugin, launches Chromium headlessly as a smoke
-test, proves the live Browser Use WebSocket upgrade route is mounted, and
+test, proves the ego stream and control routes require Harness authentication, and
 checks that `local-active` advertises complete image, vision, and tool support.
 It does not replace the model-level acceptance prompt below.
 
@@ -70,13 +70,13 @@ Create a fresh DSH session and send this prompt verbatim:
 ```text
 Run a read-only acceptance test of the new shared browser and vision pipeline.
 
-Use only the browser_* tools for the page investigation. Do not inspect
+Use only the ego_* tools for the page investigation. Do not inspect
 repository files, use shell commands, or modify anything.
 
-1. Call browser_navigate for
+1. Call ego_navigate for
    http://host.docker.internal:4173/tests/fixtures/visual-validation/
-2. Call browser_snapshot so you have interaction context.
-3. Call browser_screenshot and analyze the actual pixels.
+2. Call ego_snapshot so you have interaction context.
+3. Call ego_screenshot and analyze the actual pixels.
 4. Report the exact VISION TOKEN drawn inside the chart canvas.
 5. Report every clearly visible layout, clipping, overlap, or contrast defect,
    with short pixel-based evidence.
@@ -93,9 +93,9 @@ screenshot. Do not guess a token from surrounding text.
 
 A pass requires all of the following:
 
-- `browser_navigate`, `browser_snapshot`, and `browser_screenshot` appear in
+- `ego_navigate`, `ego_snapshot`, and `ego_screenshot` appear in
   the trajectory;
-- the Browser Use panel displays the fixture;
+- the ego browser panel displays the fixture;
 - the model reports `COBALT-731` exactly;
 - the report identifies the overlapping action buttons, low-contrast helper
   copy, clipped Approve deployment button, and overlapping support/toast
@@ -118,7 +118,7 @@ TARGET URL: <TARGET_URL>
 EXPECTED BUILD OR VERSION: <EXPECTED_BUILD>
 CRITICAL USER FLOWS: <FLOW_1>; <FLOW_2>; <FLOW_3>
 
-Use the shared browser_* tools only. Do not use shell commands, inspect source
+Use the shared ego_* tools only. Do not use shell commands, inspect source
 files, change application data, submit destructive forms, or complete a
 purchase, deployment, deletion, invitation, or external message. If sign-in,
 MFA, CAPTCHA, or a potentially consequential submit action is required, stop
@@ -169,7 +169,7 @@ CANDIDATE URL: <CANDIDATE_URL>
 ENHANCEMENT CONTRACT: <EXPECTED_VISIBLE_CHANGE>
 CRITICAL STATES: <STATE_1>; <STATE_2>; <STATE_3>
 
-Use only browser_* tools. For each critical state, reproduce the same safe
+Use only ego_* tools. For each critical state, reproduce the same safe
 navigation in the baseline and candidate, then take screenshots at the same
 1440×900 viewport. Use semantic snapshots for control targeting and screenshot
 pixels for the comparison. Do not submit consequential actions or modify
@@ -192,6 +192,6 @@ from DOM text alone.
 
 For each environment, record the DSH version, plugin version, active model and
 quantization, router revision, target build, private-target setting, prompt
-used, final model report, and whether the Browser Use panel visibly followed
+used, final model report, and whether the ego browser panel visibly followed
 the tool trajectory. Never include credentials, cookies, or private keys in
 the evidence bundle.

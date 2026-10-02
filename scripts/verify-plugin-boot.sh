@@ -3,7 +3,7 @@ set -eu
 
 # Boot the canonical web profile in a throwaway DSH_HOME and require a stable
 # authenticated HTTP 200. Booting imports the full plugin tree (every bundle's loader entry,
-# including dsh-playwright's server-side entry), so this catches broken
+# including dsh-ego-browser's server-side entry), so this catches broken
 # dependency graphs - e.g. a pnpm patched-dependency snapshot in the seed
 # lockfile that drops playwright-core/pngjs/ws - that `dsh --dump-config` and
 # `dsh plugin list` pass without noticing.
@@ -36,6 +36,10 @@ home=$parent/runtime
 boot_log=$parent/dsh-web.log
 cookie_jar=$parent/cookies.txt
 cleanup() {
+  if [ -n "${boot_pid:-}" ]; then
+    kill "$boot_pid" 2>/dev/null || true
+    wait "$boot_pid" 2>/dev/null || true
+  fi
   rm -rf -- "$parent"
 }
 trap cleanup EXIT HUP INT TERM
@@ -56,10 +60,30 @@ DSH_SETTINGS_GID=$(id -g) \
   /usr/local/bin/dsh-initialize-persisted-settings --replace-empty
 
 node /opt/dsh-build/migrate-profile-settings.mjs "$home"
+# The tool-driving bridge is appended only to this disposable profile.
+# Cordis replaces a row's complete config object. Keep the container launch
+# settings when shortening the idle timeout for qualification.
+cat >>"$home/profiles/web/cordis.patch.yml" <<'YAML'
+- insert:
+    - id: ego-qualification
+      name: /opt/dsh-build/qualification-ego-host.mjs
+- id: ego-browser
+  config:
+    chromePath: /usr/bin/chromium
+    chromeArgs: --no-sandbox --disable-dev-shm-usage
+    captureBackend: cdp
+    isolateSpaces: false
+    idleTimeoutMin: 1
+    cdpFps: 15
+    cdpMaxWidth: 1440
+YAML
 # Neutral CWD: the repo's .env is rejected by the launcher for
 # environment-authority variables, and no other CWD layer is wanted here.
 cd "$parent"
 
+start_harness() {
+  : >"$boot_log"
+  rm -f "$cookie_jar"
 (
   unset DISPLAY WAYLAND_DISPLAY
   # The disposable browser fixture verifies local pages and private subresources.
@@ -67,6 +91,9 @@ cd "$parent"
     exec dsh web --no-open --port "$port"
 ) >"$boot_log" 2>&1 &
 boot_pid=$!
+
+}
+start_harness
 
 authenticate() {
   token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
@@ -93,10 +120,14 @@ probe_browser_client() {
     node /opt/dsh-build/verify-sidebar-client.mjs || return 1
   DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
     node /opt/dsh-build/verify-file-previews.mjs || return 1
+  DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+    node /opt/dsh-build/verify-dictation-roundtrip.mjs || return 1
   if [ "${DSH_VERIFY_RESIDENT_CATALOG:-false}" = true ]; then
     DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
       node /opt/dsh-build/verify-resident-client.mjs || return 1
   fi
+  DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port \
+    node /opt/dsh-build/verify-ego-routes.mjs || return 1
   token=
 }
 
@@ -125,14 +156,10 @@ if [ "$ok" -ge "$stable" ] && probe_browser_client; then
   browser_ok=1
 fi
 
-stream_ok=0
-if [ "$ok" -ge "$stable" ] \
-  && DSH_WEB_PORT=$port node /opt/dsh-build/verify-dsh-playwright-stream.mjs; then
-  stream_ok=1
-fi
 
 kill "$boot_pid" 2>/dev/null || true
 wait "$boot_pid" 2>/dev/null || true
+boot_pid=
 
 if [ "$ok" -lt "$stable" ]; then
   echo "Plugin boot check failed: dsh web never served $stable consecutive HTTP 200 responses from $seed_home/profiles/web (after ${elapsed}s)." >&2
@@ -149,11 +176,43 @@ if [ "$browser_ok" -ne 1 ]; then
   exit 1
 fi
 
-if [ "$stream_ok" -ne 1 ]; then
-  echo "Plugin boot check failed: the Browser Use WebSocket route was not mounted." >&2
-  echo "Last Harness startup output:" >&2
-  print_boot_log || true
-  exit 1
-fi
 
-echo "Plugin boot check passed: the authenticated web profile, composed browser client, and Browser Use stream route loaded cleanly."
+# Reopen exactly the same profile, then repeat from a copied persisted home.
+# Each previous process must release Chromium before the next one starts.
+for phase in restart recreate; do
+  if [ "$phase" = recreate ]; then
+    cp -a "$home" "$parent/recreated"
+    home=$parent/recreated
+  fi
+  DSH_SEED_HOME=$seed_home DSH_HOME=$home /usr/local/bin/dsh-sync-runtime-profile
+  start_harness
+  ready=0
+  for attempt in $(seq 1 180); do
+    if probe; then ready=1; break; fi
+    kill -0 "$boot_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then print_boot_log; exit 1; fi
+  token=$(sed -n 's/.*[?]token=\([^ ]*\).*/\1/p' "$boot_log" | tail -n 1)
+  if ! DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+    node /opt/dsh-build/verify-ego-persistence.mjs; then
+    kill "$boot_pid" 2>/dev/null || true
+    wait "$boot_pid" 2>/dev/null || true
+    print_boot_log; exit 1
+  fi
+  if [ "$phase" = recreate ]; then
+    if ! DSH_PROFILE_ROOT=$home/profiles/web node /opt/dsh-build/verify-ego-idle.mjs; then
+      kill "$boot_pid" 2>/dev/null || true
+      wait "$boot_pid" 2>/dev/null || true
+      print_boot_log; exit 1
+    fi
+    DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+      node /opt/dsh-build/verify-ego-persistence.mjs
+  fi
+  token=
+  kill "$boot_pid" 2>/dev/null || true
+  wait "$boot_pid" 2>/dev/null || true
+  boot_pid=
+done
+
+echo "Plugin boot check passed: the authenticated web profile, composed browser client, and ego browser routes loaded cleanly."

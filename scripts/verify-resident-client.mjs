@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
@@ -63,7 +64,7 @@ try {
   }
   const title = `Resident model verification ${sessionId.slice(-8)}`;
   await rpc('rename', { sessionId, title });
-  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
   const group = page.getByRole('treeitem').filter({ has: page.getByText(created.workspace.title, { exact: true }) }).first();
   const sessionRow = page.getByText(title, { exact: true });
   // Workspace restoration can expand the most recent group while the browser
@@ -89,6 +90,20 @@ try {
   assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
   await trigger.click();
   console.log(`Live Harness catalog and rendered picker contain exactly ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
+  // Model selection saves the next-request preference asynchronously. Verify
+  // both choices and distinct reasoning settings survive browser reconnection.
+  for (const [index, choice] of expected.entries()) {
+    const selection = { provider: choice.provider, model: choice.model, reasoningEffort: index ? 'high' : 'off' };
+    assert.deepEqual((await rpc('selectModel', { sessionId, ...selection })).selected, selection);
+    const deadline = Date.now() + 15000;
+    while (!isDeepStrictEqual((await rpc('modelCatalog')).default, selection)) {
+      assert.ok(Date.now() < deadline, 'model and reasoning default persisted'); await delay(100);
+    }
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('[data-composer-input]');
+    assert.deepEqual((await rpc('modelCatalog')).default, selection);
+  }
+  console.log('Both model selections and separate reasoning preferences survived browser reconnection.');
   if (live) {
     for (const [index, choice] of expected.entries()) {
       await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' });

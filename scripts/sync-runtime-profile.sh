@@ -20,6 +20,12 @@ esac
   exit 1
 }
 
+# Capture/migrate the writable patch before synchronizing managed software.
+migrator=${DSH_PROFILE_02_MIGRATOR:-/opt/dsh-build/migrate-harness-02-profile.mjs}
+if [ -f "$migrator" ]; then
+  node "$migrator" "$runtime_home"
+fi
+
 # Keep the canonical-content policy without rewriting thousands of unchanged
 # dependencies across Docker Desktop's host-file sharing on every restart.
 # Compare actual bytes (not just timestamps), replace changed files atomically,
@@ -27,6 +33,7 @@ esac
 # entrypoint starts Harness only after the entire synchronization succeeds.
 python3 - "$seed_home" "$runtime_home" <<'PY'
 import filecmp
+import json
 import os
 from pathlib import Path
 import shutil
@@ -47,6 +54,32 @@ if profiles.is_symlink():
 profiles.mkdir(exist_ok=True)
 updated = removed = 0
 
+# Dependency versions stay image-owned; activation belongs to the operator.
+# Resolve the merge before mutating any managed file, so unsupported additions
+# fail without deleting user-installed packages.
+seed_manifest = json.loads((seed / 'profiles/web/package.json').read_text())
+manifest_path = profiles / 'web/package.json'
+merged_manifest = None
+if manifest_path.is_file() and not manifest_path.is_symlink() and seed_manifest.get('dshContainer'):
+    previous = json.loads(manifest_path.read_text())
+    selected = previous.get('dsh', {}).get('profile', {}).get('bundles')
+    policy = seed_manifest['dshContainer']
+    canonical = seed_manifest['dsh']['profile']['bundles']
+    if selected is not None:
+        if not isinstance(selected, list) or not all(isinstance(x, str) for x in selected):
+            raise RuntimeError('Invalid saved bundle selection')
+        allowed = set(canonical + policy['optionalBundles'] + ['dsh-playwright', '@zoytown/dsh-token'])
+        unknown = set(selected) - allowed
+        unknown_dependencies = set(previous.get('dependencies', {})) - set(seed_manifest['dependencies']) - set(policy['optionalBundles']) - {'dsh-playwright'}
+        if unknown or unknown_dependencies:
+            raise RuntimeError('Unmanaged plugins require qualification before updating: ' + ', '.join(sorted(unknown | unknown_dependencies)))
+        selected = ['dsh-ego-browser' if x == 'dsh-playwright' else x for x in selected if x != '@zoytown/dsh-token']
+        for name in ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-container-profile']:
+            if name not in selected:
+                raise RuntimeError('Required profile bundle was removed: ' + name)
+        merged_manifest = dict(seed_manifest)
+        merged_manifest['dsh'] = {'profile': {'bundles': list(dict.fromkeys(selected))}}
+
 
 def remove(path):
     global removed
@@ -64,6 +97,18 @@ def mode(path, wanted):
 
 def sync(source, target):
     global updated
+    if target == manifest_path and merged_manifest is not None:
+        content = (json.dumps(merged_manifest, indent=2) + '\n').encode()
+        if target.read_bytes() != content:
+            descriptor, temporary = tempfile.mkstemp(prefix='.dsh-sync-', dir=target.parent)
+            try:
+                with os.fdopen(descriptor, 'wb') as stream:
+                    stream.write(content)
+                os.replace(temporary, target)
+                updated += 1
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        return
     # Since 0.1.7, the profile patch is the user's durable Settings document.
     # Software defaults live in the managed bundle, never in this writable file.
     if target == profiles / 'web/cordis.patch.yml' and (target.exists() or target.is_symlink()):

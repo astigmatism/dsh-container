@@ -59,9 +59,9 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     assert.deepEqual(pixel, [0, 0, 255, 255], 'canvas-only fixture pixels reached the screenshot');
     if (process.env.DSH_EGO_VISION_EVIDENCE) {
       await copyFile(shot.value.path, resolve(process.env.DSH_EGO_VISION_EVIDENCE, 'canvas.png'));
-      // This canvas contains only generated geometric shapes, never website data.
-      console.log('EGO_CANVAS_VISION_PNG=' + (await readFile(shot.value.path)).toString('base64'));
     }
+    // This disposable canvas contains only generated geometry, never website data.
+    console.log('EGO_CANVAS_VISION_PNG=' + (await readFile(shot.value.path)).toString('base64'));
     await openTab(sessions[0]); await frame();
     await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/one"]').waitFor();
     assert.equal(await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/two"]').count(), 0);

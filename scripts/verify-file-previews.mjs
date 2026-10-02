@@ -222,11 +222,11 @@ try {
   console.log('Verified text/HTML/PDF/download adapter paths and existing workspace containment.');
   await page.setViewportSize({ width: 1500, height: 500 });
   await page.getByRole('button', { name: 'Context Insights', exact: true }).click();
-  const insights = page.locator('.lc-ov-left');
+  const insights = page.locator('.lc-ov-scroll');
   await insights.waitFor();
   await insights.hover();
   await page.mouse.wheel(0, 500);
-  await page.waitForFunction(() => document.querySelector('.lc-ov-left')?.scrollTop > 0);
+  await page.waitForFunction(() => document.querySelector('.lc-ov-scroll')?.scrollTop > 0);
   await page.locator('.lc-ov-card').getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 1500, height: 1000 });
   console.log('Verified Context Insights data rendering and scrolling.');

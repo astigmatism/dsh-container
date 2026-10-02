@@ -89,6 +89,20 @@ try {
   assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
   await trigger.click();
   console.log(`Live Harness catalog and rendered picker contain exactly ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
+  // Model selection saves the next-request preference asynchronously. Verify
+  // both choices and distinct reasoning settings survive browser reconnection.
+  for (const [index, choice] of expected.entries()) {
+    const selection = { provider: choice.provider, model: choice.model, reasoningEffort: index ? 'high' : 'off' };
+    assert.deepEqual((await rpc('selectModel', { sessionId, ...selection })).selected, selection);
+    const deadline = Date.now() + 15000;
+    while (JSON.stringify((await rpc('modelCatalog')).default) !== JSON.stringify(selection)) {
+      assert.ok(Date.now() < deadline, 'model and reasoning default persisted'); await delay(100);
+    }
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('[data-composer-input]');
+    assert.deepEqual((await rpc('modelCatalog')).default, selection);
+  }
+  console.log('Both model selections and separate reasoning preferences survived browser reconnection.');
   if (live) {
     for (const [index, choice] of expected.entries()) {
       await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' });

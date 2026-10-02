@@ -128,7 +128,7 @@ which the updater snapshots with the rest of Harness state. Desktop-browser
 cookie import is unavailable; sign in directly through the ego tab.
 
 `ego_screenshot` returns both a PNG file result and a native Harness image
-attachment. Both resident model routes declare image input; the router accepts
+attachment. The Daytime resident route declares image input; the router accepts
 image-bearing tool results. Actual visual interpretation must still pass the
 [visual acceptance procedure](docs/visual-validation-playbook.md) after deployment.
 

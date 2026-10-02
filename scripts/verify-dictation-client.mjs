@@ -27,7 +27,7 @@ try {
   })
 
   const response = await page.goto(`http://127.0.0.1:${port}/?token=${token}`, {
-    waitUntil: 'networkidle',
+    waitUntil: 'domcontentloaded',
     timeout: 30000,
   })
   if (!response?.ok()) throw new Error(`Harness browser returned HTTP ${response?.status()}`)

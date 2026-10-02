@@ -57,7 +57,7 @@ try {
     window.__fixtureTracks = [];
     navigator.mediaDevices.getUserMedia = async options => { const stream = await original(options); window.__fixtureTracks.push(...stream.getTracks()); return stream; };
   });
-  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('#username').fill('synthetic-user'); await page.locator('#password').fill('synthetic-dictation-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   const button = page.locator('[data-local-speech-button]');

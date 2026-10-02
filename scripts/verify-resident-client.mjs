@@ -63,7 +63,7 @@ try {
   }
   const title = `Resident model verification ${sessionId.slice(-8)}`;
   await rpc('rename', { sessionId, title });
-  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
   const group = page.getByRole('treeitem').filter({ has: page.getByText(created.workspace.title, { exact: true }) }).first();
   const sessionRow = page.getByText(title, { exact: true });
   // Workspace restoration can expand the most recent group while the browser

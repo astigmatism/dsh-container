@@ -38,3 +38,15 @@ test('fresh settings and explicit presentation modes are retained; unsafe paths 
   const unsafe = fixture(t, '[]\n'); fs.renameSync(unsafe + '/profiles/web', unsafe + '/outside'); fs.symlinkSync(unsafe + '/outside', unsafe + '/profiles/web');
   assert.throws(() => migrate(unsafe, YAML), /symlinked/);
 });
+test('legacy namespace preferences migrate before retired browser and Token rows are removed', { skip: !YAML }, t => {
+  const home = fixture(t, '[]\n');
+  fs.writeFileSync(home + '/settings.yaml', YAML.stringify({
+    'dsh-playwright': { viewportWidth: 1440 }, 'dsh-token': { refreshIntervalMs: 30000 },
+    'agent-default-model': { provider: 'local-everyday', reasoningEffort: 'off' },
+  }));
+  migrate(home, YAML, new URL('../config', import.meta.url).pathname);
+  const source = fs.readFileSync(home + '/profiles/web/cordis.patch.yml', 'utf8');
+  assert.doesNotMatch(source, /dsh-playwright|dsh-token/);
+  assert.match(source, /reasoningEffort: off/);
+  assert.ok(fs.existsSync(home + '/settings.yaml.imported'));
+});

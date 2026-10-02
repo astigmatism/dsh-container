@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { migrateProfile } from './migrate-profile-settings.mjs';
 
 const scheduleBundle = '@deepseek-ai/dsh-experimental-schedule-bundle';
 const options = { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }] };
@@ -18,7 +19,7 @@ function atomic(file, source) {
   fs.writeFileSync(temporary, source, { mode: 0o600, flag: 'wx' });
   fs.renameSync(temporary, file);
 }
-export function migrate(home, YAML) {
+export function migrate(home, YAML, defaultsRoot = process.env.DSH_DEFAULTS_ROOT || '/opt/dsh-defaults') {
   const marker = path.join(home, '.container-profile-02.json');
   const pending = marker + '.pending';
   const manifest = path.join(home, 'profiles/web/package.json');
@@ -30,10 +31,18 @@ export function migrate(home, YAML) {
   let transaction;
   if (fs.existsSync(pending)) transaction = JSON.parse(regular(pending));
   else {
-    const packageSource = regular(manifest), patchSource = regular(patch);
+    const packageSource = regular(manifest);
     const pkg = JSON.parse(packageSource);
     // New installations already use the 0.2 bundle composition and defaults.
     if (pkg.dshContainer) { atomic(marker, JSON.stringify({ version: 1, fresh: true })); return false; }
+    // Older deployments still have a namespace-based settings.yaml. Import it
+    // before retiring browser/Token targets so later startup cannot reintroduce
+    // settings for plugins absent from the new composition.
+    if (!fs.existsSync(path.join(home, '.container-settings-v1.json')) &&
+        (fs.existsSync(path.join(home, 'settings.yaml')) || fs.existsSync(path.join(home, '.container-settings-pending.json')))) {
+      migrateProfile(home, defaultsRoot, YAML);
+    }
+    const patchSource = regular(patch);
     const doc = YAML.parseDocument(patchSource, options);
     if (doc.errors.length || !YAML.isSeq(doc.contents)) throw new Error('Invalid saved profile patch');
     const rows = doc.contents.items;

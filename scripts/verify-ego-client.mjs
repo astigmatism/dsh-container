@@ -91,7 +91,7 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     assert.equal((await call(sessions[0], 'ego_js', { space: 'default', expression: 'location.pathname' })).value.result, '/one');
     await openTab(sessions[1]); await frame();
     await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/other-conversation"]').waitFor();
-    await page.reload({ waitUntil: 'networkidle' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await openTab(sessions[0]); await frame();
     const start = Date.now();
     const cancelled = await context.request.post(`${base}/qualification/ego`, { data: { sessionId: sessions[0], name: 'ego_wait', args: { ms: 30000 }, abortAfterMs: 500 }, timeout: 15000 });

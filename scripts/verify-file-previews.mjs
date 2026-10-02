@@ -131,7 +131,7 @@ try {
     assert.equal(source.split(anchor).length, 2, 'test context capture anchor');
     await route.fulfill({ response, body: source.replace(anchor, `${anchor}\nwindow.__previewTestContext = deps.ctx;`) });
   });
-  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__previewTestContext?.get('sidebarRight'));
   await page.waitForFunction(() => {
     const entries = [...window.__previewTestContext.loader.entries()];
@@ -173,7 +173,7 @@ try {
   await waitForImage(`${root}/one/asset.png`);
   // Native tabs survive a session switch, but upstream does not persist their
   // layout across a full browser reload. Reopen the same resource on a cold UI.
-  await page.reload({ waitUntil: 'networkidle' });
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__previewTestContext?.get('sidebarRight'));
   await select(sessions[0]);
   await page.waitForFunction(() => document.querySelector('button.__dsh-session-pin-header__[aria-pressed="true"]'));
@@ -244,7 +244,7 @@ try {
   });
   const appearanceAfter = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim());
   assert.notEqual(appearanceAfter, appearanceBefore, 'preset changes the rendered accent color');
-  await page.reload({ waitUntil: 'networkidle' });
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(expected => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim() === expected, appearanceAfter);
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-ui-appearance.settings')).dark.preset), 'ocean');
   console.log('Verified Appearance preset controls, applied styles and persistence across browser reload.');

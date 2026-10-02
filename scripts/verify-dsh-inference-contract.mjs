@@ -43,8 +43,8 @@ requireMarkers("pi-ai context estimator", estimate, [
   'message.role === "toolResult"',
   'block.type === "thinking"',
   "safeJsonStringify(block.arguments)",
-  "estimateToolsTokens(context.tools)",
-  "estimateTextTokens(context.systemPrompt)",
+  "estimateToolsTokens(message.toolsAdded)",
+  "estimateTextTokens(getSystemMessageText(message))",
 ]);
 requireMarkers("pi-ai OpenAI Responses transport", responses, [
   "params.max_output_tokens = (model.maxTokens === null ? options.maxTokens : Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS))",
@@ -111,6 +111,8 @@ const context = {
     },
   ],
 };
+context.messages.unshift({ role: "system", content: context.systemPrompt, toolsAdded: context.tools, timestamp: 0 });
+delete context.systemPrompt; delete context.tools;
 const estimated = estimateContextTokens(context).tokens;
 assert.ok(estimated > 4096, "serialized system, tools, reasoning, calls, and results must all consume budget");
 assert.equal(
@@ -118,7 +120,7 @@ assert.equal(
   Math.min(32768, Math.max(1, 131072 - estimated - 4096)),
   "output allowance must be the requested cap clamped to total per-request capacity with safety reserve",
 );
-const oversized = { systemPrompt: "x".repeat(131072 * 4), tools: [], messages: [] };
+const oversized = { messages: [{ role: "system", content: "x".repeat(131072 * 4), toolsAdded: [], timestamp: 0 }] };
 assert.equal(
   clampMaxTokensToContext(model, oversized, 32768),
   1,

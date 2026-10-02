@@ -158,7 +158,7 @@ export function migrateProfile(home, defaultsRoot, YAML) {
   // Keep the prepared document outside the software-managed profile tree so
   // startup synchronization cannot remove it before interrupted-write recovery.
   const temporary = path.join(home, `.container-settings-prepared-${randomUUID()}.yaml`);
-  const receipt = JSON.stringify({ version: 1, release: '0.1.7-rc.2', entries: migrated,
+  const receipt = JSON.stringify({ version: 1, release: '0.2.0-rc.2', entries: migrated,
     temporary, originalSHA256: digest(profile.source), legacySHA256: digest(input.source),
     patchSHA256: digest(String(output)) }) + '\n';
   try {

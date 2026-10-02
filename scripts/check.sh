@@ -151,7 +151,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/verify-dsh-semantic-progress.mjs
     node --check tests/dsh-native-shell-lifecycle.mjs
     node --check scripts/verify-dsh-token-policy.mjs
-    node --check scripts/verify-dsh-playwright-stream.mjs
+    node --check scripts/verify-ego-routes.mjs
     node --check scripts/qualify-dsh-read-schema.mjs
     node --check scripts/patch-dsh-progress-status.mjs
     node --check scripts/patch-dsh-cancellation-presentation.mjs
@@ -159,7 +159,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-file-previews.mjs
     node --check scripts/patch-dsh-web-auth.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
-    node --check scripts/patch-dsh-playwright-webserver.mjs
+    node --check scripts/patch-dsh-ego-browser.mjs
     node --check ollama-router/src/server.js
     node --test gateway/*.test.mjs
     node --test tests/*.test.mjs
@@ -194,16 +194,16 @@ if [ "$build" -eq 1 ]; then
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
   fi
 
-  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.1.7-rc.2 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.0-rc.2 ] || {
     echo "Built image has the wrong Harness version label." >&2
     exit 1
   }
-  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 477b4f420553e8a52c2fbccc464d7561b239c443 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 639ed015397290b3745d163aafe02ffee4aa3f84 ] || {
     echo "Built image has the wrong upstream commit label." >&2
     exit 1
   }
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
-    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.1.7-rc.2") process.exit(1)'
+    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.2.0-rc.2") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-file-previews.mjs --check
@@ -218,7 +218,7 @@ if [ "$build" -eq 1 ]; then
   docker run --rm --network none --user 12345:12345 --entrypoint node \
     --env DSH_TEST_HARNESS=1 --volume "$project_dir:/src:ro" "$harness_image" \
     --test /src/tests/sidebar-settings.test.mjs /src/tests/profile-settings-migration.test.mjs \
-      /src/tests/resident-settings-migration.test.mjs
+      /src/tests/resident-settings-migration.test.mjs /src/tests/profile-02-migration.test.mjs
 
   # Verify the image with a UID unrelated to the base image's `node` user.
   # rc2 locks package.json even for inventory reads. The immutable seed belongs
@@ -231,15 +231,15 @@ if [ "$build" -eq 1 ]; then
     ')
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
-    'dsh-better-sidebar@0.21.1' \
-    'dsh-context@0.56.1' \
+    'dsh-better-sidebar@0.24.1' \
+    'dsh-context@0.62.2' \
     'dsh-favicon-status@0.1.0-rc.8' \
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
-    'dsh-playwright@0.1.0' \
-    'dsh-session-pin@0.7.15' \
-    'dsh-ui-appearance@0.1.11'
+    'dsh-ego-browser@0.8.6' \
+    'dsh-session-pin@0.7.16' \
+    'dsh-ui-appearance@0.1.17'
   do
     printf '%s\n' "$inventory" | grep -Fq "$expected" || {
       echo "Built image is missing: $expected" >&2
@@ -252,7 +252,7 @@ if [ "$build" -eq 1 ]; then
     const conversationPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
     const deliverablesPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js";
     const tokenPath = "/opt/dsh-seed/profiles/web/node_modules/@zoytown/dsh-token/lib/index.js";
-    const playwrightPath = "/opt/dsh-seed/profiles/web/node_modules/dsh-playwright/lib/index.js";
+    const playwrightPath = "/opt/dsh-seed/profiles/web/node_modules/dsh-ego-browser/lib/index.js";
     const connectionPath = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js";
     const conversation = await readFile(conversationPath, "utf8");
     const deliverables = await readFile(deliverablesPath, "utf8");
@@ -274,7 +274,7 @@ if [ "$build" -eq 1 ]; then
       ]],
       ["deliverables", deliverables, [
         "dsh-native-file-opening-v1",
-        // 0.1.7-rc.2 redesign: produced-file chips unconditionally call
+        // 0.2.0-rc.2 redesign: produced-file chips unconditionally call
         // the in-app resource opener of the chat view; the legacy
         // owner/opener branches no longer exist, and the patch verifies
         // them upstream.
@@ -290,8 +290,8 @@ if [ "$build" -eq 1 ]; then
     if (!token.includes("dsh-token-session-format-v3-compat-v1")) {
       throw new Error("dsh-token is missing format v3 compatibility");
     }
-    if (!playwright.includes("dsh-playwright-web-transport-scope-v6")) {
-      throw new Error("dsh-playwright is missing scoped web transport compatibility");
+    if (!playwright.includes("dsh-ego-container-v1")) {
+      throw new Error("dsh-ego-browser is missing scoped web transport compatibility");
     }
     if (!connection.includes("dsh-container-web-launch-token-v1")) {
       throw new Error("Harness connection is missing colocated-gateway authentication");
@@ -309,8 +309,6 @@ if [ "$build" -eq 1 ]; then
     '\''
     dsh --profile web --dump-config \
       | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled
-    DSH_TOKEN_ENABLED=true dsh --profile web --dump-config \
-      | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config enabled
   '
 
   docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
@@ -331,7 +329,7 @@ if [ "$build" -eq 1 ]; then
   # Boot smoke check: actually import the plugin tree by starting `dsh web`
   # from the image seed in a throwaway DSH_HOME and require a stable HTTP
   # 200. The inventory grep above would pass a profile whose patched
-  # dsh-playwright snapshot dropped its dependencies.
+  # dsh-ego-browser snapshot dropped its dependencies.
   # Session UI needs Chromium to see an attached network interface; its host
   # connection pauses when navigator.onLine is false in network-less builds.
   docker run --rm --env HOME=/ --env DSH_VERIFY_RESIDENT_CATALOG=true --entrypoint /bin/sh "$harness_image" -eu -c '

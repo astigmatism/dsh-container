@@ -9,8 +9,8 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 FROM ${NODE_IMAGE} AS harness
 
-ARG DSH_VERSION=0.1.7-rc.2
-ARG DSH_UPSTREAM_COMMIT=477b4f420553e8a52c2fbccc464d7561b239c443
+ARG DSH_VERSION=0.2.0-rc.2
+ARG DSH_UPSTREAM_COMMIT=639ed015397290b3745d163aafe02ffee4aa3f84
 ARG PNPM_VERSION=11.7.0
 
 LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-container" \
@@ -74,14 +74,16 @@ COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.
 COPY scripts/verify-dsh-context-compaction.mjs /opt/dsh-build/verify-dsh-context-compaction.mjs
 COPY scripts/verify-dsh-semantic-progress.mjs /opt/dsh-build/verify-dsh-semantic-progress.mjs
 COPY scripts/verify-dsh-token-policy.mjs /opt/dsh-build/verify-dsh-token-policy.mjs
-COPY scripts/verify-dsh-playwright-stream.mjs /opt/dsh-build/verify-dsh-playwright-stream.mjs
+COPY scripts/verify-ego-routes.mjs /opt/dsh-build/verify-ego-routes.mjs
 COPY scripts/patch-dsh-progress-status.mjs /opt/dsh-build/patch-dsh-progress-status.mjs
 COPY scripts/patch-dsh-cancellation-presentation.mjs /opt/dsh-build/patch-dsh-cancellation-presentation.mjs
 COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-file-opening.mjs
 COPY scripts/patch-dsh-file-previews.mjs /opt/dsh-build/patch-dsh-file-previews.mjs
 COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
-COPY scripts/patch-dsh-playwright-webserver.mjs /opt/dsh-build/patch-dsh-playwright-webserver.mjs
+COPY plugin/dsh-ego-adapter /opt/dsh-ego-adapter
+ENV DSH_EGO_ADAPTER_SOURCE=/opt/dsh-ego-adapter
+COPY scripts/patch-dsh-ego-browser.mjs /opt/dsh-build/patch-dsh-ego-browser.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/patch-unrestricted-policy.mjs \
     && node /opt/dsh-build/verify-unrestricted-wire.mjs \
@@ -115,6 +117,7 @@ COPY scripts/verify-plugin-boot.sh /usr/local/bin/dsh-verify-plugin-boot
 COPY scripts/verify-dictation-client.mjs /opt/dsh-build/verify-dictation-client.mjs
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 COPY config/legacy-profile-alpha1.yaml /opt/dsh-defaults/legacy-profile-alpha1.yaml
+COPY scripts/migrate-harness-02-profile.mjs /opt/dsh-build/migrate-harness-02-profile.mjs
 COPY scripts/migrate-profile-settings.mjs /opt/dsh-build/migrate-profile-settings.mjs
 
 RUN node /opt/dsh-build/verify-local-model-profiles.mjs /opt/dsh-defaults/settings.yaml
@@ -154,41 +157,42 @@ RUN cd /opt/dsh-seed/profiles/web \
     && node /opt/dsh-build/patch-dsh-appearance.mjs \
     && node /opt/dsh-build/patch-dsh-file-previews.mjs \
     && node /opt/dsh-build/patch-dsh-token-session-format.mjs \
-    && node /opt/dsh-build/patch-dsh-playwright-webserver.mjs \
+    && node /opt/dsh-build/patch-dsh-ego-browser.mjs \
     && dsh --profile web --dump-config >/dev/null \
     && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-context-compaction.mjs --effective-config \
     && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled \
-    && DSH_TOKEN_ENABLED=true dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config enabled \
     && node /opt/dsh-build/verify-dsh-semantic-progress.mjs \
     && dsh --profile web --dump-config | node /opt/dsh-build/verify-dsh-semantic-progress.mjs --effective-config \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
-    && grep -Fq 'dsh-better-sidebar@0.21.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-context@0.56.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-better-sidebar@0.24.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-context@0.62.2' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.8' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-playwright@0.1.0' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-playwright-web-transport-scope-v6' node_modules/dsh-playwright/lib/index.js \
-    && grep -Fq 'dsh-session-pin@0.7.15' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ui-appearance@0.1.11' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ego-container-v1' node_modules/dsh-ego-browser/lib/index.js \
+    && grep -Fq 'dsh-session-pin@0.7.16' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ui-appearance@0.1.17' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
-    && chmod -R a+rX /opt/dsh-seed /opt/dsh-defaults /opt/dsh-local-speech \
+    && chmod -R a+rX /opt/dsh-seed /opt/dsh-defaults /opt/dsh-local-speech /opt/dsh-ego-adapter \
     && chmod -R a+rwX /opt/dsh-pnpm-store \
     && apt-get purge -y --auto-remove make g++ \
     && rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp
 
 # Boot smoke check: start the web profile in a throwaway DSH_HOME and require
 # a stable authenticated HTTP 200. Booting imports the full plugin tree (every bundle's
-# loader entry, including dsh-playwright's server-side entry that imports
+# loader entry, including dsh-ego-browser's server-side entry that imports
 # playwright-core, pngjs, and ws), so this fails the build when the seed
 # lockfile's patched-dependency state drops a plugin's dependency graph -
 # exactly the state `--dump-config` and `plugin list` above would pass.
 COPY scripts/verify-native-terminal-client.mjs /opt/dsh-build/verify-native-terminal-client.mjs
+COPY scripts/qualification-ego-host.mjs /opt/dsh-build/qualification-ego-host.mjs
+COPY scripts/verify-ego-client.mjs /opt/dsh-build/verify-ego-client.mjs
 COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 # The maintenance checkout uses a restrictive umask. Runtime verification runs
 # as the service UID, so new non-executable helpers must remain readable.

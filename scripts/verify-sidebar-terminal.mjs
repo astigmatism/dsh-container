@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 
 const runtimeRoot = process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh';
 const require = createRequire(`${runtimeRoot}/node_modules/@deepseek-ai/dsh-subprocess-local/package.json`);
-assert.equal(require('./package.json').version, '0.1.7-rc.2');
+assert.equal(require('./package.json').version, '0.2.0-rc.2');
 const pty = require('node-pty');
 await new Promise((resolve, reject) => {
   const terminal = pty.spawn('/bin/bash', ['--noprofile', '--norc', '-c',
@@ -28,4 +28,4 @@ await new Promise((resolve, reject) => {
     } catch (error) { reject(error); }
   });
 });
-console.log('Verified Harness 0.1.7-rc.2 native PTY and incremental output.');
+console.log('Verified Harness 0.2.0-rc.2 native PTY and incremental output.');

@@ -30,7 +30,7 @@ test("Host keeps preset policy templates without mounting duplicate compaction s
   assert.match(compact, /retainRatio: 0\.16/);
   assert.match(compact, /maxOverflowRetries: 1/);
   assert.match(block("command-compact", "tool-result-pruner"), /disabled: true/);
-  const pruner = block("tool-result-pruner", "dsh-playwright");
+  const pruner = block("tool-result-pruner", "ego-browser");
   assert.match(pruner, /disabled: true/);
   assert.match(pruner, /thresholdChars: 8192/);
 });

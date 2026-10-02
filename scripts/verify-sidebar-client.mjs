@@ -31,7 +31,7 @@ if (process.argv.includes('--live')) {
     const { result } = await response.json();
     assert.equal(result.ok, true, result.error?.message);
     const maintained = new Set(['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
-      'dsh-loop-detector', 'dsh-playwright', 'dsh-plugin-task-notification',
+      'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
       'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar']);
     for (const row of result.value.entries) {
       if (!row.enabled) continue; // Explicitly disabled user plugins stay disabled.

@@ -25,7 +25,7 @@ export function patchClient(source) {
 async function main() {
   const root = process.argv[2] ?? '/opt/dsh-seed/profiles/web/node_modules/dsh-session-pin';
   const manifest = JSON.parse(await readFile(`${root}/package.json`, 'utf8'));
-  if (manifest.version !== '0.7.15') throw new Error('Session Pin patch requires published 0.7.15');
+  if (manifest.version !== '0.7.16') throw new Error('Session Pin patch requires published 0.7.16');
   const client = await readFile(`${root}/lib/client.js`, 'utf8');
   const patched = patchClient(client);
   Function(patched);

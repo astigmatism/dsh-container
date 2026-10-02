@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Exercise the installed resource adapter in Chromium against a disposable server. */
 import assert from 'node:assert/strict';
+import { verifyEgoClient } from './verify-ego-client.mjs';
 import { verifyNativeTerminal } from './verify-native-terminal-client.mjs';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -94,7 +95,7 @@ try {
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
   const inventory = await rpc('pluginInventory/list');
   for (const name of ['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
-    'dsh-loop-detector', 'dsh-playwright', 'dsh-plugin-task-notification',
+    'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
     'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar']) {
     assert.ok(inventory.entries.some(row => row.moduleName === name && row.enabled && row.fiberPhase === 'active'),
       `${name} host plugin must mount`);
@@ -135,7 +136,7 @@ try {
   await page.waitForFunction(() => {
     const entries = [...window.__previewTestContext.loader.entries()];
     return ['dsh-better-sidebar', 'dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
-      'dsh-playwright', 'dsh-session-pin', 'dsh-ui-appearance']
+      'dsh-ego-browser', 'dsh-session-pin', 'dsh-ui-appearance']
       .every(name => entries.some(entry => entry.options.name === name && entry.fiber?.state === 2));
   });
   const tokenMounted = await page.evaluate(() => [...window.__previewTestContext.loader.entries()]
@@ -156,27 +157,7 @@ try {
   console.log('Verified pinned session navigation selects the requested conversation.');
 
   await verifyNativeTerminal(page, sessions[0], sessions[1]);
-  const browserState = await page.evaluate(sessionId => window.__previewTestContext.connection.rpc.call(
-    '/dsh-playwright', 'state', { sessionId },
-  ), sessions[0]);
-  assert.equal(browserState.ok, true, browserState.error?.message);
-  await page.getByRole('textbox', { name: 'Browser Use address' }).fill(localUrl);
-  const navigation = page.waitForResponse(response => response.url().endsWith('/dsh-playwright/navigate'));
-  await page.getByRole('button', { name: 'Go', exact: true }).click();
-  const navigationResponse = await navigation;
-  assert.equal(navigationResponse.status(), 200);
-  const navigationResult = (await navigationResponse.json()).result;
-  assert.equal(navigationResult.ok, true, navigationResult.error?.message);
-  assert.equal(navigationResult.value.url, localUrl);
-  assert.ok(navigationResult.value.image.length > 1000, 'live browser screenshot');
-  await page.waitForFunction(url => {
-    const canvas = document.querySelector(`canvas[aria-label="Live screenshot of ${url}"]`);
-    if (!canvas) return false;
-    const pixel = canvas.getContext('2d').getImageData(5, 5, 1, 1).data;
-    return Math.abs(pixel[0] - 19) < 10 && Math.abs(pixel[1] - 90) < 10 && Math.abs(pixel[2] - 150) < 10;
-  }, localUrl);
-  assert.ok(privateAssetRequests > 0, 'private subresource loaded');
-  console.log('Verified local HTTP navigation, private subresources, screenshots, and the shared Browser Use control panel.');
+  await verifyEgoClient({ page, context, base, sessions, select, root });
   await open(sessions[0], 'image #?% ü.png');
   await image().waitFor();
   assert.equal(await image().evaluate(img => img.naturalWidth), 1);

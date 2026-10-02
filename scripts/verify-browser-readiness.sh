@@ -28,8 +28,8 @@ command -v docker >/dev/null 2>&1 || {
 }
 
 inventory=$(docker exec "$container" dsh plugin --profile web list)
-printf '%s\n' "$inventory" | grep -Fq 'dsh-playwright@0.1.0' || {
-  echo "The pinned dsh-playwright@0.1.0 plugin is not installed." >&2
+printf '%s\n' "$inventory" | grep -Fq 'dsh-ego-browser@0.8.6' || {
+  echo "The pinned dsh-ego-browser@0.8.6 plugin is not installed." >&2
   exit 1
 }
 
@@ -53,8 +53,8 @@ docker exec "$container" sh -eu -c '
   exit 1
 }
 
-docker exec "$container" node /opt/dsh-build/verify-dsh-playwright-stream.mjs || {
-  echo "The Browser Use panel stream route is not mounted." >&2
+docker exec "$container" node /opt/dsh-build/verify-ego-routes.mjs || {
+  echo "The ego authenticated browser routes is not mounted." >&2
   exit 1
 }
 

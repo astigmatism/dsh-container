@@ -3,18 +3,19 @@
   "private": true,
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/dsh-llm": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@zoytown/dsh-token": "0.1.3",
-    "dsh-better-sidebar": "0.21.1",
-    "dsh-context": "0.56.1",
+    "dsh-better-sidebar": "0.24.1",
+    "dsh-context": "0.62.2",
     "dsh-favicon-status": "0.1.0-rc.8",
     "dsh-local-speech-input": "link:../../../dsh-local-speech",
     "dsh-loop-detector": "1.0.0",
-    "dsh-playwright": "0.1.0",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification#f10cd6869b7a50e55780627a6d55bbb310fd59b4",
-    "dsh-session-pin": "0.7.15",
-    "dsh-ui-appearance": "0.1.11",
-    "dsh-container-profile": "link:./managed"
+    "dsh-session-pin": "0.7.16",
+    "dsh-ui-appearance": "0.1.17",
+    "dsh-container-profile": "link:./managed",
+    "dsh-ego-browser": "github:Fisfzy/dsh-ego-browser#dfde57221443bdade5e0cbee7c773a6839ffe560",
+    "playwright-core": "1.56.1"
   },
   "dsh": {
     "profile": {
@@ -22,16 +23,37 @@
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
         "dsh-local-speech-input",
-        "dsh-playwright",
         "dsh-plugin-task-notification",
         "dsh-context",
-        "@zoytown/dsh-token",
         "dsh-session-pin",
         "dsh-ui-appearance",
         "dsh-favicon-status",
         "dsh-better-sidebar",
+        "dsh-ego-browser",
         "dsh-container-profile"
       ]
     }
+  },
+  "dshContainer": {
+    "previousBundles": [
+      "@deepseek-ai/dsh-base",
+      "@deepseek-ai/dsh-web-app",
+      "dsh-local-speech-input",
+      "dsh-playwright",
+      "dsh-plugin-task-notification",
+      "dsh-context",
+      "@zoytown/dsh-token",
+      "dsh-session-pin",
+      "dsh-ui-appearance",
+      "dsh-favicon-status",
+      "dsh-better-sidebar",
+      "dsh-container-profile"
+    ],
+    "optionalBundles": [
+      "@deepseek-ai/dsh-experimental-agent-team-profile",
+      "@deepseek-ai/dsh-experimental-voice-input-bundle",
+      "@deepseek-ai/dsh-experimental-auto-review",
+      "@deepseek-ai/dsh-experimental-schedule-bundle"
+    ]
   }
 }

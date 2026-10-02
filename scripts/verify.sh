@@ -127,15 +127,15 @@ if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
 fi
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-better-sidebar@0.21.1' \
-  'dsh-context@0.56.1' \
+  'dsh-better-sidebar@0.24.1' \
+  'dsh-context@0.62.2' \
   'dsh-favicon-status@0.1.0-rc.8' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
-  'dsh-playwright@0.1.0' \
-  'dsh-session-pin@0.7.15' \
-  'dsh-ui-appearance@0.1.11'
+  'dsh-ego-browser@0.8.6' \
+  'dsh-session-pin@0.7.16' \
+  'dsh-ui-appearance@0.1.17'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
     echo "Missing captured plugin: $expected" >&2
@@ -158,17 +158,17 @@ if ! compose exec -T -e DSH_PROFILE_ROOT=/data/dsh/profiles/web harness \
   exit "$application_health_exit"
 fi
 
-# Import the patched dsh-playwright loader entry from the live runtime
+# Import the patched dsh-ego-browser loader entry from the live runtime
 # profile. The image build's boot smoke check proves the seed at build time;
 # this proves the re-synced runtime profile still resolves the plugin's
 # third-party dependencies (playwright-core, pngjs, ws) at deployment time.
 if ! compose exec -T harness node -e \
-  "import('file:///data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js').catch((e) => { console.error(e.message); process.exit(1); })"; then
+  "import('file:///data/dsh/profiles/web/node_modules/dsh-ego-browser/lib/index.js').catch((e) => { console.error(e.message); process.exit(1); })"; then
   if ! docker info >/dev/null 2>&1; then
     echo "Docker Engine became unavailable during plugin import verification." >&2
     exit "$docker_compose_exit"
   fi
-  echo "The deployed plugin tree failed to import dsh-playwright." >&2
+  echo "The deployed plugin tree failed to import dsh-ego-browser." >&2
   exit "$configuration_exit"
 fi
 
@@ -228,19 +228,19 @@ fi
 
 if ! compose exec -T harness node --input-type=module -e '
   import { readFile } from "node:fs/promises";
-  const path = "/data/dsh/profiles/web/node_modules/dsh-playwright/lib/index.js";
+  const path = "/data/dsh/profiles/web/node_modules/dsh-ego-browser/lib/index.js";
   const source = await readFile(path, "utf8");
-  if (!source.includes("dsh-playwright-web-transport-scope-v6")) {
-    throw new Error("deployed dsh-playwright is missing scoped web transport compatibility");
+  if (!source.includes("dsh-ego-container-v1")) {
+    throw new Error("deployed dsh-ego-browser is missing scoped web transport compatibility");
   }
-  console.log("Verified dsh-playwright scoped web transport compatibility.");
+  console.log("Verified dsh-ego-browser scoped web transport compatibility.");
 '; then
-  echo "The deployed Browser Use plugin is incompatible with the current web transport scope." >&2
+  echo "The deployed ego plugin is incompatible with the current web transport scope." >&2
   exit "$configuration_exit"
 fi
 
-if ! compose exec -T harness node /opt/dsh-build/verify-dsh-playwright-stream.mjs; then
-  echo "The deployed Browser Use WebSocket route is not mounted." >&2
+if ! compose exec -T harness node /opt/dsh-build/verify-ego-routes.mjs; then
+  echo "The deployed ego authenticated browser routes is not mounted." >&2
   exit "$application_health_exit"
 fi
 
@@ -338,7 +338,7 @@ if ! compose exec -T harness node --input-type=module -e '
   Function(deliverables);
   for (const marker of [
     "dsh-native-file-opening-v1",
-    // 0.1.7-rc.2 redesign: produced-file chips unconditionally call
+    // 0.2.0-rc.2 redesign: produced-file chips unconditionally call
     // the in-app resource opener of the chat view; the legacy
     // owner/opener branches no longer exist, and the patch verifies
     // them upstream.
@@ -465,4 +465,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.1.7-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.2.0-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

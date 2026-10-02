@@ -3,7 +3,7 @@ set -eu
 
 # Boot the canonical web profile in a throwaway DSH_HOME and require a stable
 # authenticated HTTP 200. Booting imports the full plugin tree (every bundle's loader entry,
-# including dsh-playwright's server-side entry), so this catches broken
+# including dsh-ego-browser's server-side entry), so this catches broken
 # dependency graphs - e.g. a pnpm patched-dependency snapshot in the seed
 # lockfile that drops playwright-core/pngjs/ws - that `dsh --dump-config` and
 # `dsh plugin list` pass without noticing.
@@ -56,6 +56,12 @@ DSH_SETTINGS_GID=$(id -g) \
   /usr/local/bin/dsh-initialize-persisted-settings --replace-empty
 
 node /opt/dsh-build/migrate-profile-settings.mjs "$home"
+# The tool-driving bridge is appended only to this disposable profile.
+cat >>"$home/profiles/web/cordis.patch.yml" <<'YAML'
+- insert:
+    - id: ego-qualification
+      name: /opt/dsh-build/qualification-ego-host.mjs
+YAML
 # Neutral CWD: the repo's .env is rejected by the launcher for
 # environment-authority variables, and no other CWD layer is wanted here.
 cd "$parent"
@@ -97,6 +103,8 @@ probe_browser_client() {
     DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
       node /opt/dsh-build/verify-resident-client.mjs || return 1
   fi
+  DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port \
+    node /opt/dsh-build/verify-ego-routes.mjs || return 1
   token=
 }
 
@@ -125,11 +133,6 @@ if [ "$ok" -ge "$stable" ] && probe_browser_client; then
   browser_ok=1
 fi
 
-stream_ok=0
-if [ "$ok" -ge "$stable" ] \
-  && DSH_WEB_PORT=$port node /opt/dsh-build/verify-dsh-playwright-stream.mjs; then
-  stream_ok=1
-fi
 
 kill "$boot_pid" 2>/dev/null || true
 wait "$boot_pid" 2>/dev/null || true
@@ -149,11 +152,5 @@ if [ "$browser_ok" -ne 1 ]; then
   exit 1
 fi
 
-if [ "$stream_ok" -ne 1 ]; then
-  echo "Plugin boot check failed: the Browser Use WebSocket route was not mounted." >&2
-  echo "Last Harness startup output:" >&2
-  print_boot_log || true
-  exit 1
-fi
 
-echo "Plugin boot check passed: the authenticated web profile, composed browser client, and Browser Use stream route loaded cleanly."
+echo "Plugin boot check passed: the authenticated web profile, composed browser client, and ego browser routes loaded cleanly."

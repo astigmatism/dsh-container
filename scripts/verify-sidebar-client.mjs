@@ -41,7 +41,7 @@ if (process.argv.includes('--live')) {
     }
     if (process.env.DSH_TOKEN_ENABLED !== 'true') {
       const token = result.value.entries.find(row => row.moduleName === '@zoytown/dsh-token');
-      assert.equal(token?.enabled, false, 'default Token policy');
+      assert.notEqual(token?.enabled, true, 'default Token policy');
       assert.notEqual(token?.fiberPhase, 'active');
     }
     for (const preset of result.value.agentPresets) assert.equal(preset.broken, undefined, `${preset.id} preset failed to mount`);

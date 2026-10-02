@@ -15,7 +15,7 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     res.end(`<!doctype html><title>Ego fixture ${req.url}</title><body style="margin:0;height:2200px;background:#eee">
       <input id="input" style="position:absolute;left:40px;top:40px;width:200px;height:40px"><button id="click" style="position:absolute;left:40px;top:100px;width:200px;height:40px" onclick="this.textContent='CLICKED'">Click</button>
       <a id="download" href="/download" style="position:absolute;top:180px">Download</a><canvas width="400" height="200" style="position:absolute;top:250px"></canvas>
-      <script>const c=document.querySelector('canvas').getContext('2d'); c.fillStyle='white';c.fillRect(0,0,400,200);c.fillStyle='blue';c.beginPath();c.arc(100,100,60,0,Math.PI*2);c.fill();fetch('/asset');</script>`);
+      <script>window.dragCount=0;addEventListener('mousemove',e=>{if(e.buttons)dragCount++});const c=document.querySelector('canvas').getContext('2d'); c.fillStyle='white';c.fillRect(0,0,400,200);c.fillStyle='blue';c.beginPath();c.arc(100,100,60,0,Math.PI*2);c.fill();fetch('/asset');</script>`);
   });
   await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${site.address().port}`;
@@ -51,6 +51,12 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     const shot = await call(sessions[0], 'ego_screenshot', { selector: 'canvas' });
     assert.ok(shot.content.some(block => block.type === 'image' && block.attachment), 'native image attachment survives tool rendering');
     assert.deepEqual((await readFile(shot.value.path)).subarray(0, 8), Buffer.from('89504e470d0a1a0a', 'hex'));
+    const pixel = await page.evaluate(async data => {
+      const image = new Image(); image.src = data; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0); return [...ctx.getImageData(100, 100, 1, 1).data];
+    }, 'data:image/png;base64,' + (await readFile(shot.value.path)).toString('base64'));
+    assert.deepEqual(pixel, [0, 0, 255, 255], 'canvas-only fixture pixels reached the screenshot');
     await openTab(sessions[0]); await frame();
     await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/one"]').waitFor();
     assert.equal(await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/two"]').count(), 0);
@@ -70,8 +76,19 @@ export async function verifyEgoClient({ page, context, base, sessions, select, r
     const button = point(100, 120);
     await page.mouse.click(button.x, button.y);
     assert.equal(await js(sessions[0], "document.querySelector('#click').textContent"), 'CLICKED');
+    const drag = point(300, 100);
+    await page.mouse.move(drag.x, drag.y); await page.mouse.down();
+    await page.mouse.move(drag.x + 25, drag.y + 25, { steps: 5 }); await page.mouse.up();
+    assert.ok(await js(sessions[0], 'window.dragCount') > 0, 'manual drag reached the page');
+    await live().hover(); await page.mouse.wheel(0, 400); await delay(300);
+    assert.ok(await js(sessions[0], 'scrollY') > 0, 'manual scroll reached the page');
     const download = await call(sessions[0], 'ego_download', { triggerSelector: '#download', savePath: root + '/ego-download.txt' });
     assert.equal(await readFile(download.value.path, 'utf8'), 'EGO_DOWNLOAD_OK');
+    await call(sessions[0], 'ego_space_open', { name: 'second-tab' });
+    await call(sessions[0], 'ego_navigate', { url: url + '/same-conversation' });
+    await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/same-conversation"]').waitFor();
+    await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/one"]').click();
+    assert.equal((await call(sessions[0], 'ego_js', { space: 'default', expression: 'location.pathname' })).value.result, '/one');
     await openTab(sessions[1]); await frame();
     await page.locator('.dsh-ego-side-root:visible .dsh-ego-side-tab[title$="/other-conversation"]').waitFor();
     await page.reload({ waitUntil: 'networkidle' });

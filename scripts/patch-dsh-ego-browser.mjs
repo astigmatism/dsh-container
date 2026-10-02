@@ -23,6 +23,7 @@ export function patchHost(source) {
   source = replace(source, 'env: process.versions.electron ? {\n\t\t\t\t\t\t...process.env,\n\t\t\t\t\t\tELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? "1"\n\t\t\t\t\t} : void 0,', 'env: browserEnvironment(),');
   source = replace(source, 'const data = await proxyFrom(port, "/api/spaces");', 'const raw = await proxyFrom(port, "/api/spaces");\nconst data = raw ? await scopeSpaces(_req, raw) : null;');
   source = replace(source, 'const res = resRaw;\n\t\t\t\tif (req.method !== "POST")', 'const res = resRaw;\nconst rejection = ctx.connection.requestRejection(req);\nif (rejection !== undefined) { res.writeHead(rejection); res.end(); return; }\n\t\t\t\tif (req.method !== "POST")');
+  source = replace(source, 'const result = await proxyPost(port, "/api/input", await readJsonBody$1(req).catch(() => ({})));', 'lastEgoActivity = Date.now();\nconst result = await proxyPost(port, "/api/input", await readJsonBody$1(req).catch(() => ({})));');
   source = replace(source, 'const result = await openAgentWindow();', 'const result = { ok: false, error: "Use the native ego Sidebar tab in this headless deployment." };');
   source = replace(source, 'const result = await loginImport({', 'const result = await (async () => ({ ok: false, error: "Desktop cookie import is unavailable in this container; sign in using the ego Sidebar tab." }))({');
   return source;

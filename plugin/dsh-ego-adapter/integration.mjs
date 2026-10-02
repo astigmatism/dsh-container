@@ -16,7 +16,7 @@ export const currentSpace = () => { const base = calls.getStore(); return base ?
 
 export function browserEnvironment(base = process.env) {
   const root = browserRoot();
-  return { ...base, HOME: join(root, 'home'), XDG_DATA_HOME: join(root, 'data'),
+  return { ...base, HOME: join(root, 'home'), TMPDIR: join(root, 'tmp'), XDG_DATA_HOME: join(root, 'data'),
     XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'),
     XDG_CACHE_HOME: join(root, 'cache'), EGO_LINUX_STATE_DIR: join(root, 'state/ego-lite-linux'),
     EGO_LINUX_PROFILE: join(root, 'profile'), EGO_LINUX_HEADLESS: '1', EGO_ISOLATE_SPACES: '0',
@@ -24,7 +24,7 @@ export function browserEnvironment(base = process.env) {
 }
 
 export async function prepareBrowser(ctx) {
-  for (const dir of ['home', 'data', 'state/ego-lite-linux', 'config', 'cache', 'profile', 'screenshots']) {
+  for (const dir of ['home', 'tmp', 'data', 'state/ego-lite-linux', 'config', 'cache', 'profile', 'screenshots']) {
     await mkdir(join(browserRoot(), dir), { recursive: true, mode: 0o700 });
   }
   proxy = await startBrowserProxy({ allowPrivate: (process.env.DSH_BROWSER_ALLOW_PRIVATE_HOSTS || 'false').toLowerCase() === 'true' });

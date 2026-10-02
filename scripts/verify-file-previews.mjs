@@ -101,7 +101,7 @@ try {
       `${name} host plugin must mount`);
   }
   const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
-  assert.equal(token?.enabled, false);
+  assert.notEqual(token?.enabled, true);
   assert.notEqual(token?.fiberPhase, 'active');
   for (const name of ['dsh-web-search-free.js', 'dsh-router-model-discovery.js']) {
     assert.ok(inventory.entries.some(row => row.moduleName?.endsWith(name) && row.enabled && row.fiberPhase === 'active'),

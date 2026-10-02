@@ -41,6 +41,8 @@ credentials = temporary / 'credentials'
 for directory in (state, credentials, credentials / 'tls', temporary / 'backend'):
     directory.mkdir(mode=0o700, exist_ok=True)
 (state / 'session').write_text('original fixture history')
+(state / 'ego-browser/profile/Default').mkdir(parents=True)
+(state / 'ego-browser/profile/Default/Cookies').write_bytes(b'synthetic-browser-profile')
 (temporary / 'backend/launch-token').write_text('a' * 43)
 project = 'dsh-maintenance-ci-' + mode
 portal_name = project + '-portal'
@@ -120,7 +122,7 @@ def fixture_probe(manifest,model,root,**kwargs):
         # Simulate post-start external drift. The candidate passed the real
         # pre-cutover contract gate; the live container now loses its button.
         for state in manifest['state_paths']:
-            for name in ('session','router-history'):
+            for name in ('session','router-history','ego-browser/profile/Default/Cookies'):
                 file=Path(state)/name
                 if file.exists(): file.write_text('migrated fixture history')
         drift=copy.deepcopy(model)
@@ -258,6 +260,7 @@ USER node
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
+    assert (state/'ego-browser/profile/Default/Cookies').read_bytes() == b'synthetic-browser-profile'
     assert (state/'root-owned').read_text() == 'root-owned operational placeholder'
     assert (state/'root-owned').stat().st_uid == 0
     (root/'inject-portal-failure').write_text('fixture only')
@@ -268,6 +271,7 @@ USER node
     assert json.loads((root/'compose.json').read_text())['services']['application']['labels'][LABEL+'enabled'] == 'true'
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
+    assert (state/'ego-browser/profile/Default/Cookies').read_bytes() == b'synthetic-browser-profile'
     assert (state/'root-owned').read_text() == 'root-owned operational placeholder'
     assert (state/'root-owned').stat().st_uid == 0
     assert json.loads(run(['docker','inspect',unrelated]))[0]['Id'] == unrelated_id

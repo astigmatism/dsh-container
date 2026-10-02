@@ -31,6 +31,7 @@ RUN apt-get update \
       fonts-liberation \
       fonts-noto-color-emoji \
       git \
+      cmake \
       make \
       g++ \
       jq \
@@ -181,7 +182,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
     && chmod -R a+rX /opt/dsh-seed /opt/dsh-defaults /opt/dsh-local-speech /opt/dsh-ego-adapter \
     && chmod -R a+rwX /opt/dsh-pnpm-store \
-    && apt-get purge -y --auto-remove make g++ \
+    && apt-get purge -y --auto-remove cmake make g++ \
     && rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp
 
 # Boot smoke check: start the web profile in a throwaway DSH_HOME and require
@@ -192,11 +193,13 @@ RUN cd /opt/dsh-seed/profiles/web \
 # exactly the state `--dump-config` and `plugin list` above would pass.
 COPY scripts/verify-native-terminal-client.mjs /opt/dsh-build/verify-native-terminal-client.mjs
 COPY scripts/qualification-ego-host.mjs /opt/dsh-build/qualification-ego-host.mjs
+COPY gateway /opt/dsh-qualification/gateway
+COPY scripts/verify-dictation-roundtrip.mjs /opt/dsh-build/verify-dictation-roundtrip.mjs
 COPY scripts/verify-ego-client.mjs /opt/dsh-build/verify-ego-client.mjs
 COPY scripts/verify-file-previews.mjs /opt/dsh-build/verify-file-previews.mjs
 # The maintenance checkout uses a restrictive umask. Runtime verification runs
 # as the service UID, so new non-executable helpers must remain readable.
-RUN chmod 0644 /opt/dsh-build/*.mjs
+RUN chmod 0644 /opt/dsh-build/*.mjs && chmod -R a+rX /opt/dsh-qualification
 RUN /usr/local/bin/dsh-verify-plugin-boot
 
 ENV DSH_HOME=/data/dsh \

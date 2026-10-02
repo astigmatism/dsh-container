@@ -99,6 +99,8 @@ probe_browser_client() {
     node /opt/dsh-build/verify-sidebar-client.mjs || return 1
   DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
     node /opt/dsh-build/verify-file-previews.mjs || return 1
+  DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
+    node /opt/dsh-build/verify-dictation-roundtrip.mjs || return 1
   if [ "${DSH_VERIFY_RESIDENT_CATALOG:-false}" = true ]; then
     DSH_BOOT_TOKEN=$token DSH_VERIFY_URL=http://127.0.0.1:$port DSH_PROFILE_ROOT=$home/profiles/web \
       node /opt/dsh-build/verify-resident-client.mjs || return 1

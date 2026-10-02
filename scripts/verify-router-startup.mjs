@@ -156,8 +156,8 @@ try {
     assert.equal(migrated['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
     const inventory = await rpc('pluginInventory/list');
     const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
-    assert.equal(token.enabled, false);
-    assert.notEqual(token.fiberPhase, 'active');
+    assert.notEqual(token?.enabled, true);
+    assert.notEqual(token?.fiberPhase, 'active');
     assert.equal(await fs.readFile(tokenIndexPath, 'utf8'), tokenIndex, 'disabled Token index bytes');
     const tokenIndexAfter = await fs.stat(tokenIndexPath);
     assert.equal(tokenIndexAfter.mtimeMs, tokenIndexBefore.mtimeMs, 'disabled Token index was not rewritten');

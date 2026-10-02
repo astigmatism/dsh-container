@@ -72,6 +72,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-private-release-') as temporary:
         def command(args, **kwargs):
             if args[:2] == ['docker', 'build']:
                 build_tags.append(args[args.index('--tag') + 1])
+            if args[-1] == '/opt/dsh-build/verify-router-startup.mjs':
+                # This gate owns only synthetic state and redacts its launch URLs.
+                # Keep its diagnosis visible here; production run() stays private.
+                result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                if result.returncode:
+                    print(result.stdout, flush=True)
+                    raise Failure('Synthetic router startup qualification failed')
+                return result.stdout
             return run(args, **kwargs)
         with patch('maintenance.engine.fetch_source', stage_source), patch('maintenance.engine.run', command):
             first = Updater(operations).build_candidate()

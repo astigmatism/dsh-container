@@ -39,8 +39,10 @@ test('tool defaults, explicit spaces and screenshot pixels stay in their calling
   t.after(async () => { if (previous === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previous; await rm(home, { recursive: true, force: true }); });
   const homeBefore = process.env.HOME;
   assert.ok(browserEnvironment().HOME.startsWith(home)); assert.equal(process.env.HOME, homeBefore);
-  const tool = { name: 'ego_js', description: '', output: {}, execute: async args => { const before = currentSpace(); await delay(5); return { ok: true, before, after: currentSpace(), args }; } };
+  const tool = { name: 'ego_js', description: '', parameters: { type: 'object', properties: { space: { type: 'string', description: 'global space' } } }, output: {}, execute: async args => { const before = currentSpace(); await delay(5); return { ok: true, before, after: currentSpace(), args }; } };
   const wrapped = wrapTool({}, tool);
+  assert.match(wrapped.parameters.properties.space.description, /within this conversation/);
+  assert.equal(tool.parameters.properties.space.description, 'global space');
   const execution = id => ({ agent: { session: { id } }, callId: id, signal: new AbortController().signal });
   const values = await Promise.all(['a', 'b'].map(id => wrapped.execute({}, execution(id))));
   for (const [i, value] of values.entries()) { assert.equal(value.before, conversationSpace(['a','b'][i])); assert.equal(value.after, value.before); }

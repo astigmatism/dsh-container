@@ -58,7 +58,12 @@ export function wrapTool(ctx, tool) {
   // cookie import is unavailable for this headless profile.
   if (['ego_login_import', 'ego_cli', 'ego_script'].includes(tool.name)) return null;
   const screenshot = tool.name === 'ego_screenshot';
+  const properties = { ...tool.parameters?.properties };
+  for (const key of ['space', ...(['ego_space_open', 'ego_space_close'].includes(tool.name) ? ['name'] : [])]) {
+    if (properties[key]) properties[key] = { ...properties[key], description: 'Browser workspace name within this conversation. Use default for its main workspace; other names create or select a workspace owned by this conversation.' };
+  }
   return { ...tool,
+    ...(tool.parameters ? { parameters: { ...tool.parameters, properties } } : {}),
     description: (tool.name === 'ego_space_open' ? 'Open a browser workspace within the calling conversation. Use default for its main workspace. Website logins are shared across conversations.' : tool.description) + (screenshot ? ' The captured pixels are also attached directly for visual analysis.' : ''),
     execute: (args, exec) => calls.run(conversationSpace(exec?.agent?.session?.id), async () => {
       exec.signal?.throwIfAborted();

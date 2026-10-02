@@ -52,6 +52,10 @@ export async function main(root = process.argv[2] || '/opt/dsh-seed/profiles/web
   let source = await readFile(chrome, 'utf8');
   if (!source.includes(marker)) {
     source = replace(source, '--proxy-bypass-list=<-loopback>;127.0.0.1;localhost;[::1];172.16.0.0/12;10.0.0.0/8;*.local', '--proxy-bypass-list=<-loopback>');
+    source = replace(source, 'async function spawnAndAwait(binary, args, plan, lastError) {', 'async function spawnAndAwait(binary, args, plan, lastError) {\n  let startupError = "";');
+    source = replace(source, 'const child = spawn(binary, args, {\n    detached: true,\n    stdio: "ignore",', 'const child = spawn(binary, args, {\n    detached: true,\n    stdio: ["ignore", "ignore", "pipe"],');
+    source = replace(source, 'child.unref();\n  try {\n    const { port, wsUrl }', 'child.unref();\n  child.stderr.on("data", chunk => { startupError = (startupError + chunk.toString()).slice(-4096); });\n  child.stderr.unref();\n  child.on("error", error => { startupError = error.message; });\n  try {\n    const { port, wsUrl }');
+    source = replace(source, 'lastError.error = error;', 'lastError.error = new Error(`${error.message}${startupError ? "\\nChromium startup: " + startupError : ""}`);');
     await writeFile(chrome, `// ${marker}: all page traffic uses the deployment policy proxy.\n` + source);
   }
   const helpers = process.env.DSH_EGO_ADAPTER_SOURCE || resolve(fileURLToPath(new URL('../plugin/dsh-ego-adapter', import.meta.url)));

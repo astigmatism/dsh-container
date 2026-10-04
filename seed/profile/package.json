@@ -8,6 +8,7 @@
     "dsh-better-sidebar": "0.24.1",
     "dsh-context": "0.62.2",
     "dsh-favicon-status": "0.1.0-rc.8",
+    "dsh-follow-up-suggestions": "link:./plugins/dsh-follow-up-suggestions",
     "dsh-local-speech-input": "link:../../../dsh-local-speech",
     "dsh-loop-detector": "1.0.0",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification#f10cd6869b7a50e55780627a6d55bbb310fd59b4",

@@ -121,6 +121,9 @@ docker run --rm --network none --read-only --tmpfs /tmp \
   "$node_image" -eu -c '
     node --check gateway/server.mjs
     node --check plugin/dsh-local-speech/client.js
+    node --check seed/profile/plugins/dsh-follow-up-suggestions/client.js
+    node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/index.js
+    node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/suggestions.js
     node --check seed/plugins/dsh-web-search-free.js
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
     node --check scripts/patch-dsh-llm-pi-ai.mjs
@@ -159,6 +162,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-file-previews.mjs
     node --check scripts/patch-dsh-sidebar-workspace.mjs
     node --check scripts/patch-dsh-web-auth.mjs
+    node --check scripts/patch-dsh-session-title-reasoning.mjs
+    node --check scripts/patch-dsh-busy-enter-steer.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
     node --check scripts/patch-dsh-ego-browser.mjs
     node --check ollama-router/src/server.js
@@ -211,6 +216,10 @@ if [ "$build" -eq 1 ]; then
     /opt/dsh-build/patch-dsh-file-previews.mjs --check
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-sidebar-workspace.mjs --check
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
+    /opt/dsh-build/patch-dsh-session-title-reasoning.mjs --check
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
+    /opt/dsh-build/patch-dsh-busy-enter-steer.mjs --check
 
   # Use the packaged native executor for deadlines, output capture and actual
   # process-tree cleanup; mock plugin tests alone cannot verify these contracts.
@@ -239,6 +248,7 @@ if [ "$build" -eq 1 ]; then
     'dsh-better-sidebar@0.24.1' \
     'dsh-context@0.62.2' \
     'dsh-favicon-status@0.1.0-rc.8' \
+    'dsh-follow-up-suggestions@link:' \
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \

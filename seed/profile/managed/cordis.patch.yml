@@ -20,10 +20,29 @@
   config:
     searchProvider: duckduckgo
 
-# A first-prompt title request otherwise competes with the agent turn for the
-# single Ollama worker. DSH still creates its immediate fallback title.
+# A prompt sent while the agent is working steers the running Turn instead of
+# queueing behind it; Cmd/Ctrl+Enter queues. Host-backed pages read this value.
+# Remote Web pages (LAN and gateway URLs) never read Host settings, so the build
+# patch scripts/patch-dsh-busy-enter-steer.mjs makes steer the browser default too.
+- id: ui-conversation
+  config:
+    busyEnter: steer
+
+# Model-written session titles from the first prompt. DSH shows its immediate
+# first-words fallback until the generated title arrives. The build patch
+# (scripts/patch-dsh-session-title-reasoning.mjs) disables reasoning for this
+# auxiliary call when the route offers "off", so resident reasoning models
+# answer within the 64-token title budget in about a second. On a single-slot
+# provider the request waits behind the session's first model call; the
+# deadline covers that wait as well as generation. A patch replaces the whole
+# config, so restate upstream's required fields (no library defaults).
 - id: session-title-llm
-  disabled: true
+  config:
+    targetWords: 5
+    targetCjkCharacters: 10
+    maxInputBytes: 4096
+    maxOutputTokens: 64
+    timeoutMs: 600000
 
 # Token remains installed, but its incompatible bundle is not activated on 0.2.
 # Its v4 session reader and memory behavior are not qualified for this runtime.
@@ -108,3 +127,15 @@
         providers: [ local-ollama, local-everyday ]
         model: local-active
         pollIntervalMs: 30000
+
+# Suggested follow-up prompts beneath the latest completed answer. The live
+# on/off switch is Settings > General > Suggest follow-up prompts; the choice
+# is stored in the writable profile patch under this entry id. Requests use
+# the conversation's own route with reasoning off, and are aborted whenever
+# new work starts on the same provider. Defaults (enabled, 3 suggestions,
+# 1024 output tokens, 60 s) live in the plugin schema: a Settings write copies
+# this row's config into the user layer, so keep it empty to avoid pinning
+# them. See profiles/web/plugins/dsh-follow-up-suggestions/README.md.
+- insert:
+    - id: follow-up-suggestions
+      name: 'dsh-follow-up-suggestions'

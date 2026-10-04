@@ -39,6 +39,9 @@ importers:
       dsh-favicon-status:
         specifier: 0.1.0-rc.8
         version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.4)
+      dsh-follow-up-suggestions:
+        specifier: link:./plugins/dsh-follow-up-suggestions
+        version: link:plugins/dsh-follow-up-suggestions
       dsh-local-speech-input:
         specifier: link:../../../dsh-local-speech
         version: link:../../../dsh-local-speech

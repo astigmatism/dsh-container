@@ -51,7 +51,7 @@ step after an operator updates a selected deployment through Service Portal.
   captured voice host, with separate file-based keys and locked deployment
   metadata in `config/speech.lock.json`.
 
-The locked web profile contains these ten plugins:
+The locked web profile contains these eleven plugins:
 
 1. `@zoytown/dsh-token` 0.1.3 with a narrowly anchored session-format-v3
    compatibility patch, installed but disabled by default because its
@@ -70,10 +70,41 @@ The locked web profile contains these ten plugins:
 9. `dsh-favicon-status` 0.1.0-rc.8 (published without a manifest BOM)
 10. `dsh-better-sidebar` 0.24.1 with task views and session file activity;
     terminal and image/PDF rendering use the upstream Harness implementations
+11. `dsh-follow-up-suggestions` 0.1.0 (local, in `seed/profile/plugins/`),
+    adapted from `shaoeric/dsh-suggest` (MIT) for the 0.2 APIs
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
 `seed/` for the exact manifest, lockfile, provider, and patch.
+
+### Session titles, follow-up suggestions, and busy Enter
+
+- **Session titles.** The upstream first-prompt title generator
+  (`session-title-llm`) is enabled. DSH shows a first-words fallback right
+  away, then replaces it with a model-written title. The title request uses
+  the session's own route. Upstream leaves its reasoning effort unset, so a
+  resident reasoning model spent the whole 64-token budget thinking and every
+  title failed. `scripts/patch-dsh-session-title-reasoning.mjs` requests `off`
+  when the route offers it (about a second on the resident model). The 600 s
+  deadline also covers waiting behind the session's first request on a
+  single-slot provider.
+- **Follow-up suggestions.** After an answer completes normally, up to three
+  suggested prompts appear beneath the latest Turn. Click one to send it, or
+  use the pencil to edit it first. Turn the feature on or off in
+  **Settings → General → Suggest follow-up prompts**. Requests use the
+  conversation's route with reasoning off. They are aborted as soon as new
+  work starts in that Session, or in any Session on the same provider, so
+  they never hold the generation slot. Suggestions are not written to the
+  Session log. See the plugin
+  [README](seed/profile/plugins/dsh-follow-up-suggestions/README.md) for
+  configuration, including an optional fixed model.
+- **Busy Enter steers.** A prompt sent while the agent is working steers the
+  running Turn instead of queueing behind it. Cmd/Ctrl+Enter queues instead.
+  The profile sets `ui-conversation.busyEnter: steer`. Remote Web pages (LAN
+  and gateway URLs) never read Host settings, so
+  `scripts/patch-dsh-busy-enter-steer.mjs` also makes steer the browser
+  default. **Settings → General → Send behavior while busy** still switches
+  back. On remote pages that choice lasts only until reload.
 
 Token remains installed but its bundle is inactive: its published peer range
 excludes Harness 0.2, and its v4 session reader and memory behavior remain

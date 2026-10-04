@@ -85,6 +85,8 @@ COPY scripts/patch-dsh-native-file-opening.mjs /opt/dsh-build/patch-dsh-native-f
 COPY scripts/patch-dsh-file-previews.mjs /opt/dsh-build/patch-dsh-file-previews.mjs
 COPY scripts/patch-dsh-sidebar-workspace.mjs /opt/dsh-build/patch-dsh-sidebar-workspace.mjs
 COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
+COPY scripts/patch-dsh-session-title-reasoning.mjs /opt/dsh-build/patch-dsh-session-title-reasoning.mjs
+COPY scripts/patch-dsh-busy-enter-steer.mjs /opt/dsh-build/patch-dsh-busy-enter-steer.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
 COPY plugin/dsh-ego-adapter /opt/dsh-ego-adapter
 ENV DSH_EGO_ADAPTER_SOURCE=/opt/dsh-ego-adapter
@@ -98,6 +100,10 @@ RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/patch-dsh-progress-status.mjs \
     && node /opt/dsh-build/patch-dsh-native-file-opening.mjs \
     && node /opt/dsh-build/patch-dsh-web-auth.mjs \
+    && node /opt/dsh-build/patch-dsh-session-title-reasoning.mjs \
+    && node /opt/dsh-build/patch-dsh-session-title-reasoning.mjs --check \
+    && node /opt/dsh-build/patch-dsh-busy-enter-steer.mjs \
+    && node /opt/dsh-build/patch-dsh-busy-enter-steer.mjs --check \
     && grep -Fq 'dsh-container-web-launch-token-v1' /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
@@ -175,6 +181,8 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-better-sidebar@0.24.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-context@0.62.2' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.8' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-follow-up-suggestions@link:' /opt/dsh-seed/plugin-inventory.txt \
+    && dsh --profile web --dump-config | grep -Fq 'name: dsh-follow-up-suggestions' \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \

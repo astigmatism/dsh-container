@@ -6,6 +6,7 @@
     "@zoytown/dsh-token": "0.1.3",
     "dsh-context": "0.62.2",
     "dsh-favicon-status": "0.1.0-rc.8",
+    "dsh-follow-up-suggestions": "0.1.0 (local, seed/profile/plugins; adapted from shaoeric/dsh-suggest@ccbc98a)",
     "dsh-local-speech-input": "0.1.0 (local)",
     "dsh-loop-detector": "1.0.0 (local patch)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",

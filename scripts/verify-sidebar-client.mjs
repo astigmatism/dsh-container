@@ -32,7 +32,7 @@ if (process.argv.includes('--live')) {
     assert.equal(result.ok, true, result.error?.message);
     const maintained = new Set(['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
       'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
-      'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar']);
+      'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar', 'dsh-follow-up-suggestions']);
     for (const row of result.value.entries) {
       if (!row.enabled) continue; // Explicitly disabled user plugins stay disabled.
       if (maintained.has(row.moduleName) || /dsh-(web-search-free|router-model-discovery)\.js$/.test(row.moduleName ?? '')) {
@@ -52,8 +52,17 @@ if (process.argv.includes('--live')) {
     await page.locator('[data-composer-input]').first().waitFor();
     await page.locator('[data-local-speech-button]').first().waitFor();
     await page.locator('style[data-plugin="dsh-ui-appearance"]').waitFor({ state: 'attached' });
+    // Follow-up suggestions: browser half installed, Host preference route answering.
+    await page.locator('#dsh-follow-up-suggestions-style').waitFor({ state: 'attached' });
+    const preference = await page.evaluate(async () => {
+      const reply = await fetch('/api/follow-up-suggestions/preference', { cache: 'no-store' });
+      return { status: reply.status, body: await reply.json() };
+    });
+    assert.equal(preference.status, 200, 'follow-up suggestion preference route');
+    assert.equal(preference.body.ok, true);
+    assert.equal(typeof preference.body.enabled, 'boolean');
     assert.deepEqual(errors, []);
-    console.log('Verified enabled plugin and preset mounts, composed chat, speech and appearance browser integrations. Native terminal lifecycle is covered by the isolated --live gate.');
+    console.log('Verified enabled plugin and preset mounts, composed chat, speech, appearance and follow-up suggestion browser integrations. Native terminal lifecycle is covered by the isolated --live gate.');
   } catch (error) {
     console.error(String(error?.stack ?? error).split(secret).join('<redacted>'));
     process.exitCode = 1;

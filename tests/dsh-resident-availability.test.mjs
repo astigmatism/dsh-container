@@ -66,7 +66,7 @@ test('a request waiting for capacity rechecks availability without cancelling an
   // Let credential resolution and the queue admission settle.
   await new Promise(resolve => setImmediate(resolve));
   f.profile.residentUnavailable = true;
-  await active.return();
+  assert.equal((await active.next()).done, true, "the active stream completes normally");
   await assert.rejects(queued, e => e.code === 'MODEL_UNAVAILABLE');
   assert.equal(f.calls(), 1);
 });

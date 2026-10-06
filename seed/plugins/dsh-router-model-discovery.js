@@ -420,6 +420,8 @@ async function synchronizeResidentSettings(settingsService) {
   const initial = readSettings(settingsService, "llm-pi-ai");
   if (!plainObject(initial?.providers?.["local-ollama"])) throw new Error("Missing local-ollama provider");
   const stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user ?? initial;
+  const managedNames = [...Object.keys(RESIDENT_MODELS), "local-ollama-256k"];
+  const before = managedNames.map(name => JSON.stringify(initial.providers[name]));
   const next = {};
   const catalogs = new Map();
   for (const [name, modelId] of Object.entries(RESIDENT_MODELS)) {
@@ -446,6 +448,10 @@ async function synchronizeResidentSettings(settingsService) {
     } } };
     for (const operation of capabilityOps(proposed, name, modelId, metadata)) applyOperation(proposed, operation);
     next[name] = proposed.providers[name];
+  }
+  const latest = readSettings(settingsService, "llm-pi-ai");
+  if (managedNames.some((name, index) => JSON.stringify(latest.providers?.[name]) !== before[index])) {
+    throw new Error("resident settings changed during discovery; retrying on the next refresh");
   }
   const selected = readSettings(settingsService, "agent-default-model");
   const retired = initial.providers["local-ollama-256k"];

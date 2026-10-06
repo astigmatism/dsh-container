@@ -4,7 +4,9 @@ Daytime keeps provider `local-ollama` and model `local-active`. Nighttime keeps
 provider `local-everyday` and model `qwen3.8-27b-abliterated-q6_k`. A successful,
 valid router catalog may omit Nighttime. Its provider is retained with
 `residentUnavailable: true`; the picker displays **Nighttime — unavailable** and
-disables selection. Saved defaults and sessions retain their identities and
+disables selection. The model-catalog entry carries `available: false`, and its
+provider is omitted from `routableProviders` while retaining its visible group.
+Saved defaults and sessions retain their identities and
 reasoning preferences. Sending or dispatching a queued request fails with
 `MODEL_UNAVAILABLE`; no alternate model is selected. Existing streams are not
 cancelled by discovery. Valid reappearance enables subsequent requests without

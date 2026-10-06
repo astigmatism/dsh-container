@@ -105,7 +105,7 @@ try {
   await page.getByRole('menuitem', { name: /^Effort/ }).click();
   assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
   await trigger.click();
-  console.log(`Live Harness catalog and rendered picker contain exactly ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
+  console.log(`Live Harness catalog and rendered picker include ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
   // Model selection saves the next-request preference asynchronously. Verify
   // both choices and distinct reasoning settings survive browser reconnection.
   for (const [index, choice] of available.entries()) {

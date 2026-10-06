@@ -78,9 +78,11 @@ Previous preferences are retained in the migration archive.
 
 The existing resident-model configuration, local speech integration, keyless
 search, credentials, sessions, permissions, presets, pins and appearance remain
-under their existing ownership. The resident catalog must still contain exactly
-Daytime and Nighttime, with the existing router identities, context/output
-policies, per-provider concurrency and reasoning choices.
+under their existing ownership. Daytime retains its existing router identity;
+Nighttime is optional and remains visible as unavailable when absent. Available
+residents follow validated context/output policies, concurrency and reasoning
+choices. External providers and defaults remain configured. See
+[optional residents](optional-residents.md) for the current contract.
 
 ## Qualification evidence
 

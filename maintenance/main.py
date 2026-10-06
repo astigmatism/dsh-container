@@ -126,7 +126,7 @@ def main():
         Updater(root, args.source_bind, Path(__file__).resolve().parent.parent).update(args.dry_run)
     else:
         import fcntl
-        with (root / '.maintenance.lock').open('a') as lock:
+        with (root / '.maintenance.lock').open('r' if args.dry_run else 'a') as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -147,6 +147,8 @@ def main():
                 from maintenance.common import atomic_json
                 atomic_json(root / 'transaction.json', record)
                 updater.recover()
+                updater.status('rolled-back', recovery='succeeded', recovery_point=str(point))
+                print('Rollback restored the previous generation and verified service health.')
                 return
             if args.action == 'recover':
                 require((root / 'transaction.json').exists(), 'No interrupted transaction to recover')

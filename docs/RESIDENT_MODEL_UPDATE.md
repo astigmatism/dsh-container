@@ -1,5 +1,10 @@
 # Router compatibility release
 
+Historical release notes: the current availability, external-provider preservation,
+and portable update procedures are documented in [optional residents](optional-residents.md)
+and [portable maintenance](portable-maintenance.md). The two-model-only migration
+and destination-specific rollout below describe the earlier release.
+
 This Harness change replaces historical router-profile assertions with shared,
 validated discovery and preserves explicit DSH reasoning choices. It supports
 legacy alias-only catalogs, canonical model IDs with alias metadata, and the

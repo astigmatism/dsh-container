@@ -19,7 +19,7 @@ export function patchAdapter(input) {
 \t\t}
 \t}
 \tproviderInfo(provider) {`);
-  s = replace(s, '\t\t\t\tname: model.name,\n\t\t\t\tinputModalities: [...model.input]', '\t\t\t\tname: snapshot.profiles.get(provider).residentUnavailable ? "Nighttime — unavailable" : model.name,\n\t\t\t\tavailable: snapshot.profiles.get(provider).residentUnavailable !== true,\n\t\t\t\tinputModalities: [...model.input]');
+  s = replace(s, '\t\t\t\tname: model.name,\n\t\t\t\tinputModalities: [...model.input]', '\t\t\t\tname: snapshot.profiles.get(provider).residentUnavailable ? "Nighttime — unavailable" : model.name,\n\t\t\t\tavailable: snapshot.profiles.get(provider).residentUnavailable !== true,\n\t\t\t\t...(snapshot.profiles.get(provider).residentUnavailable ? {} : { inputModalities: [...model.input] })');
   s = replace(s, '\t\tconst resolvedModel = this.modelOf(snapshot, provider, model);', '\t\tconst resolvedModel = this.modelOf(snapshot, provider, model);\n\t\tif (profile.residentUnavailable === true) return { provider, id: model, name: "Nighttime — unavailable" };');
   s = replace(s, '\tprepareCall(provider, model, _signal) {\n\t\tconst snapshot = this.current();', '\tprepareCall(provider, model, _signal) {\n\t\tthis.assertResidentAvailable(provider, model);\n\t\tconst snapshot = this.current();');
   s = replace(s, '\t\t\tconst profile = this.profileOf(snapshot, options.provider);', '\t\t\tthis.assertResidentAvailable(options.provider, options.model);\n\t\t\tconst profile = this.profileOf(snapshot, options.provider);');

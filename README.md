@@ -31,10 +31,11 @@ step after an operator updates a selected deployment through Service Portal.
 - Two resident OpenAI Responses models at `http://ai-router:11434/v1`:
   Daytime (128K) and Nighttime (128K), each with one independent generation slot
   and no inherited output ceiling.
-- The model picker exposes exactly those two resident choices. The built-in
-  DeepSeek adapter is disabled in the web profile. Startup and discovery refresh
-  remove obsolete provider/model choices after validating both residents, while
-  preserving credential storage, conversation history, and valid reasoning choices.
+- The model picker includes Daytime and optional Nighttime alongside configured
+  external providers. Missing Nighttime remains visible but unavailable, and saved
+  selections never fall back to another model. Startup and discovery refresh
+  preserve external defaults, credentials, session history and reasoning choices.
+  The built-in DeepSeek adapter remains disabled in the web profile.
 - Explicit DSH medium reasoning by default; the raw router default remains
   template-defined. Off, low, medium, and xhigh are supported,
   while the existing minimal, high, and max selectors map to low, xhigh, and
@@ -289,26 +290,24 @@ and the Update and Restart verifier follow that advertised label and capacity.
 The live picker and context meter are checked against validated router metadata,
 while offline image checks use their isolated seed settings. No Harness source
 edit is needed when switching between these profiles.
-Stable API IDs remain separate from display names. Discovery converges the
-picker to Daytime and Nighttime, moving removed defaults back to Daytime while
-preserving supported reasoning choices.
+Stable API IDs remain separate from display names. Daytime retains `local-active`
+for existing sessions. Nighttime may be absent from a valid catalog: its picker
+entry is disabled, its saved selections remain unchanged, and generation fails
+clearly until the user switches models or the same Nighttime model returns.
 
-A normal image update atomically reconciles the known providers in the
-entrypoint before Harness launches; the refreshed plugin then maintains them
-through DSH's settings service. It validates the target metadata
-and inherited effort before provisioning Nighttime, applies each model's actual
-capacity and modalities, and removes all other selectable provider/model rows.
-Model properties, credential storage, conversation history and unrelated
-non-model settings remain. The built-in DeepSeek adapter is disabled by the
-versioned profile, so updates cannot repopulate its default model menu.
-Discovery failure leaves the file unchanged and the application available;
-provider verification still fails until the contract is synchronized. No manual
-production settings migration is required. The optional
-Nighttime is optional: a valid Daytime-only catalog starts normally. Missing
-Nighttime stays visible but unavailable; saved selections are retained and never
-fall back to another model. External providers and defaults, including Bedrock,
-are preserved. See [optional residents and override adoption](docs/optional-residents.md)
-for availability, upgrade and rollback behavior.
+A normal image update atomically reconciles repository-owned resident providers
+before Harness launches; runtime discovery maintains their capabilities and
+availability. It preserves external providers and defaults, including Bedrock,
+credential storage, session history and unrelated settings. Only recognized
+retired Daytime identities migrate to the stable Daytime route. The built-in
+DeepSeek adapter remains disabled by the versioned web profile.
+
+Invalid discovery metadata leaves settings unchanged and fails startup or
+verification. The narrow startup transport-outage fallback applies only to
+already valid saved resident settings; runtime outages retain the last validated
+state and report the failure. See [optional residents and override adoption](docs/optional-residents.md)
+for upgrade and rollback guidance, including executable bind mounts that can
+otherwise shadow corrected image files.
 
 `scripts/migrate-resident-models.mjs` uses the same synchronization for explicit
 local maintenance and keeps a private backup when it changes a file.

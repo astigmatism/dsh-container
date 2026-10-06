@@ -336,3 +336,17 @@ test('resolved defaults initialize providers when no user provider map is stored
   await verifyConfiguredRoutes(state);
   assert.equal(state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
 });
+
+test('a concurrent edit to a resident credential reference is not overwritten by discovery', async t => {
+  const f = await fixture(t, [entry(PRIMARY), entry(SECONDARY)]);
+  const state = legacySettings(f.baseURL);
+  const settings = service(state), get = settings.get;
+  let reads = 0;
+  settings.get = namespace => {
+    if (namespace === 'llm-pi-ai' && ++reads === 2) state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv = 'NEW_CREDENTIAL_REFERENCE';
+    return get(namespace);
+  };
+  await assert.rejects(synchronizeRouterSettings(settings), /settings changed during discovery/);
+  assert.equal(state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'NEW_CREDENTIAL_REFERENCE');
+  assert.equal(state['llm-pi-ai'].providers['local-everyday'], undefined);
+});

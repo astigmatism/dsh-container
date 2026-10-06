@@ -188,6 +188,29 @@ class RecoveryTests(Fixture):
         self.assertIn('await verifyConfiguredRoutes(await readSettings', command.call_args.kwargs['data'])
         self.assertIn('data:text/javascript;base64,', command.call_args.kwargs['data'])
 
+    def test_explicit_latest_rollback_dry_run_and_health_checked_restore(self):
+        from maintenance.main import main
+        updater, release = Updater(self.root), self.candidate()
+        (self.root / '.maintenance.lock').touch()
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch('maintenance.engine.run'), patch('maintenance.engine.probe_release'):
+            updater.cutover(release)
+        status = json.loads((self.root / 'maintenance-status.json').read_text())
+        arguments = ['maintenance', 'rollback', '--manifest', str(self.root / 'deployment.json'),
+                     '--recovery-point', status['recovery_point']]
+        before = recovery.inventory(self.base)
+        with patch.object(Updater, 'preflight'), patch.object(sys, 'argv', arguments + ['--dry-run']):
+            main()
+        self.assertEqual(before, recovery.inventory(self.base))
+        with patch.object(Updater, 'preflight'), patch.object(sys, 'argv', arguments), \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.verify_recovered_release') as verify:
+            main()
+        verify.assert_called_once()
+        self.assertEqual(json.loads((self.root / 'deployment.json').read_text())['revision'], self.manifest['revision'])
+        self.assertEqual(json.loads((self.root / 'maintenance-status.json').read_text())['state'], 'rolled-back')
+
     def test_copy_assigns_ownership_before_checking_shared_filesystem_metadata(self):
         source = self.data / 'session'
         target = self.base / 'copied-session'
@@ -342,6 +365,29 @@ class AdoptionTests(Fixture):
         self.assertEqual(self.args.portal_url, 'http://portal.test')
         self.assertFalse(self.args.deployment_dir.exists())
         self.assertFalse(any('up' in c or 'build' in c or 'fetch' in c for c in self.commands))
+
+    def test_local_resident_overrides_require_explicit_adoption_and_preserve_inputs(self):
+        from maintenance.common import digest
+        self.args.source_bind = []
+        for relative, target in [
+            ('seed/plugins/dsh-router-model-discovery.js', '/opt/dsh-seed/.dsh-plugins/dsh-router-model-discovery.js'),
+            *[(f'scripts/{name}.mjs', f'/opt/dsh-build/{name}.mjs') for name in
+              ('migrate-resident-models', 'verify-router-contract', 'verify-resident-client')]]:
+            reviewed = self.source / relative
+            reviewed.parent.mkdir(parents=True, exist_ok=True)
+            reviewed.write_text('reviewed source')
+            override = self.base / ('local-' + reviewed.name)
+            override.write_text('custom Bedrock code')
+            self.model['services']['application']['volumes'].append(
+                {'type': 'bind', 'source': str(override), 'target': target, 'read_only': True})
+            self.args.source_bind.append(f'application:{target}={relative}@{digest(override)}')
+        mappings = self.args.source_bind
+        self.args.source_bind = []
+        with self.assertRaisesRegex(Failure, 'Unmanaged resident code bind'): self.prepare()
+        self.args.source_bind = mappings
+        before = recovery.inventory(self.base)
+        self.prepare()
+        self.assertEqual(before, recovery.inventory(self.base))
 
     def test_ordinary_install_cannot_disable_the_contract(self):
         self.args.adopt = False

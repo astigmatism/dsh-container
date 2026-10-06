@@ -107,7 +107,7 @@ test('normal startup migration and the exact remote-direct verifier accept canon
   assert.equal(providers['local-everyday'].reasoning, 'medium');
   assert.equal(providers['local-ollama'].models[0].custom, 'retain');
   assert.equal(providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
-  assert.deepEqual(Object.keys(providers).sort(), ['local-everyday', 'local-ollama']);
+  assert.deepEqual(Object.keys(providers).sort(), ['custom', 'local-everyday', 'local-ollama']);
   assert.deepEqual(state['custom-setting'], { preserved: true });
   assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off', custom: 'retain' });
   assert.equal(providers['local-ollama-256k'], undefined);
@@ -202,7 +202,7 @@ test('remote-direct readiness retains the primary vision/tools requirement witho
   await assert.rejects(f.remote(state), error => error.code === 22 && /missing vision capability/.test(error.stderr));
 });
 
-test('Swift, raw aliases and extra providers converge to two choices with truthful contexts', async t => {
+test('resident aliases converge while external providers and defaults survive', async t => {
   const primary = entry(PRIMARY), night = entry(SECONDARY);
   primary.x_ollama_router.context_window = 163840;
   primary.x_ollama_router.display_name = 'Daytime (160K)';
@@ -215,7 +215,7 @@ test('Swift, raw aliases and extra providers converge to two choices with truthf
   state['credentials-fixture'] = { untouched: 'synthetic credential' };
   await synchronizeRouterSettings(service(state));
   await verifyConfiguredRoutes(state);
-  assert.deepEqual(Object.keys(state['llm-pi-ai'].providers).sort(), ['local-everyday', 'local-ollama']);
+  assert.deepEqual(Object.keys(state['llm-pi-ai'].providers).sort(), ['custom', 'local-everyday', 'local-ollama']);
   const model = state['llm-pi-ai'].providers['local-ollama'].models[0];
   assert.equal(model.id, 'local-active');
   assert.equal(model.name, 'Daytime (160K)');
@@ -223,16 +223,58 @@ test('Swift, raw aliases and extra providers converge to two choices with truthf
   assert.equal(model.maxTokens, null);
   assert.equal(model.reasoningEfforts.max, 'xhigh');
   assert.equal(model.custom, 'retain');
-  assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'max', custom: 'retain' });
+  assert.deepEqual(state['agent-default-model'], { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max', custom: 'retain' });
   assert.deepEqual(state['credentials-fixture'], { untouched: 'synthetic credential' });
 });
 
-test('missing Nighttime leaves all persisted state unchanged', async t => {
+test('single-model startup preserves Bedrock and Nighttime removal/return preserves selection', async t => {
   const f = await fixture(t, [entry(PRIMARY)]);
-  const state = legacySettings(f.baseURL), before = structuredClone(state), mutations = [];
-  await assert.rejects(synchronizeRouterSettings(service(state, mutations)), /not advertised/);
-  assert.deepEqual(state, before);
-  assert.equal(mutations.length, 0);
+  const state = legacySettings(f.baseURL);
+  const bedrock = { api: 'bedrock-converse-stream', region: 'us-west-2', apiKeyEnv: 'BEDROCK_SECRET' };
+  state['llm-pi-ai'].providers['amazon-bedrock'] = bedrock;
+  state['agent-default-model'] = { provider: 'amazon-bedrock', model: 'external-model', reasoningEffort: 'high' };
+  const selected = structuredClone(state['agent-default-model']);
+  const mutations = [];
+  await synchronizeRouterSettings(service(state, mutations));
+  await verifyConfiguredRoutes(state);
+  const night = state['llm-pi-ai'].providers['local-everyday'];
+  assert.equal(night.residentUnavailable, true);
+  assert.deepEqual(night.models, [{ id: SECONDARY, name: 'Nighttime' }]);
+  assert.deepEqual(state['agent-default-model'], selected);
+  assert.deepEqual(state['llm-pi-ai'].providers['amazon-bedrock'], bedrock);
+  const count = mutations.length;
+  await synchronizeRouterSettings(service(state, mutations));
+  assert.equal(mutations.length, count);
+  state['agent-default-model'] = { provider: 'local-everyday', model: SECONDARY, reasoningEffort: 'high' };
+  const nightSelected = structuredClone(state['agent-default-model']);
+  f.state.data.push(entry(SECONDARY));
+  await synchronizeRouterSettings(service(state));
+  const capabilities = structuredClone(state['llm-pi-ai'].providers['local-everyday'].models);
+  assert.equal(state['llm-pi-ai'].providers['local-everyday'].residentUnavailable, false);
+  f.state.data.pop();
+  await synchronizeRouterSettings(service(state));
+  await verifyConfiguredRoutes(state);
+  assert.deepEqual(state['llm-pi-ai'].providers['local-everyday'].models, capabilities);
+  assert.deepEqual(state['agent-default-model'], nightSelected);
+  assert.equal((await residentClientExpectations(state))[1].available, false);
+  f.state.data.push(entry(SECONDARY));
+  await synchronizeRouterSettings(service(state));
+  assert.deepEqual(state['agent-default-model'], nightSelected);
+  assert.deepEqual(state['llm-pi-ai'].providers['amazon-bedrock'], bedrock);
+});
+
+test('invalid catalogs and optional metadata never masquerade as intentional absence', async t => {
+  const f = await fixture(t, [entry(PRIMARY)]);
+  const state = legacySettings(f.baseURL);
+  await synchronizeRouterSettings(service(state));
+  const before = structuredClone(state);
+  const badNight = entry(SECONDARY); badNight.x_ollama_router.complete = false;
+  for (const data of [[], null, [null], [entry(PRIMARY), {}], [entry(PRIMARY), badNight],
+    [entry(PRIMARY), { id: 'bad', x_ollama_router: { aliases: 'wrong' } }], [entry(SECONDARY)]]) {
+    f.state.data = data;
+    await assert.rejects(synchronizeRouterSettings(service(state)));
+    assert.deepEqual(state, before);
+  }
 });
 
 test('live picker verification follows Flash 128K and the 27B 160K recovery profile', async t => {
@@ -252,8 +294,8 @@ test('live picker verification follows Flash 128K and the 27B 160K recovery prof
     await synchronizeRouterSettings(service(state));
     const expected = await residentClientExpectations(state);
     assert.deepEqual(expected, [
-      { provider: 'local-ollama', model: 'local-active', name, contextWindow: capacity, reasoningEffort: 'medium' },
-      { provider: 'local-everyday', model: SECONDARY, name: 'Nighttime (128K)', contextWindow: 131072, reasoningEffort: 'medium' },
+      { provider: 'local-ollama', model: 'local-active', available: true, name, contextWindow: capacity, reasoningEffort: 'medium' },
+      { provider: 'local-everyday', model: SECONDARY, available: true, name: 'Nighttime (128K)', contextWindow: 131072, reasoningEffort: 'medium' },
     ]);
     assert.match((await f.remote(state)).stdout, /Verified/);
   }
@@ -277,7 +319,7 @@ test('offline picker checks use isolated settings without contacting a router', 
   assert.equal(expected[0].contextWindow, 131072);
   assert.equal(expected[0].reasoningEffort, 'low');
   state['llm-pi-ai'].providers.extra = {};
-  await assert.rejects(residentClientExpectations(state, { live: false }));
+  assert.deepEqual(await residentClientExpectations(state, { live: false }), expected);
 });
 
 test('web composition explicitly disables the built-in DeepSeek catalog', async () => {

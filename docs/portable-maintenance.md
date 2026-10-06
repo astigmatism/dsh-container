@@ -72,7 +72,9 @@ authoritative configuration; edits to an old checkout's `.env` or Compose files
 do not change it. Credentials and application data retain their original paths.
 The original Compose/environment inputs are copied privately for provenance;
 ordinary updates do not reread or modify the old checkout. Source-managed bind
-files are installed as versioned operational artifacts. Do not delete persistent
+files are installed as versioned operational artifacts. Deployment-local executable
+overrides require explicit digest-reviewed `--source-bind` adoption; see
+[optional residents and override adoption](optional-residents.md). Do not delete persistent
 data or credential directories when retiring the unused checkout.
 
 Review operational configuration changes locally and use the installed verifier

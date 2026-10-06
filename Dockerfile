@@ -56,6 +56,7 @@ RUN sed -i 's/\r$//' /opt/dsh-build/install-dsh-runtime.sh \
 # visible cancellation provenance, and native-file capability contracts with
 # exact source anchors so a future DSH layout change fails the image build
 # instead of silently dropping behavior.
+COPY scripts/patch-dsh-resident-availability.mjs /opt/dsh-build/patch-dsh-resident-availability.mjs
 COPY scripts/patch-dsh-llm-pi-ai.mjs /opt/dsh-build/patch-dsh-llm-pi-ai.mjs
 COPY scripts/patch-dsh-preset-policy.mjs /opt/dsh-build/patch-dsh-preset-policy.mjs
 COPY scripts/patch-dsh-session-pin.mjs /opt/dsh-build/patch-dsh-session-pin.mjs
@@ -71,6 +72,7 @@ COPY scripts/verify-sidebar-terminal.mjs /opt/dsh-build/verify-sidebar-terminal.
 COPY scripts/verify-sidebar-client.mjs /opt/dsh-build/verify-sidebar-client.mjs
 COPY scripts/verification-browser.mjs /opt/dsh-build/verification-browser.mjs
 COPY scripts/verification-onboarding.mjs /opt/dsh-build/verification-onboarding.mjs
+COPY scripts/verify-resident-availability.mjs /opt/dsh-build/verify-resident-availability.mjs
 COPY scripts/verify-resident-client.mjs /opt/dsh-build/verify-resident-client.mjs
 COPY scripts/verify-resident-onboarding.mjs /opt/dsh-build/verify-resident-onboarding.mjs
 COPY scripts/migrate-resident-models.mjs /opt/dsh-build/migrate-resident-models.mjs
@@ -92,6 +94,7 @@ COPY plugin/dsh-ego-adapter /opt/dsh-ego-adapter
 ENV DSH_EGO_ADAPTER_SOURCE=/opt/dsh-ego-adapter
 COPY scripts/patch-dsh-ego-browser.mjs /opt/dsh-build/patch-dsh-ego-browser.mjs
 RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
+    && node /opt/dsh-build/patch-dsh-resident-availability.mjs \
     && node /opt/dsh-build/patch-unrestricted-policy.mjs \
     && node /opt/dsh-build/verify-unrestricted-wire.mjs \
     && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
@@ -111,6 +114,8 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 
 COPY maintenance /opt/dsh-maintenance
+COPY scripts/verify-router-contract.mjs /opt/dsh-maintenance/verify-router-contract.mjs
+COPY seed/plugins/dsh-router-model-discovery.js /opt/dsh-maintenance/dsh-router-model-discovery.js
 LABEL io.dsh.maintenance.schema="1"
 # Maintenance fetches source with umask 077. Public image resources must stay
 # readable by arbitrary numeric deployment users, independently of source modes.

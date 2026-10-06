@@ -184,8 +184,9 @@ class RecoveryTests(Fixture):
              patch('maintenance.engine.run') as command:
             verify_recovered_release(self.manifest, self.model, self.root)
         gateway.assert_called_once_with(self.manifest, rows)
-        self.assertEqual(command.call_args.args[0][0:3], ['docker', 'exec', 'harness-container'])
-        self.assertIn('ai-router:11434/v1/models', command.call_args.args[0][-1])
+        self.assertEqual(command.call_args.args[0][0:4], ['docker', 'exec', '-i', 'harness-container'])
+        self.assertIn('await verifyConfiguredRoutes(await readSettings', command.call_args.kwargs['data'])
+        self.assertIn('data:text/javascript;base64,', command.call_args.kwargs['data'])
 
     def test_copy_assigns_ownership_before_checking_shared_filesystem_metadata(self):
         source = self.data / 'session'
@@ -372,6 +373,102 @@ class AdoptionTests(Fixture):
         with self.assertRaisesRegex(Failure, 'unmapped services'): self.prepare()
         self.args.owned_service = ['unrelated']
         self.prepare()
+
+
+class SourceBindTests(Fixture):
+    def setUp(self):
+        super().setUp()
+        from maintenance.common import digest
+        self.source = self.base / 'reviewed-source'
+        self.source.mkdir()
+        self.binds = []
+        mounts = []
+        for relative, target in [
+            ('seed/plugins/dsh-router-model-discovery.js', '/opt/dsh-seed/.dsh-plugins/dsh-router-model-discovery.js'),
+            *[(f'scripts/{name}.mjs', f'/opt/dsh-build/{name}.mjs') for name in
+              ('migrate-resident-models', 'verify-router-contract', 'verify-resident-client')]]:
+            candidate = self.source / relative
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_text('reviewed implementation')
+            old = self.base / ('override-' + candidate.name)
+            old.write_text('old Bedrock override')
+            mounts.append({'type': 'bind', 'source': str(old), 'target': target, 'read_only': True})
+            self.binds.append(f'application:{target}={relative}@{digest(old)}')
+        self.model['services']['application']['volumes'] = mounts
+        self.manifest['bindings'] = configuration_bindings(self.model)
+        self.save()
+
+    def plan(self):
+        from maintenance.source_binds import plan_binds
+        return plan_binds(self.binds, self.model, self.manifest['roles'], self.source)
+
+    def test_explicit_four_file_adoption_is_read_only_and_refreshes_from_pinned_source(self):
+        from maintenance.source_binds import register_binds
+        from maintenance.engine import stage_source_artifacts
+        before = recovery.inventory(self.base)
+        artifacts = self.plan()
+        self.assertEqual(before, recovery.inventory(self.base))
+        for mode in ('remote', 'external', 'managed'):
+            model, manifest = copy.deepcopy(self.model), copy.deepcopy(self.manifest)
+            manifest['mode'] = mode
+            register_binds(manifest, copy.deepcopy(artifacts))
+            release = self.root / 'releases' / mode
+            stage_source_artifacts(self.source, model, manifest, release)
+            for old, new in zip(self.model['services']['application']['volumes'], model['services']['application']['volumes']):
+                self.assertEqual(Path(old['source']).read_text(), 'old Bedrock override')
+                self.assertEqual(Path(new['source']).read_text(), 'reviewed implementation')
+                self.assertTrue(Path(new['source']).is_relative_to(release))
+            self.assertEqual((self.credentials / 'auth').read_text(), 'synthetic-$credential')
+
+    def test_digest_mismatch_ambiguity_and_unsafe_paths_fail_before_mutation(self):
+        from maintenance.source_binds import plan_binds, check_inputs
+        artifacts = self.plan()
+        old = Path(artifacts[0]['original'])
+        old.write_text('concurrent edit')
+        with self.assertRaisesRegex(Failure, 'changed'): check_inputs(artifacts)
+        with self.assertRaisesRegex(Failure, 'changed'): self.plan()
+        old.write_text('old Bedrock override')
+        for values in ([self.binds[0], self.binds[0]], [self.binds[0].replace('seed/plugins/', '../')]):
+            with self.assertRaises(Failure): plan_binds(values, self.model, self.manifest['roles'], self.source)
+        self.model['services']['application']['volumes'].append(copy.deepcopy(self.model['services']['application']['volumes'][0]))
+        with self.assertRaisesRegex(Failure, 'exact destination'): self.plan()
+
+    def test_changed_reviewed_bind_blocks_cutover(self):
+        updater = Updater(self.root, self.binds, self.source)
+        updater.prepare_source_binds()
+        release = self.candidate()
+        Path(updater.pending_binds[0]['original']).write_text('concurrent edit')
+        with patch('maintenance.engine.run') as command, self.assertRaisesRegex(Failure, 'changed'):
+            updater.cutover(release)
+        command.assert_not_called()
+
+    def test_failed_cutover_restores_overrides_settings_and_private_state(self):
+        from maintenance.source_binds import register_binds
+        from maintenance.engine import stage_source_artifacts
+        updater = Updater(self.root, self.binds, self.source)
+        updater.prepare_source_binds()
+        release = self.candidate()
+        manifest = json.loads((release / 'deployment.json').read_text())
+        model = json.loads((release / 'compose.json').read_text())
+        register_binds(manifest, copy.deepcopy(updater.pending_binds))
+        stage_source_artifacts(self.source, model, manifest, release)
+        manifest['bindings'] = configuration_bindings(model)
+        atomic_json(release / 'deployment.json', manifest)
+        atomic_json(release / 'compose.json', model)
+        def failed(*args, **kwargs):
+            (self.data / 'session').write_text('failed candidate history')
+            raise Failure('candidate verification failed')
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.probe_release', side_effect=failed), \
+             patch('maintenance.engine.verify_recovered_release'), self.assertRaises(Failure):
+            updater.cutover(release)
+        self.assertEqual(json.loads((self.root / 'compose.json').read_text()), self.model)
+        self.assertEqual((self.data / 'session').read_text(), 'original session')
+        self.assertEqual((self.credentials / 'auth').read_text(), 'synthetic-$credential')
+        for artifact in updater.pending_binds:
+            self.assertEqual(Path(artifact['original']).read_text(), 'old Bedrock override')
 
 
 class SourceTests(unittest.TestCase):

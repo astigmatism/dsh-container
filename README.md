@@ -304,6 +304,12 @@ versioned profile, so updates cannot repopulate its default model menu.
 Discovery failure leaves the file unchanged and the application available;
 provider verification still fails until the contract is synchronized. No manual
 production settings migration is required. The optional
+Nighttime is optional: a valid Daytime-only catalog starts normally. Missing
+Nighttime stays visible but unavailable; saved selections are retained and never
+fall back to another model. External providers and defaults, including Bedrock,
+are preserved. See [optional residents and override adoption](docs/optional-residents.md)
+for availability, upgrade and rollback behavior.
+
 `scripts/migrate-resident-models.mjs` uses the same synchronization for explicit
 local maintenance and keeps a private backup when it changes a file.
 

@@ -21,17 +21,8 @@ const parsed = document.toJS();
 const profile = Array.isArray(parsed);
 const state = profile ? Object.fromEntries(parsed.filter(row => row.id && row.config).map(row => [row.id, row.config])) : parsed;
 const initialState = JSON.stringify(state);
-const { synchronizeRouterSettings, applyOperation, RESIDENT_MODELS } = await loadRouterContract();
-const configured = state['llm-pi-ai']?.providers;
-const selected = state['agent-default-model'];
-const current = configured && Object.keys(configured).length === 2 &&
-  Object.entries(RESIDENT_MODELS).every(([name, model]) => {
-    const provider = configured[name];
-    return provider?.api === 'openai-responses' && provider.models?.length === 1 &&
-      provider.models[0].id === model && provider.models[0].maxTokens === null &&
-      provider.maxConcurrency === 1 && typeof provider.baseURL === 'string';
-  }) && selected && RESIDENT_MODELS[selected.provider] === selected.model &&
-  (selected.reasoningEffort === undefined || configured[selected.provider].models[0].reasoningEfforts?.[selected.reasoningEffort]);
+const { synchronizeRouterSettings, applyOperation, currentResidentSettings } = await loadRouterContract();
+const current = currentResidentSettings(state['llm-pi-ai'], state['agent-default-model']);
 try {
 await synchronizeRouterSettings({
   get: namespace => state[namespace],

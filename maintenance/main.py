@@ -73,8 +73,9 @@ def launch(root, dry_run=False, action='update'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('install', 'launch', 'update', 'verify', 'boot', 'self-test'))
+    parser.add_argument('action', choices=('install', 'launch', 'update', 'verify', 'boot', 'recover', 'rollback', 'self-test'))
     parser.add_argument('--manifest', type=Path)
+    parser.add_argument('--recovery-point', type=Path)
     parser.add_argument('--deployment-dir', type=Path)
     parser.add_argument('--project-directory', type=Path)
     parser.add_argument('--compose-file', action='append', default=[])
@@ -83,6 +84,8 @@ def main():
     parser.add_argument('--worker-action', choices=('update', 'boot', 'verify'), default='update')
     parser.add_argument('--portal-url', default=os.environ.get('SERVICE_PORTAL_URL', ''))
     parser.add_argument('--role', action='append', default=[])
+    parser.add_argument('--source-bind', action='append', default=[],
+                        help='Reviewed code bind: SERVICE:/target=repository/path@CURRENT_SHA256')
     parser.add_argument('--owned-service', action='append', default=[])
     parser.add_argument('--state-path', action='append', default=[])
     parser.add_argument('--external-path', action='append', default=[])
@@ -93,6 +96,7 @@ def main():
     modes.add_argument('--external-ollama', dest='mode', action='store_const', const='external')
     modes.add_argument('--managed-ollama', dest='mode', action='store_const', const='managed')
     args = parser.parse_args()
+    require(not args.source_bind or args.action in ('install', 'update'), '--source-bind requires reviewed-source install or update')
     if args.action == 'self-test':
         from maintenance import recovery, install
         require(callable(recovery.restore) and callable(install.prepare), 'Incomplete maintenance package')
@@ -119,7 +123,7 @@ def main():
             raise Failure('Maintenance interrupted; recovering the transaction')
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(sig, interrupted)
-        Updater(root).update(args.dry_run)
+        Updater(root, args.source_bind, Path(__file__).resolve().parent.parent).update(args.dry_run)
     else:
         import fcntl
         with (root / '.maintenance.lock').open('a') as lock:
@@ -128,6 +132,27 @@ def main():
             except BlockingIOError:
                 raise Failure('Maintenance is active; boot/verification must wait') from None
             updater = Updater(root)
+            if args.action == 'rollback':
+                require(not (root / 'transaction.json').exists(), 'An interrupted transaction must be recovered first')
+                status = read_json(root / 'maintenance-status.json')
+                point = args.recovery_point.resolve() if args.recovery_point else None
+                require(point and point.parent == root / 'recovery' and status.get('state') == 'ok'
+                        and str(point) == status.get('recovery_point'), 'Rollback requires the latest successful recovery point')
+                updater.preflight()
+                record = read_json(point / 'transaction.json')
+                require(record['point'] == str(point), 'Recovery record does not match the requested point')
+                if args.dry_run:
+                    print('Dry-run: latest successful recovery point selected; files and images would be restored and health reverified.')
+                    return
+                from maintenance.common import atomic_json
+                atomic_json(root / 'transaction.json', record)
+                updater.recover()
+                return
+            if args.action == 'recover':
+                require((root / 'transaction.json').exists(), 'No interrupted transaction to recover')
+                require(not args.dry_run, 'Use update --dry-run for read-only transaction inspection')
+                updater.recover()
+                return
             if (root / 'transaction.json').exists():
                 updater.recover()
                 raise Failure('Recovered interrupted maintenance; retry boot/verification')

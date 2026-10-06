@@ -22,13 +22,15 @@ const context = await browser.newContext();
 const page = await context.newPage();
 let sessionId;
 let originalDefault;
+let defaultSnapshot;
+let lastVerificationDefault;
 let fixture;
 let workspaceId;
 async function rpc(name, request = {}) {
   const method = name.includes('/') ? name : `session/${name}`;
   const response = await context.request.post(`${base}/api/${method}`, { data: {
     type: 'client-request', rpcId: randomUUID(), method,
-    payload: { args: name === 'modelCatalog' ? {} : name === 'list' ? { _request: request } : { request } },
+    payload: { args: name.startsWith('settings/') ? request : name === 'modelCatalog' ? {} : name === 'list' ? { _request: request } : { request } },
   } });
   assert.equal(response.status(), 200, `${name}: HTTP status`);
   const { result } = await response.json();
@@ -41,18 +43,23 @@ try {
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
   const catalog = await rpc('modelCatalog');
   originalDefault = catalog.default;
-  assert.deepEqual(catalog.failures, []);
-  assert.deepEqual(catalog.routableProviders.sort(), expected.map(row => row.provider).sort());
-  assert.deepEqual(catalog.groups.flatMap(group => group.models.map(model => ({ provider: group.id, model: model.id, name: model.name }))),
-    expected.map(({ provider, model, name }) => ({ provider, model, name })));
-  for (const group of catalog.groups) {
-    assert.equal(group.models[0].reasoning.defaultEffort, expected.find(row => row.provider === group.id).reasoningEffort);
-    assert.ok(group.models[0].reasoning.efforts.some(effort => effort.id === 'xhigh'));
+  defaultSnapshot = (await rpc('settings/describe')).namespaces.find(row => row.ns === 'agent-default-model');
+  const available = expected.filter(row => row.available);
+  for (const row of expected) {
+    const group = catalog.groups.find(group => group.id === row.provider);
+    assert.ok(group, `${row.provider} is represented`);
+    assert.equal(catalog.failures.some(f => f.id === row.provider), false);
+    assert.equal(catalog.routableProviders.includes(row.provider), row.available);
+    assert.deepEqual(group.models.map(model => ({ id: model.id, name: model.name, available: model.available !== false })),
+      [{ id: row.model, name: row.name, available: row.available }]);
+    if (row.available) assert.equal(group.models[0].reasoning?.defaultEffort, row.reasoningEffort);
   }
   fixture = await mkdtemp('/tmp/dsh-resident-verification-');
   const created = await rpc('workspace/create', { path: fixture });
   workspaceId = created.workspace.workspaceId;
   ({ sessionId } = await rpc('create', { workspaceId }));
+  const first = available[0];
+  lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: first.provider, model: first.model, reasoningEffort: first.reasoningEffort })).selected;
   // The sidebar omits empty drafts. Materialize this isolated conversation
   // before opening its session-specific model controls. Offline image tests
   // intentionally have no inference endpoint; only live mode requires replies.
@@ -88,7 +95,11 @@ try {
   const trigger = page.getByRole('button', { name: /^Select model/ });
   await trigger.click();
   await page.getByRole('menuitem', { name: /^Model/ }).click();
-  assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), expected.map(row => row.name));
+  for (const row of expected) {
+    const option = page.getByRole('menuitemradio', { name: row.name, exact: true });
+    await option.waitFor();
+    assert.equal(await option.isDisabled(), !row.available);
+  }
   await trigger.click();
   await trigger.click();
   await page.getByRole('menuitem', { name: /^Effort/ }).click();
@@ -97,9 +108,10 @@ try {
   console.log(`Live Harness catalog and rendered picker contain exactly ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
   // Model selection saves the next-request preference asynchronously. Verify
   // both choices and distinct reasoning settings survive browser reconnection.
-  for (const [index, choice] of expected.entries()) {
+  for (const [index, choice] of available.entries()) {
     const selection = { provider: choice.provider, model: choice.model, reasoningEffort: index ? 'high' : 'off' };
     assert.deepEqual((await rpc('selectModel', { sessionId, ...selection })).selected, selection);
+    lastVerificationDefault = selection;
     const deadline = Date.now() + 15000;
     while (!isDeepStrictEqual((await rpc('modelCatalog')).default, selection)) {
       assert.ok(Date.now() < deadline, 'model and reasoning default persisted'); await delay(100);
@@ -109,10 +121,10 @@ try {
     await dismissVerificationOnboarding(page);
     assert.deepEqual((await rpc('modelCatalog')).default, selection);
   }
-  console.log('Both model selections and separate reasoning preferences survived browser reconnection.');
+  console.log('Available model selections and separate reasoning preferences survived browser reconnection.');
   if (live) {
-    for (const [index, choice] of expected.entries()) {
-      await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' });
+    for (const [index, choice] of available.entries()) {
+      lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' })).selected;
       const marker = `RESIDENT_${index}_${randomUUID().slice(0, 8)}`;
       await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
         `Text-only model acceptance check. Do not use tools or access files. Reply with exactly ${marker} and no other text.` }] });
@@ -144,7 +156,16 @@ try {
 } finally {
   if (sessionId) {
     await rpc('cancel', { sessionId }).catch(() => {});
-    if (originalDefault) await rpc('selectModel', { sessionId, ...originalDefault });
+    // Restore raw user-layer fields, including an unavailable default. Do not
+    // overwrite a concurrent user's choice or route through selectModel here.
+    if (defaultSnapshot && lastVerificationDefault) {
+      const current = (await rpc('modelCatalog')).default;
+      if (isDeepStrictEqual(current, lastVerificationDefault)) {
+        await rpc('settings/mutate', { ns: 'agent-default-model', ops:
+          ['provider', 'model', 'reasoningEffort'].map(key => Object.hasOwn(defaultSnapshot.user ?? {}, key)
+            ? { op: 'set', path: [key], value: defaultSnapshot.user[key] } : { op: 'unset', path: [key] }) });
+      }
+    }
     await rpc('workspace/archiveSession', { sessionId }).catch(() => {});
   }
   if (workspaceId) await rpc('workspace/delete', { workspaceId }).catch(() => {});

@@ -16,26 +16,29 @@ export async function loadRouterContract() {
 }
 
 export async function verifyConfiguredRoutes(settings, { browser = false, primaryBrowser = false } = {}) {
-  const { resolveRouterEntry, routerMetadataOf, fetchRouterCatalog, requireRouterCapabilities, dshReasoningEfforts, RESIDENT_MODELS } = await loadRouterContract();
+  const { resolveRouterEntry, routerMetadataOf, fetchRouterCatalog, requireRouterCapabilities, dshReasoningEfforts, RESIDENT_MODELS, residentMetadata } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
   assert.ok(providers?.['local-ollama'], 'missing local-ollama provider');
-  assert.deepEqual(Object.keys(providers).sort(), Object.keys(RESIDENT_MODELS).sort(), 'Only Daytime and Nighttime providers may be selectable');
-  for (const [name, model] of Object.entries(RESIDENT_MODELS)) {
-    assert.deepEqual(providers[name].models?.map(row => row.id), [model], `${name} must expose exactly its resident model`);
-  }
   const selected = settings['agent-default-model'];
-  const names = browser ? [selected?.provider ?? 'local-ollama'] : ['local-ollama', ...('local-everyday' in providers ? ['local-everyday'] : [])];
+  // External defaults are not router contracts. Browser qualification still
+  // checks the required local Daytime route rather than contacting Bedrock.
+  const names = browser && Object.hasOwn(RESIDENT_MODELS, selected?.provider)
+    ? [selected.provider] : browser ? ['local-ollama'] : Object.keys(RESIDENT_MODELS);
   const catalogs = new Map();
   for (const name of names) {
     const provider = providers[name];
     assert.ok(provider && Array.isArray(provider.models) && provider.models.length, `provider ${name} has no configured models`);
+    assert.deepEqual(provider.models.map(row => row.id), [RESIDENT_MODELS[name]], `${name} must retain its stable identity`);
     assert.equal(provider.api, 'openai-responses', `provider ${name} is not using Responses`);
     if (!catalogs.has(provider.baseURL)) catalogs.set(provider.baseURL, await fetchRouterCatalog(provider.baseURL));
-    const models = browser ? provider.models.filter(model => model.id === (selected?.model ?? 'local-active')) : provider.models;
+    const resident = residentMetadata(catalogs.get(provider.baseURL), name);
+    assert.equal(provider.residentUnavailable === true, resident === null, `${name} availability is not synchronized`);
+    if (resident === null) continue;
+    const models = browser && Object.hasOwn(RESIDENT_MODELS, selected?.provider) ? provider.models.filter(model => model.id === (selected?.model ?? 'local-active')) : provider.models;
     assert.ok(models.length, 'selected browser model is not configured');
     for (const model of models) {
       const metadata = routerMetadataOf(resolveRouterEntry(catalogs.get(provider.baseURL), model.id));
-      requireRouterCapabilities(metadata, { browser: browser || (primaryBrowser && name === "local-ollama"), effort: (browser ? selected?.reasoningEffort : undefined) ?? provider.reasoning });
+      requireRouterCapabilities(metadata, { browser: browser || (primaryBrowser && name === "local-ollama"), effort: (browser && selected?.provider === name ? selected.reasoningEffort : undefined) ?? provider.reasoning });
       const label = `${name}/${model.id}`;
       assert.equal(model.contextWindow, metadata.context_window, `${label} context is not synchronized`);
       if (metadata.display_name) {
@@ -58,7 +61,7 @@ export async function readSettings(file) {
     text = await readFile(file.slice(0, -'settings.yaml'.length) + 'profiles/web/cordis.patch.yml', 'utf8');
   }
   if (file.endsWith('.json')) return JSON.parse(text);
-  const require = createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json');
+  const require = createRequire(`${process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh'}/package.json`);
   const value = require('yaml').parse(text, { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }] });
   if (!Array.isArray(value)) return value;
   const settings = {};
@@ -72,14 +75,18 @@ export async function residentClientExpectations(settings, { live = true } = {})
   if (live) await verifyConfiguredRoutes(settings, { primaryBrowser: true });
   const { RESIDENT_MODELS } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
-  assert.deepEqual(Object.keys(providers ?? {}).sort(), Object.keys(RESIDENT_MODELS).sort());
+  assert.ok(providers);
   return Object.entries(RESIDENT_MODELS).map(([provider, model]) => {
     const source = providers[provider];
     assert.deepEqual(source.models?.map(row => row.id), [model]);
     const configured = source.models[0];
     assert.ok(typeof configured.name === 'string' && configured.name.length > 0);
+    if (source.residentUnavailable === true) {
+      assert.equal(provider, "local-everyday");
+      return { provider, model, name: "Nighttime — unavailable", available: false };
+    }
     assert.ok(Number.isSafeInteger(configured.contextWindow) && configured.contextWindow > 0);
-    return { provider, model, name: configured.name, contextWindow: configured.contextWindow,
+    return { provider, model, available: true, name: configured.name, contextWindow: configured.contextWindow,
       reasoningEffort: source.reasoning };
   });
 }

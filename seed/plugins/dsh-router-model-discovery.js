@@ -1,4 +1,4 @@
-/** Synchronize two resident model choices from public router metadata.
+/** Synchronize resident model availability from public router metadata.
  * Coding retains local-active for existing agents; everyday uses its real ID.
  */
 
@@ -121,9 +121,53 @@ function ordered(value) {
   return Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])]));
 }
 
+/** Absence is meaningful only in a structurally valid, nonempty catalog. */
+export function validateRouterCatalog(body) {
+  if (!Array.isArray(body?.data) || !body.data.length) throw new Error("router discovery has no model catalog");
+  const ids = new Set();
+  for (const row of body.data) {
+    if (!plainObject(row) || !nonEmptyString(row.id)) throw new Error("router discovery has an invalid model row");
+    if (ids.has(row.id)) throw new Error(`ambiguous router model identity: ${row.id}`);
+    ids.add(row.id);
+    const aliases = row.x_ollama_router?.aliases;
+    if (aliases !== undefined && (!Array.isArray(aliases) || aliases.some(id => !nonEmptyString(id)))) {
+      throw new Error("router discovery has invalid aliases");
+    }
+  }
+}
+
+/** Only a missing optional identity is availability, never a metadata failure. */
+export function residentMetadata(body, provider) {
+  let entry;
+  try { entry = resolveRouterEntry(body, RESIDENT_MODELS[provider]); }
+  catch (error) {
+    if (provider === "local-everyday" && error.code === "ROUTER_MODEL_NOT_FOUND") return null;
+    throw error;
+  }
+  return routerMetadataOf(entry);
+}
+
+/** Stored transport-outage fallback; unrelated providers/defaults are not owned here. */
+export function currentResidentSettings(settings, selected) {
+  const providers = settings?.providers;
+  return Object.entries(RESIDENT_MODELS).every(([name, id]) => {
+    const p = providers?.[name], m = p?.models?.[0];
+    if (!p || p.api !== "openai-responses" || !nonEmptyString(p.baseURL) ||
+        p.models?.length !== 1 || m.id !== id) return false;
+    if (p.residentUnavailable === true) return name === "local-everyday";
+    return positiveInteger(m.contextWindow) && (m.maxTokens === null || positiveInteger(m.maxTokens)) &&
+      positiveInteger(p.maxConcurrency) && Array.isArray(m.input) && m.input.includes("text") &&
+      (m.reasoningEfforts === false || plainObject(m.reasoningEfforts));
+  }) && (!selected || !Object.hasOwn(RESIDENT_MODELS, selected.provider) ||
+    (RESIDENT_MODELS[selected.provider] === selected.model &&
+      (providers[selected.provider].residentUnavailable === true || selected.reasoningEffort === undefined ||
+       Object.hasOwn(providers[selected.provider].models[0].reasoningEfforts || {}, selected.reasoningEffort)))) &&
+    selected?.provider !== "local-ollama-256k";
+}
+
 /** Resolve singleton aliases, canonical-only catalogs and explicit alias rows. */
 export function resolveRouterEntry(body, modelId) {
-  if (!Array.isArray(body?.data) || !body.data.length) throw new Error("router discovery has no model catalog");
+  validateRouterCatalog(body);
   const exact = body.data.filter(entry => entry?.id === modelId);
   const targets = body.data.filter(entry => entry?.id !== modelId && entry?.x_ollama_router?.alias !== true && entry?.x_ollama_router?.aliases?.includes(modelId));
   if (exact.length > 1 || targets.length > 1) throw new Error(`ambiguous router model identity: ${modelId}`);
@@ -368,7 +412,7 @@ export async function synchronizeRouterSettings(settingsService, providers = DEF
   }
 }
 
-/** Validate both residents before atomically replacing the selectable catalog.
+/** Validate all advertised residents before updating only managed providers.
  * Credential storage and all settings outside model/provider selection remain
  * untouched. Stable local-active IDs keep existing Daytime sessions routable.
  */
@@ -377,7 +421,6 @@ async function synchronizeResidentSettings(settingsService) {
   if (!plainObject(initial?.providers?.["local-ollama"])) throw new Error("Missing local-ollama provider");
   const stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user ?? initial;
   const next = {};
-  const metadataByProvider = {};
   const catalogs = new Map();
   for (const [name, modelId] of Object.entries(RESIDENT_MODELS)) {
     const resolved = initial.providers[name] ?? initial.providers["local-ollama"];
@@ -385,30 +428,41 @@ async function synchronizeResidentSettings(settingsService) {
     const baseURL = resolved.baseURL;
     if (!nonEmptyString(baseURL)) throw new Error(`provider ${name} has no baseURL`);
     if (!catalogs.has(baseURL)) catalogs.set(baseURL, await fetchRouterCatalog(baseURL));
-    const metadata = routerMetadataOf(resolveRouterEntry(catalogs.get(baseURL), modelId));
+    const metadata = residentMetadata(catalogs.get(baseURL), name);
+    if (metadata === null) {
+      const existing = stored.providers?.[name] ?? initial.providers[name];
+      next[name] = existing ? { ...existing, residentUnavailable: true } : {
+        ...Object.fromEntries(["apiKeyEnv", "headers", "streamIdleTimeoutMs"].filter(key => source[key] !== undefined).map(key => [key, source[key]])),
+        api: "openai-responses", baseURL, displayName: "Nighttime", residentUnavailable: true,
+        models: [{ id: modelId, name: "Nighttime" }],
+      };
+      continue;
+    }
     requireRouterCapabilities(metadata, { effort: resolved.reasoning });
-    metadataByProvider[name] = metadata;
     const previousModel = source.models?.find(model => model.id === modelId) ?? source.models?.[0] ?? {};
     const proposed = { providers: { [name]: {
-      ...source, api: "openai-responses", baseURL,
+      ...source, api: "openai-responses", baseURL, residentUnavailable: false,
       models: [{ ...previousModel, id: modelId }],
     } } };
     for (const operation of capabilityOps(proposed, name, modelId, metadata)) applyOperation(proposed, operation);
     next[name] = proposed.providers[name];
   }
   const selected = readSettings(settingsService, "agent-default-model");
+  const retired = initial.providers["local-ollama-256k"];
+  const ownedRetired = retired?.baseURL === initial.providers["local-ollama"].baseURL &&
+    retired.models?.length === 1 && retired.models[0].id === "local-active";
   let nextSelection;
-  if (plainObject(selected) && RESIDENT_MODELS[selected.provider] !== selected.model) {
-    const provider = selected.provider === "local-everyday" ? "local-everyday" : "local-ollama";
-    nextSelection = { ...selected, provider, model: RESIDENT_MODELS[provider] };
-    const efforts = dshReasoningEfforts(metadataByProvider[provider].reasoning);
-    if (nextSelection.reasoningEffort !== undefined && !efforts?.[nextSelection.reasoningEffort]) {
-      nextSelection.reasoningEffort = efforts?.medium ? "medium" : "off";
-    }
+  if (ownedRetired && selected?.provider === "local-ollama-256k") {
+    nextSelection = { ...selected, provider: "local-ollama", model: "local-active" };
+  } else if (selected?.provider === "local-ollama" &&
+      ["qwen3.8-27b-q8_0", "daytime", "daytime-swift"].includes(selected.model)) {
+    nextSelection = { ...selected, model: "local-active" };
   }
-  if (!sameJson(stored.providers, next)) {
-    await settingsService.mutate("llm-pi-ai", [{ op: "set", path: ["providers"], value: next }]);
-  }
+  // A path operation avoids replacing external providers or materializing their defaults.
+  const operations = Object.entries(next).filter(([name, value]) => !sameJson(stored.providers?.[name], value))
+    .map(([name, value]) => ({ op: "set", path: ["providers", name], value }));
+  if (ownedRetired) operations.push({ op: "unset", path: ["providers", "local-ollama-256k"] });
+  if (operations.length) await settingsService.mutate("llm-pi-ai", operations);
   if (nextSelection) {
     await settingsService.mutate("agent-default-model", Object.entries(nextSelection)
       .filter(([key, value]) => !sameJson(selected[key], value))

@@ -126,6 +126,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/suggestions.js
     node --check seed/plugins/dsh-web-search-free.js
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
+    node --check scripts/patch-dsh-resident-availability.mjs
+    node --check scripts/verify-resident-availability.mjs
     node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check scripts/patch-unrestricted-policy.mjs
     node --check scripts/verify-unrestricted-wire.mjs
@@ -340,6 +342,7 @@ if [ "$build" -eq 1 ]; then
   '
 
   docker run --rm --network none --entrypoint node "$harness_image" /opt/dsh-build/verify-router-startup.mjs
+  docker run --rm --network none --entrypoint node "$harness_image" /opt/dsh-build/verify-router-startup.mjs --daytime-only
 
   # Boot smoke check: actually import the plugin tree by starting `dsh web`
   # from the image seed in a throwaway DSH_HOME and require a stable HTTP

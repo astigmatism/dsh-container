@@ -9,6 +9,7 @@ import shutil
 from .common import Failure, LABEL, REPOSITORY, SCHEMA, atomic_json, read_json, run
 from .contract import SCRIPT, require, validate_config, validate_deployment, configuration_bindings, portal_services
 from .engine import Updater, install_labels, validate_engine, validate_containers
+from .source_binds import plan_binds, check_inputs, validate_resident_binds
 
 STATE_TARGETS = {'/data/dsh', '/data/gateway', '/run/dsh-backend-auth', '/app/data', '/app/runtime'}
 SYSTEM_TARGETS = {'/var/run/docker.sock', '/etc/passwd', '/etc/group'}
@@ -118,6 +119,7 @@ def prepare(args, source):
     # Future updates must not depend on the old checkout continuing to exist.
     inputs = [str(root / 'config-inputs')]
     external = {str(Path(p).resolve()) for p in args.external_path}
+    explicit_binds = plan_binds(getattr(args, "source_bind", []), model, roles, source)
     source_artifacts = []
     model_stores = []
     for service, config in model['services'].items():
@@ -126,7 +128,15 @@ def prepare(args, source):
             path = Path(mount['source']).resolve()
             target = mount['target']
             require(path.exists(), 'A deployment bind source is missing')
-            if target in STATE_TARGETS:
+            adopted = next((a for a in explicit_binds if a['service'] == service and a['target'] == target), None)
+            if adopted:
+                artifact = copy.deepcopy(adopted)
+                installed = str(root / 'artifacts' / artifact['relative'])
+                artifact['installed'] = installed
+                source_artifacts.append(artifact)
+                inputs.append(str(path))
+                mount['source'] = installed
+            elif target in STATE_TARGETS:
                 state.append(str(path))
             elif target in MODEL_TARGETS:
                 model_stores.append(str(path))
@@ -189,6 +199,7 @@ def prepare(args, source):
     # Source/configuration inputs are captured but never rewritten by adoption.
     # Refuse a state root that includes another service or operational bundle.
     require(all(not root.is_relative_to(Path(p)) for p in manifest['state_paths']), 'Operational directory overlaps application state')
+    validate_resident_binds(model, manifest)
     validate_config(model, root, script_root=source)
     # Verify the original deployment identity before writing an operational file.
     ids = run([*command, 'ps', '-a', '-q']).split()
@@ -204,6 +215,7 @@ def prepare(args, source):
     if args.dry_run:
         print('Dry-run: adoption inputs, project identity, mount classifications and Portal reachability validated. No files or services changed.')
         return
+    check_inputs(explicit_binds)
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     os.chmod(root, 0o700)
     (root / 'scripts').mkdir(mode=0o700, exist_ok=True)

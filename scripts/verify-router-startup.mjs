@@ -16,6 +16,7 @@ const tokenIndexPath = path.join(runtime, 'storages/dsh_token_index.json');
 const tokenIndex = JSON.stringify({ unit: { name: 'dsh_token_index', version: 1 },
   global: { v: 1, data: { tz: 'UTC', foldVersion: 1, builtAt: 1 } }, tables: { shards: {} } });
 const primaryId = 'qwen3.8-27b-q8_0';
+const daytimeOnly = process.argv.includes('--daytime-only');
 const secondaryId = 'qwen3.8-27b-abliterated-q6_k';
 const entries = [primaryId, secondaryId].map((id, index) => ({ id, x_ollama_router: {
   schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: id,
@@ -33,7 +34,21 @@ const entries = [primaryId, secondaryId].map((id, index) => ({ id, x_ollama_rout
     }]))
   }
 }}));
-const server = http.createServer((_request, response) => {
+const nighttimeEntry = entries[1];
+if (daytimeOnly) entries.pop();
+const inferenceRequests = [];
+const server = http.createServer((request, response) => {
+  if (daytimeOnly && request.url.startsWith('/__fixture/')) {
+    if (request.url === '/__fixture/night/on' && entries.length === 1) entries.push(nighttimeEntry);
+    if (request.url === '/__fixture/night/off') entries.splice(1);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(inferenceRequests)); return;
+  }
+  if (request.method === 'POST') {
+    let body = ''; request.on('data', chunk => { body += chunk; });
+    request.on('end', () => { inferenceRequests.push(JSON.parse(body).model); response.writeHead(503); response.end('synthetic inference unavailable'); });
+    return;
+  }
   response.writeHead(200, { 'content-type': 'application/json' });
   response.end(JSON.stringify({ data: entries }));
 });
@@ -106,6 +121,12 @@ try {
       'unrelated-fixture': { ...structuredClone(provider), baseURL: 'http://unrelated.invalid/v1', reasoning: 'low' }
     }}
   };
+  if (daytimeOnly) {
+    settings['llm-pi-ai'].providers['amazon-bedrock'] = { apiKeyEnv: 'STARTUP_FIXTURE_KEY',
+      models: [{ id: 'anthropic.claude-3-haiku-20240307-v1:0' }] };
+    settings['agent-default-model'] = { provider: 'amazon-bedrock', model: 'anthropic.claude-3-haiku-20240307-v1:0' };
+  }
+  const expectedDefault = daytimeOnly ? structuredClone(settings['agent-default-model']) : { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off' };
   const settingsPath = path.join(runtime, 'settings.yaml');
   await fs.writeFile(settingsPath, JSON.stringify(settings), { mode: 0o600 });
   start();
@@ -118,11 +139,12 @@ try {
       await verifyConfiguredRoutes(current, { primaryBrowser: true });
       assert.ok(current['llm-pi-ai'].providers['local-everyday']);
       assert.equal(current['llm-pi-ai'].providers['local-ollama-256k'], undefined);
-      assert.deepEqual(current['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off' });
-      assert.deepEqual(Object.keys(current['llm-pi-ai'].providers).sort(), ['local-everyday', 'local-ollama']);
+      assert.deepEqual(current['agent-default-model'], expectedDefault);
+      assert.deepEqual(Object.keys(current['llm-pi-ai'].providers).sort(), [...(daytimeOnly ? ['amazon-bedrock'] : []), 'local-everyday', 'local-ollama', 'unrelated-fixture']);
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].reasoning, 'medium');
-      assert.equal(current['llm-pi-ai'].providers['local-everyday'].reasoning, 'medium');
+      if (!daytimeOnly) assert.equal(current['llm-pi-ai'].providers['local-everyday'].reasoning, 'medium');
+      else assert.equal(current['llm-pi-ai'].providers['local-everyday'].residentUnavailable, true);
       const migratedPath = path.join(runtime, 'profiles/web/cordis.patch.yml');
       assert.equal((await fs.stat(migratedPath)).mode & 0o777, 0o600);
       await fs.access(path.join(runtime, '.container-settings-v1.json'));
@@ -138,7 +160,16 @@ try {
   }
   if (lastError) throw lastError;
   await authenticate();
-  await rpc('settings/update', { ns: 'agent-default-model', patch: { reasoningEffort: 'low' } });
+  if (daytimeOnly) {
+    const result = await exec(process.execPath, ['/opt/dsh-build/verify-resident-availability.mjs'], {
+      env: { ...process.env, DSH_PROFILE_ROOT: path.join(runtime, 'profiles/web'), DSH_VERIFY_URL: webBase,
+        DSH_BOOT_TOKEN: (await fs.readFile(path.join(runtime, 'web-launch-token'), 'utf8')).trim(),
+        DSH_AVAILABILITY_FIXTURE: baseURL.replace(/\/v1$/, '') },
+      timeout: 240000,
+    });
+    process.stdout.write(result.stdout);
+  }
+  if (!daytimeOnly) await rpc('settings/update', { ns: 'agent-default-model', patch: { reasoningEffort: 'low' } });
   await rpc('settings/update', { ns: 'better-sidebar', patch: { tabsEnabled: { subagent: false, sidechat: true } } });
   const retained = await rpc('settings/describe');
   const model = retained.namespaces.find(row => row.ns === 'agent-default-model').value;

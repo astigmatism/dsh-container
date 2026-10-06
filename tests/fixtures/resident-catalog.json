@@ -1,0 +1,159 @@
+{
+  "data": [
+    {
+      "id": "qwen3.8-27b-q8_0",
+      "object": "model",
+      "x_ollama_router": {
+        "schema_version": 2,
+        "complete": true,
+        "warnings": [],
+        "alias": false,
+        "upstream_model": "qwen3.8-27b-q8_0",
+        "aliases": [
+          "local-active"
+        ],
+        "display_name": "Primary",
+        "health": {
+          "available": true,
+          "status": 200
+        },
+        "context_window": 131072,
+        "active_request_limit": 1,
+        "output_policy": "unrestricted",
+        "max_output_tokens": null,
+        "default_output_tokens": null,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools",
+          "vision"
+        ],
+        "reasoning": {
+          "supported": true,
+          "default": "default",
+          "efforts": {
+            "default": "default",
+            "off": "none",
+            "low": "low",
+            "medium": "medium",
+            "xhigh": "xhigh"
+          },
+          "aliases": {
+            "none": "off",
+            "minimal": "low",
+            "high": "xhigh",
+            "max": "xhigh"
+          },
+          "output_limit_policy": "reject",
+          "absolute_max_output_tokens": null,
+          "per_effort": {
+            "default": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "off": {
+              "enabled": false,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "low": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "medium": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "xhigh": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "qwen3.8-27b-abliterated-q6_k",
+      "object": "model",
+      "x_ollama_router": {
+        "schema_version": 2,
+        "complete": true,
+        "warnings": [],
+        "alias": false,
+        "upstream_model": "qwen3.8-27b-abliterated-q6_k",
+        "aliases": [],
+        "display_name": "Secondary",
+        "health": {
+          "available": true,
+          "status": 200
+        },
+        "context_window": 131072,
+        "active_request_limit": 1,
+        "output_policy": "unrestricted",
+        "max_output_tokens": null,
+        "default_output_tokens": null,
+        "input_modalities": [
+          "text"
+        ],
+        "capabilities": [
+          "completion",
+          "thinking"
+        ],
+        "reasoning": {
+          "supported": true,
+          "default": "default",
+          "efforts": {
+            "default": "default",
+            "off": "none",
+            "low": "low",
+            "medium": "medium",
+            "xhigh": "xhigh"
+          },
+          "aliases": {
+            "none": "off",
+            "minimal": "low",
+            "high": "xhigh",
+            "max": "xhigh"
+          },
+          "output_limit_policy": "reject",
+          "absolute_max_output_tokens": null,
+          "per_effort": {
+            "default": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "off": {
+              "enabled": false,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "low": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "medium": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            },
+            "xhigh": {
+              "enabled": true,
+              "default_output_tokens": null,
+              "max_output_tokens": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

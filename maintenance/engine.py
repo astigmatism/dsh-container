@@ -1,4 +1,5 @@
 """One update transaction for all topologies; no deployment-target constants."""
+import base64
 import copy
 import fcntl
 import json
@@ -14,6 +15,7 @@ import uuid
 from .common import Failure, LABEL, REPOSITORY, atomic_json, atomic_text, compose_command, digest, inspect, read_json, run, sync_path, sync_directory
 from .contract import SCRIPT, require, validate_config, validate_manifest, validate_deployment, configuration_bindings, portal_services, verify_portal
 from . import recovery
+from .source_binds import source_file, plan_binds, check_inputs, register_binds, validate_resident_binds
 
 PACKAGE = Path(__file__).resolve().parent
 
@@ -99,12 +101,21 @@ def verify_recovered_release(manifest, model, root):
     by_service = probe_containers(manifest, model, root)
     probe_gateway(manifest, by_service)
     harness = next(s for s, role in manifest['roles'].items() if role == 'harness')
-    run(['docker', 'exec', by_service[harness]['Id'], 'node', '-e',
-         "fetch('http://ai-router:11434/v1/models',{signal:AbortSignal.timeout(15000)})"
-         ".then(async r=>{if(!r.ok)throw Error('model discovery failed');"
-         "const body=await r.json();if(!Array.isArray(body.data)||!body.data.length)"
-         "throw Error('model discovery empty')})"
-         ".catch(()=>process.exit(1))"])
+    # Supply the current shared contract over stdin; never execute an old
+    # bind-mounted verifier or assume a hard-coded router endpoint.
+    verifier = PACKAGE / 'verify-router-contract.mjs'
+    plugin = PACKAGE / 'dsh-router-model-discovery.js'
+    if not verifier.exists():
+        verifier = PACKAGE.parent / 'scripts/verify-router-contract.mjs'
+        plugin = PACKAGE.parent / 'seed/plugins/dsh-router-model-discovery.js'
+    code = verifier.read_text()
+    start = code.index('export async function loadRouterContract()')
+    end = code.index('export async function verifyConfiguredRoutes', start)
+    module = 'data:text/javascript;base64,' + base64.b64encode(plugin.read_bytes()).decode()
+    code = code[:start] + 'export async function loadRouterContract() { return import(' + json.dumps(module) + '); }\n' + code[end:]
+    code += "\nawait verifyConfiguredRoutes(await readSettings('/data/dsh/settings.yaml'), {primaryBrowser: true});\n"
+    run(['docker', 'exec', '-i', by_service[harness]['Id'], 'node', '--input-type=module'],
+        data=code, operation='Recovered resident availability verification')
 
 
 def probe_release(manifest, model, root, *, portal=True):
@@ -173,21 +184,28 @@ def install_labels(model, manifest, runner):
 def stage_source_artifacts(source, model, manifest, release_dir):
     """Only files explicitly imported from repository source are refreshed."""
     for artifact in manifest.get('source_artifacts', []):
-        src = source / artifact['relative']
-        require(src.is_file() and not src.is_symlink() and src.resolve().is_relative_to(source.resolve()),
-                'Release is missing a required source-managed operational artifact')
+        src = source_file(source, artifact['relative'])
+        check_inputs([artifact])
         destination = release_dir / 'artifacts' / artifact['relative']
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         shutil.copy2(src, destination)
-        for service in model['services'].values():
+        matched = 0
+        for name, service in model['services'].items():
             for mount in service.get('volumes', []):
-                if mount.get('source') == artifact['installed']:
+                if (mount.get('source') == artifact['installed'] and
+                    ('service' not in artifact or (name == artifact['service'] and mount.get('target') == artifact['target']))):
                     mount['source'] = str(destination)
+                    matched += 1
+        require(matched == 1 if 'service' in artifact else matched > 0, 'Source artifact mount is missing or ambiguous')
         artifact['installed'] = str(destination)
+        artifact.pop('adoption_sha256', None)
 
 
 class Updater:
-    def __init__(self, root):
+    def __init__(self, root, source_binds=(), reviewed_source=None):
+        self.source_binds = source_binds
+        self.reviewed_source = reviewed_source or PACKAGE.parent
+        self.pending_binds = []
         self.root = Path(root).resolve()
         self.manifest = read_json(self.root / 'deployment.json')
         self.model = read_json(self.root / 'compose.json')
@@ -211,6 +229,12 @@ class Updater:
             require(not (self.root / 'transaction.json').exists(), 'Interrupted maintenance requires recovery before another update')
             print('Dry-run: validated deployment, state paths and Portal reachability. Would fetch pinned main, build, verify, snapshot, deploy and verify Portal capability; rollback on failure.')
 
+    def prepare_source_binds(self):
+        self.pending_binds = plan_binds(self.source_binds, self.model, self.manifest['roles'], self.reviewed_source)
+        proposed = copy.deepcopy(self.manifest)
+        register_binds(proposed, copy.deepcopy(self.pending_binds))
+        validate_resident_binds(self.model, proposed)
+
     def build_candidate(self):
         source = Path(tempfile.mkdtemp(prefix='dsh-release-'))
         try:
@@ -219,6 +243,8 @@ class Updater:
             candidate = copy.deepcopy(self.model)
             manifest = copy.deepcopy(self.manifest)
             manifest['revision'] = revision
+            register_binds(manifest, copy.deepcopy(self.pending_binds))
+            validate_resident_binds(candidate, manifest)
             images = {}
             # A rebuild of the same source can produce a different OCI index
             # (for example, new BuildKit attestations). Reusing its tag can
@@ -239,6 +265,8 @@ class Updater:
             # Offline runtime checks do not mount production state.
             run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node',
                  images['harness'], '/opt/dsh-build/verify-router-startup.mjs'], operation='Candidate router startup qualification')
+            run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node',
+                 images['harness'], '/opt/dsh-build/verify-router-startup.mjs', '--daytime-only'], operation='Candidate optional resident qualification')
             run(['docker', 'run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node',
                  images['gateway'], '--check', '/opt/dsh-gateway/server.mjs'])
             release_dir = self.root / 'releases' / (revision + '-' + uuid.uuid4().hex[:8])
@@ -261,6 +289,8 @@ class Updater:
             manifest['images'] = {s: c['image'] for s, c in candidate['services'].items()}
             manifest['bindings'] = configuration_bindings(candidate)
             shutil.copytree(source / 'maintenance', release_dir / 'maintenance', ignore=shutil.ignore_patterns('__pycache__'))
+            shutil.copy2(source / 'scripts/verify-router-contract.mjs', release_dir / 'maintenance/verify-router-contract.mjs')
+            shutil.copy2(source / 'seed/plugins/dsh-router-model-discovery.js', release_dir / 'maintenance/dsh-router-model-discovery.js')
             (release_dir / 'scripts').mkdir(mode=0o700)
             shutil.copy2(source / SCRIPT, release_dir / SCRIPT)
             atomic_json(release_dir / 'compose.json', candidate)
@@ -299,6 +329,7 @@ class Updater:
         return previous, bool(rows)
 
     def cutover(self, release, *, previous_root=None, previous_model=None):
+        check_inputs(self.pending_binds + self.manifest.get("source_artifacts", []))
         # Recheck after potentially long builds, before any service interruption.
         # A concurrent operator edit is never silently overwritten.
         require(read_json(self.root / 'deployment.json') == self.manifest
@@ -311,7 +342,7 @@ class Updater:
         old_model, existed = self.old_model(old_root, previous_model or self.model)
         point = self.root / 'recovery' / (time.strftime('%Y%m%dT%H%M%S-') + uuid.uuid4().hex[:8])
         point.mkdir(parents=True, mode=0o700)
-        paths = list(dict.fromkeys(self.manifest['state_paths'] + self.manifest['input_paths']
+        paths = list(dict.fromkeys([a['original'] for a in self.pending_binds] + self.manifest['state_paths'] + self.manifest['input_paths']
                 + self.manifest['artifact_paths'] + [str(self.root / p) for p in ('compose.json', 'deployment.json', SCRIPT, 'maintenance', 'runner-image', 'start-after-network.sh')]))
         # Never snapshot a parent and its child twice.
         paths = [p for p in paths if not any(Path(p).is_relative_to(Path(q)) and p != q for q in paths)]
@@ -330,6 +361,7 @@ class Updater:
             recovery.capture(point, paths, helper_image=transaction['maintenance_image'])
             transaction['phase'] = 'captured'
             atomic_json(self.root / 'transaction.json', transaction)
+            atomic_json(point / 'transaction.json', transaction)
             for name in ('maintenance',):
                 destination = self.root / name
                 if destination.exists():
@@ -412,6 +444,7 @@ class Updater:
     def update(self, dry_run=False):
         if dry_run:
             self.preflight(True)
+            self.prepare_source_binds()
             return
         with (self.root / '.maintenance.lock').open('a') as lock:
             try:
@@ -422,6 +455,7 @@ class Updater:
                 self.recover()
                 raise Failure('Recovered interrupted maintenance; retry the update explicitly')
             self.preflight()
+            self.prepare_source_binds()
             self.status('building')
             try:
                 release = self.build_candidate()

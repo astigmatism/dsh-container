@@ -44,6 +44,13 @@ export async function installVerificationOnboarding(page, base) {
       result: { ok: true, value: { ...virtualView(view), revision: view.revision + 1 } },
     } });
   });
+  // Notices mount asynchronously and may appear after an explicit dismissal
+  // check, while Playwright is already trying to click the underlying UI.
+  // Handle them during actionability checks, within this browser only.
+  for (const name of ['Preview Notice', 'Add an API key to get started']) {
+    await page.addLocatorHandler(page.getByRole('dialog', { name, exact: true }),
+      () => dismissVerificationOnboarding(page));
+  }
 }
 
 export async function dismissVerificationOnboarding(page) {

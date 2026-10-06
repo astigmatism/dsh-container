@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
-import { launchVerificationBrowser } from './verification-browser.mjs';
+import { launchVerificationBrowser, verificationSessionRow } from './verification-browser.mjs';
 import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
@@ -75,7 +75,7 @@ try {
   await rpc('rename', { sessionId, title });
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   const group = page.getByRole('treeitem').filter({ has: page.getByText(created.workspace.title, { exact: true }) }).first();
-  const sessionRow = page.getByText(title, { exact: true });
+  const sessionRow = verificationSessionRow(page, title);
   // Workspace restoration can expand the most recent group while the browser
   // connects. Re-read its state instead of racing that restoration with one
   // blind toggle, and click the label rather than the row's action buttons.

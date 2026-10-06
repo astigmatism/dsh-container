@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { launchVerificationBrowser } from './verification-browser.mjs';
+import { launchVerificationBrowser, verificationSessionRow } from './verification-browser.mjs';
 import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
 const profile = process.env.DSH_PROFILE_ROOT;
 assert.match(profile ?? '', /^\/tmp\/dsh-router-startup-[^/]+\/runtime\/profiles\/web$/);
@@ -79,7 +79,7 @@ try {
   await rpc('session/rename', { sessionId, title });
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await until(async () => {
-    const row = page.getByText(title, { exact: true });
+    const row = verificationSessionRow(page, title);
     if (await row.isVisible()) { await clickVerificationTarget(page, row); return true; }
     const group = page.getByRole('treeitem').filter({ has: page.getByText(workspace.workspace.title, { exact: true }) }).first();
     if (await group.count() && await group.getAttribute('aria-expanded') === 'false') {

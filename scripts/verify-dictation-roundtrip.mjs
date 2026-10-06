@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { launchVerificationBrowser } from './verification-browser.mjs';
+import { launchVerificationBrowser, verificationSessionRow } from './verification-browser.mjs';
 
 assert.ok(process.env.DSH_BOOT_TOKEN, 'Run only against a disposable boot fixture');
 const temporary = await mkdtemp('/tmp/dsh-dictation-roundtrip-');
@@ -76,7 +76,7 @@ try {
   await rpc('session/rename', { sessionId, title });
   await page.reload({ waitUntil: 'domcontentloaded' });
   const group = page.getByRole('treeitem').filter({ has: page.getByText(workspace.title, { exact: true }) }).first();
-  const sessionRow = page.getByText(title, { exact: true });
+  const sessionRow = verificationSessionRow(page, title);
   const navigationDeadline = Date.now() + 30000;
   while (true) {
     assert.ok(Date.now() < navigationDeadline, 'dictation fixture conversation is visible');

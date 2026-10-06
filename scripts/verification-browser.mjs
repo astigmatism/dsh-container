@@ -2,6 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/** Restored active sessions also display their title in the breadcrumb. */
+export function verificationSessionRow(page, title) {
+  return page.getByLabel('Sessions', { exact: true }).getByText(title, { exact: true });
+}
+
 /** Each service UID needs its own Chromium home, including crashpad and caches. */
 export async function launchVerificationBrowser(chromium, { args = [] } = {}) {
   const home = await mkdtemp(join(process.env.DSH_BROWSER_HOME || tmpdir(), 'dsh-browser-check-'));

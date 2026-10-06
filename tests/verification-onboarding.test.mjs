@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { installVerificationOnboarding, clickVerificationTarget } from '../scripts/verification-onboarding.mjs';
+import { verificationSessionRow } from '../scripts/verification-browser.mjs';
 
 let chromium;
 try {
@@ -29,7 +30,8 @@ for (const credentials of [false, true]) for (const alreadyVisible of [false, tr
         return;
       }
       res.setHeader('content-type', 'text/html');
-      res.end(`<button id="target" disabled onclick="this.textContent='Clicked'">Target</button>
+      res.end(`<nav aria-label="Sessions"><button id="target" disabled onclick="this.textContent='Clicked'">Target</button></nav>
+        <nav aria-label="Session hierarchy"><span>Target</span></nav>
         <dialog aria-label="${title}"><button id="dismiss">${button}</button></dialog>
         <script>
         dismiss.onclick=async()=>{
@@ -58,7 +60,10 @@ for (const credentials of [false, true]) for (const alreadyVisible of [false, tr
         document.querySelector('#target').disabled = false;
       } else window.showLateNotice();
     }, alreadyVisible);
-    await clickVerificationTarget(page, page.getByRole('button', { name: 'Target', exact: true }), { timeout: 5000 });
+    assert.equal(await page.getByText('Target', { exact: true }).count(), 2, 'active session also has a breadcrumb');
+    const sessionRow = verificationSessionRow(page, 'Target');
+    assert.equal(await sessionRow.isVisible(), true, 'navigation remains unique when the session is already restored');
+    await clickVerificationTarget(page, sessionRow, { timeout: 5000 });
     assert.equal(await page.getByRole('button', { name: 'Clicked', exact: true }).count(), 1);
     assert.equal(mutations, 0, 'acknowledgement must never reach persisted settings');
     const response = await page.request.post(`${base}/api/settings/describe`);

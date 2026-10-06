@@ -19,7 +19,7 @@ const night = { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k
 async function rpc(method, request = {}) {
   const response = await context.request.post(`${base}/api/${method}`, { data: {
     type: 'client-request', rpcId: randomUUID(), method,
-    payload: { args: method.startsWith('settings/') ? request : method === 'session/modelCatalog' ? {} : { request } },
+    payload: { args: method.startsWith('settings/') ? request : method === 'session/modelCatalog' ? {} : method === 'session/list' ? { _request: request } : { request } },
   } });
   assert.equal(response.status(), 200);
   const body = await response.json();
@@ -51,6 +51,12 @@ try {
   ({ sessionId } = await rpc('session/create', { workspaceId }));
   await rpc('session/selectModel', { sessionId, ...night });
   await until(async () => (await rpc('session/modelCatalog')).default.provider === night.provider, 'Nighttime default persisted');
+  // Persist a real Nighttime conversation before testing disappearance. A
+  // prompt rejected before dispatch can leave a blank draft hidden by Sidebar.
+  await rpc('session/prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text: 'Materialize the Nighttime fixture; do not use tools.' }] });
+  await until(async () => (await (await fetch(`${control}/__fixture/requests`)).json()).includes(night.model), 'Nighttime dispatch uses its exact model');
+  await rpc('session/cancel', { sessionId });
+  await until(async () => !(await rpc('session/list')).items.find(row => row.sessionId === sessionId)?.running, 'Nighttime fixture is idle');
   await setNight(false);
   assert.equal((await rpc('session/modelCatalog')).default.provider, night.provider);
   const before = await (await fetch(`${control}/__fixture/requests`)).json();
@@ -74,7 +80,7 @@ try {
   }, 'fixture session visible');
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
-  assert.match(await trigger.innerText(), /unavailable/i);
+  await until(async () => /unavailable/i.test(await trigger.innerText()), 'selected Nighttime shows its unavailable status');
   await trigger.click();
   await page.getByRole('menuitem', { name: /^Model/ }).click();
   const unavailable = page.getByRole('menuitemradio', { name: 'Nighttime — unavailable', exact: true });
@@ -91,6 +97,8 @@ try {
   await page.getByRole('menuitemradio', { name: 'Primary fixture', exact: true }).click();
   await until(async () => (await rpc('session/modelCatalog')).default.provider === 'local-ollama', 'explicit Daytime switch works');
   console.log('Single-model Bedrock startup, retained Nighttime session, no fallback, and live picker removal/return passed.');
+} catch (error) {
+  throw new Error(`${error.message}\nSynthetic fixture browser: ${(await page.locator('body').innerText().catch(() => '')).slice(-8000)}`, { cause: error });
 } finally {
   try {
     if (sessionId) { await rpc('session/cancel', { sessionId }); await rpc('workspace/archiveSession', { sessionId }); }

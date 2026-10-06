@@ -54,6 +54,7 @@ try {
   assert.equal((await rpc('session/modelCatalog')).default.provider, 'amazon-bedrock');
   assert.equal((await rpc('session/modelCatalog')).routableProviders.includes(night.provider), false);
   await setNight(true);
+  await rpc('settings/mutate', { ns: 'llm-pi-ai', ops: [{ op: 'set', path: ['providers', night.provider, 'retryPolicy'], value: { mode: 'always' } }] });
   workspacePath = await mkdtemp('/tmp/dsh-availability-workspace-');
   const workspace = await rpc('workspace/create', { path: workspacePath });
   workspaceId = workspace.workspace.workspaceId;
@@ -73,7 +74,7 @@ try {
   await delay(2000);
   const after = await (await fetch(`${control}/__fixture/requests`)).json();
   assert.deepEqual(after, before, 'unavailable session never invokes Nighttime or a fallback');
-  await rpc('session/cancel', { sessionId });
+  await until(async () => !(await rpc('session/list')).items.find(row => row.sessionId === sessionId)?.running, 'unavailable failure is terminal even with always-retry');
   const title = `Optional resident ${sessionId}`;
   await rpc('session/rename', { sessionId, title });
   await page.goto(base, { waitUntil: 'domcontentloaded' });
@@ -96,6 +97,8 @@ try {
   await unavailable.waitFor();
   assert.equal(await unavailable.isDisabled(), true);
   await setNight(true);
+  await delay(1000);
+  assert.deepEqual(await (await fetch(`${control}/__fixture/requests`)).json(), before, 'reappearance never replays the failed prompt');
   // The same open picker must update without reload or reconnection.
   await until(async () => await page.getByRole('menuitemradio', { name: 'Secondary fixture', exact: true }).count() === 1,
     'open picker observes Nighttime return');

@@ -26,6 +26,12 @@ export function patchAdapter(input) {
   s = replace(s, '\t\t\t\treleaseConcurrency = await this.concurrency.acquire(profile, upstream);', '\t\t\t\treleaseConcurrency = await this.concurrency.acquire(profile, upstream);\n\t\t\t\tthis.assertResidentAvailable(options.provider, options.model);');
   return s;
 }
+export function patchRetry(input) {
+  if (input.includes(marker)) return input;
+  return replace(input, 'async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {', `async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {
+        // ${marker}: an unavailable selection is terminal, even under always-retry.
+        if (failure.code === 'MODEL_UNAVAILABLE') return;`);
+}
 export function patchRegistry(input) {
   if (input.includes(marker)) return input;
   return replace(input, '\t\t\t\t\tname: model.name,', `\t\t\t\t\tname: model.name,
@@ -77,6 +83,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   for (const [file, patch] of [
     ['dsh-llm-pi-ai/lib/index.js', patchAdapter],
     ['dsh-llm/lib/index.js', patchRegistry],
+    ['dsh-llm-retry/lib/index.js', patchRetry],
     ['dsh-api-session-controller/lib/index.js', patchCatalog],
     ['dsh-client-ui-model-selection/lib/client.js', patchClient],
     ['dsh-api-session-controller/lib/typert.host.js', patchCatalogCodec],

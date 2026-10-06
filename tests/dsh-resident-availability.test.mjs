@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCodec } from '../scripts/patch-dsh-resident-availability.mjs';
+import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCodec, patchRetry } from '../scripts/patch-dsh-resident-availability.mjs';
 import { EndpointConcurrencyGate } from '../scripts/patch-dsh-llm-pi-ai.mjs';
 const fixture = JSON.parse(await readFile(new URL('./fixtures/dsh-resident-availability-0.2.0-rc.2.json', import.meta.url)));
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -34,7 +34,7 @@ function adapter() {
 const request = { provider: 'local-everyday', model: 'night', messages: [] };
 
 test('pinned availability patches are idempotent and fail on source drift', () => {
-  for (const [key, patch] of [['adapter', patchAdapter], ['registry', patchRegistry], ['catalog', patchCatalog], ['client', patchClient], ['codec', patchCatalogCodec], ['clientCodec', patchCatalogCodec]]) {
+  for (const [key, patch] of [['adapter', patchAdapter], ['registry', patchRegistry], ['catalog', patchCatalog], ['client', patchClient], ['retry', patchRetry], ['codec', patchCatalogCodec], ['clientCodec', patchCatalogCodec]]) {
     const result = patch(fixture[key]);
     assert.equal(patch(result), result);
     assert.throws(() => patch('unknown new runtime'), /source drift/);
@@ -131,4 +131,17 @@ test('keyboard selection also blocks unavailable models without submitting an RP
   choices[0].model.available = true;
   choose(choices[0].selection);
   assert.equal(submissions[1].provider, 'local-everyday');
+});
+
+
+test('unavailable failures never replay, including a saved always-retry policy', async () => {
+  const recover = vm.runInNewContext(patchRetry(fixture.retry) + '\nrecover');
+  for (const policy of [{ mode: 'always' }, { mode: 'normal', retryableCodes: ['MODEL_UNAVAILABLE'] }]) {
+    let downstream = 0;
+    assert.equal(await recover({ failure: { code: 'MODEL_UNAVAILABLE' }, retryPolicy: policy }, () => downstream++), undefined);
+    assert.equal(downstream, 0);
+  }
+  let downstream = 0;
+  await recover({ failure: { code: 'UNRELATED_ERROR' } }, () => downstream++);
+  assert.equal(downstream, 1, 'other failures retain their normal recovery path');
 });

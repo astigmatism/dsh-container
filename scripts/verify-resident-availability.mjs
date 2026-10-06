@@ -14,7 +14,12 @@ const base = process.env.DSH_VERIFY_URL, secret = process.env.DSH_BOOT_TOKEN;
 assert.ok(base && secret);
 const require = createRequire(`${profile}/package.json`);
 const { browser, close } = await launchVerificationBrowser(require('playwright-core').chromium);
-const context = await browser.newContext(), page = await context.newPage();
+const context = await browser.newContext();
+// Candidate qualification has --network none: loopback works, but Chromium's
+// OS connectivity hint is offline and Harness deliberately suspends its event
+// stream. This fixture uses loopback only, so model a connected local client.
+await context.addInitScript(() => Object.defineProperty(navigator, 'onLine', { get: () => true }));
+const page = await context.newPage();
 const browserErrors = [];
 page.on('pageerror', error => browserErrors.push(error.message));
 page.on('console', message => { if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text()); });

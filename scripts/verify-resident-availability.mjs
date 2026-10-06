@@ -15,6 +15,10 @@ assert.ok(base && secret);
 const require = createRequire(`${profile}/package.json`);
 const { browser, close } = await launchVerificationBrowser(require('playwright-core').chromium);
 const context = await browser.newContext(), page = await context.newPage();
+const browserErrors = [];
+page.on('pageerror', error => browserErrors.push(error.message));
+page.on('console', message => { if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text()); });
+page.on('requestfailed', request => browserErrors.push(`${new URL(request.url()).pathname}: ${request.failure()?.errorText}`));
 const night = { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k' };
 async function rpc(method, request = {}) {
   const response = await context.request.post(`${base}/api/${method}`, { data: {
@@ -98,7 +102,7 @@ try {
   await until(async () => (await rpc('session/modelCatalog')).default.provider === 'local-ollama', 'explicit Daytime switch works');
   console.log('Single-model Bedrock startup, retained Nighttime session, no fallback, and live picker removal/return passed.');
 } catch (error) {
-  throw new Error(`${error.message}\nSynthetic fixture browser: ${(await page.locator('body').innerText().catch(() => '')).slice(-8000)}`, { cause: error });
+  throw new Error(`${error.message}\nSynthetic fixture browser: ${(await page.locator('body').innerText().catch(() => '')).slice(-8000)}\nBrowser diagnostics: ${browserErrors.slice(-30).join('\n').split(secret).join('[redacted]')}`, { cause: error });
 } finally {
   try {
     if (sessionId) { await rpc('session/cancel', { sessionId }); await rpc('workspace/archiveSession', { sessionId }); }

@@ -22,8 +22,8 @@ if os.environ.get('CI') != 'true':
     sys.exit('This integration rehearsal is restricted to disposable CI workers')
 source = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(source))
-from maintenance.common import LABEL, REPOSITORY, atomic_json, run
-from maintenance.engine import install_labels, Updater
+from maintenance.common import LABEL, REPOSITORY, atomic_json, run, digest
+from maintenance.engine import install_labels, Updater, stage_source_artifacts
 from maintenance.install import prepare
 from maintenance import recovery
 from maintenance.contract import configuration_bindings
@@ -85,6 +85,20 @@ try:
 
     fixture = temporary / 'fixture'
     fixture.mkdir()
+    code_binds = [
+        ('seed/plugins/dsh-router-model-discovery.js', '/opt/dsh-seed/.dsh-plugins/dsh-router-model-discovery.js'),
+        *[(f'scripts/{name}.mjs', f'/opt/dsh-build/{name}.mjs') for name in
+          ('migrate-resident-models', 'verify-router-contract', 'verify-resident-client')]]
+    override_dir = temporary / 'overrides'
+    override_dir.mkdir()
+    mappings = []
+    for relative, target in code_binds:
+        candidate = fixture / 'source-artifacts' / relative
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / relative, candidate)
+        old = override_dir / Path(relative).name
+        old.write_text('export const oldDeploymentOverride = true;\n')
+        mappings.append(f'application:{target}={relative}@{digest(old)}')
     (fixture / 'application.mjs').write_text('''import http from 'node:http';
 http.createServer((req,res)=>{if(req.url.includes('token=')){res.writeHead(303,{'set-cookie':'dsh-auth-fixture=v1.test.test','location':'/'});res.end();}else{res.end('synthetic application');}}).listen(3080,'0.0.0.0');
 setInterval(()=>{},1000);
@@ -116,6 +130,8 @@ def fixture_candidate(self):
         engine.install_labels(model,manifest,image)
         manifest['images']={s:c['image'] for s,c in model['services'].items()}
         atomic_text(release/'runner-image',image+'\\n')
+    engine.stage_source_artifacts(Path('/opt/fixture/source-artifacts'),model,manifest,release)
+    manifest['bindings']=engine.configuration_bindings(model)
     atomic_json(release/'compose.json',model)
     atomic_json(release/'deployment.json',manifest)
     return release
@@ -131,7 +147,7 @@ def fixture_application(manifest,by_service):
         run(args[:4]+['--check',args[4]])
     with patch.object(engine,'run',check_entry_point):
         original_application(manifest,by_service)
-    run(['docker','exec',by_service['application']['Id'],'node','/opt/dsh-build/verify-router-contract.mjs'])
+    run(['docker','exec',by_service['application']['Id'],'node','/opt/fixture/provider.mjs'])
 engine.verify_application=fixture_application
 production_probe=engine.probe_release
 def fixture_recovery(manifest,model,root):
@@ -161,7 +177,8 @@ USER root
 RUN mv /opt/dsh-maintenance/main.py /opt/dsh-maintenance/production-main.py && ln -s /opt/dsh-maintenance /opt/maintenance
 COPY driver.py /opt/dsh-maintenance/main.py
 COPY application.mjs /opt/fixture/application.mjs
-COPY provider.mjs /opt/dsh-build/verify-router-contract.mjs
+COPY provider.mjs /opt/fixture/provider.mjs
+COPY source-artifacts /opt/fixture/source-artifacts
 USER node
 ''')
     run(['docker', 'build', '-t', fixture_image, fixture])
@@ -231,6 +248,9 @@ USER node
                       {'type': 'bind', 'source': str(temporary / 'backend'), 'target': '/run/dsh-backend-auth', 'read_only': True}],
           'healthcheck': {'test': ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3081/healthz').then(r=>{if(!r.ok)process.exit(1)})"], 'interval': '1s', 'timeout': '3s', 'retries': 30}}
     }}
+    model['services']['application']['volumes'].extend(
+        {'type': 'bind', 'source': str(override_dir / Path(relative).name), 'target': target, 'read_only': True}
+        for relative, target in code_binds)
     if external_network:
         run(['docker', 'network', 'create', external_network])
         model['networks'] = {'shared_model': {'name': external_network, 'external': True}}
@@ -264,7 +284,7 @@ USER node
     roles = ['application=harness', 'edge=gateway'] + (['router=router'] if mode == 'managed' else [])
     args = Namespace(project_directory=legacy, deployment_dir=None, compose_file=[str(legacy/'compose.json')],
         env_file=None, mode=mode, portal_url=portal_url, role=roles, state_path=[], external_path=[],
-        adopt=True, dry_run=True, boot_unit=None)
+        adopt=True, dry_run=True, boot_unit=None, source_bind=mappings)
     baseline = recovery.inventory(legacy)
     prepare(args, source)
     assert recovery.inventory(legacy) == baseline and not root.exists()
@@ -278,12 +298,15 @@ USER node
         (release / 'start-after-network.sh').write_text('#!/bin/sh\nexit 0\n')
         manifest = copy.deepcopy(updater.manifest)
         manifest['revision'] = 'a'*40
+        model = copy.deepcopy(updater.model)
+        stage_source_artifacts(source, model, manifest, release)
+        manifest['bindings'] = configuration_bindings(model)
         atomic_json(release / 'deployment.json', manifest)
-        atomic_json(release / 'compose.json', updater.model)
+        atomic_json(release / 'compose.json', model)
         return release
 
     def fixture_application(manifest, rows):
-        run(['docker', 'exec', rows['application']['Id'], 'node', '/opt/dsh-build/verify-router-contract.mjs'])
+        run(['docker', 'exec', rows['application']['Id'], 'node', '/opt/fixture/provider.mjs'])
 
     args.dry_run = False
     with patch.object(Updater, 'build_candidate', adopted_candidate), patch('maintenance.engine.verify_application', fixture_application):
@@ -293,6 +316,18 @@ USER node
     (legacy / 'compose.json').unlink()  # Updates now have no source Compose input.
     installed = json.loads((root / 'deployment.json').read_text())
     assert installed['mode'] == mode
+    assert len(installed['source_artifacts']) == 4
+    original_overrides = {str(path): path.read_bytes() for path in override_dir.iterdir()}
+    def check_code_binds():
+        active = json.loads((root / 'deployment.json').read_text())
+        container = run(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + project,
+                         '--filter', 'label=com.docker.compose.service=application']).strip()
+        mounts = json.loads(run(['docker', 'inspect', container]))[0]['Mounts']
+        for artifact in active['source_artifacts']:
+            assert any(m['Destination'] == artifact['target'] and m['Source'] == artifact['installed'] for m in mounts)
+            assert digest(Path(artifact['installed'])) == digest(source / artifact['relative'])
+        assert {str(path): path.read_bytes() for path in override_dir.iterdir()} == original_overrides
+    check_code_binds()
     if mode == 'managed':
         assert str(router_state) in installed['state_paths']
         assert str(model_store) not in installed['state_paths'] + installed['input_paths']
@@ -335,6 +370,7 @@ USER node
         assert active['services']['application']['labels'][LABEL+'image'] == fixture_id
         print(f'Pinned legacy updater {LEGACY_REVISION} completed candidate cutover and verification entry points.')
     assert json.loads((root/'deployment.json').read_text())['revision'] == 'b'*40
+    check_code_binds()
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'
     assert (state/'ego-browser/profile/Default/Cookies').read_bytes() == b'synthetic-browser-profile'
@@ -345,6 +381,7 @@ USER node
     assert result['state'] == 'failed', result
     status = json.loads((root/'maintenance-status.json').read_text())
     assert status['recovery'] == 'succeeded', (status, result)
+    check_code_binds()
     assert json.loads((root/'compose.json').read_text())['services']['application']['labels'][LABEL+'enabled'] == 'true'
     assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
     assert (state/'session').read_text() == 'original fixture history'

@@ -1,5 +1,6 @@
 /** CI-only removal/return test against the real Harness and rendered picker. */
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -36,7 +37,7 @@ async function setNight(available) {
     return catalog.routableProviders.includes(night.provider) === available;
   }, 'runtime discovery refreshes optional availability');
 }
-let sessionId, workspaceId, original;
+let sessionId, workspaceId, original, workspacePath;
 try {
   await installVerificationOnboarding(page, base);
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
@@ -44,7 +45,8 @@ try {
   assert.equal((await rpc('session/modelCatalog')).default.provider, 'amazon-bedrock');
   assert.equal((await rpc('session/modelCatalog')).routableProviders.includes(night.provider), false);
   await setNight(true);
-  const workspace = await rpc('workspace/create', { path: profile });
+  workspacePath = await mkdtemp('/tmp/dsh-availability-workspace-');
+  const workspace = await rpc('workspace/create', { path: workspacePath });
   workspaceId = workspace.workspace.workspaceId;
   ({ sessionId } = await rpc('session/create', { workspaceId }));
   await rpc('session/selectModel', { sessionId, ...night });
@@ -96,5 +98,5 @@ try {
     if (original) await rpc('settings/mutate', { ns: 'agent-default-model', ops:
       ['provider', 'model', 'reasoningEffort'].map(key => Object.hasOwn(original.user ?? {}, key)
         ? { op: 'set', path: [key], value: original.user[key] } : { op: 'unset', path: [key] }) });
-  } finally { await close(); }
+  } finally { await close(); if (workspacePath) await rm(workspacePath, { recursive: true, force: true }); }
 }

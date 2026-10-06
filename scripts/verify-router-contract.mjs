@@ -22,8 +22,7 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
   const selected = settings['agent-default-model'];
   // External defaults are not router contracts. Browser qualification still
   // checks the required local Daytime route rather than contacting Bedrock.
-  const names = browser && Object.hasOwn(RESIDENT_MODELS, selected?.provider)
-    ? [selected.provider] : browser ? ['local-ollama'] : Object.keys(RESIDENT_MODELS);
+  const names = Object.keys(RESIDENT_MODELS);
   const catalogs = new Map();
   for (const name of names) {
     const provider = providers[name];
@@ -34,11 +33,11 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
     const resident = residentMetadata(catalogs.get(provider.baseURL), name);
     assert.equal(provider.residentUnavailable === true, resident === null, `${name} availability is not synchronized`);
     if (resident === null) continue;
-    const models = browser && Object.hasOwn(RESIDENT_MODELS, selected?.provider) ? provider.models.filter(model => model.id === (selected?.model ?? 'local-active')) : provider.models;
+    const models = browser && selected?.provider === name ? provider.models.filter(model => model.id === (selected?.model ?? 'local-active')) : provider.models;
     assert.ok(models.length, 'selected browser model is not configured');
     for (const model of models) {
       const metadata = routerMetadataOf(resolveRouterEntry(catalogs.get(provider.baseURL), model.id));
-      requireRouterCapabilities(metadata, { browser: browser || (primaryBrowser && name === "local-ollama"), effort: (browser && selected?.provider === name ? selected.reasoningEffort : undefined) ?? provider.reasoning });
+      requireRouterCapabilities(metadata, { browser: (browser && (name === "local-ollama" || selected?.provider === name)) || (primaryBrowser && name === "local-ollama"), effort: (browser && selected?.provider === name ? selected.reasoningEffort : undefined) ?? provider.reasoning });
       const label = `${name}/${model.id}`;
       assert.equal(model.contextWindow, metadata.context_window, `${label} context is not synchronized`);
       if (metadata.display_name) {

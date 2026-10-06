@@ -72,6 +72,7 @@ COPY scripts/verify-sidebar-terminal.mjs /opt/dsh-build/verify-sidebar-terminal.
 COPY scripts/verify-sidebar-client.mjs /opt/dsh-build/verify-sidebar-client.mjs
 COPY scripts/verification-browser.mjs /opt/dsh-build/verification-browser.mjs
 COPY scripts/verification-onboarding.mjs /opt/dsh-build/verification-onboarding.mjs
+COPY scripts/verification-inference.mjs /opt/dsh-build/verification-inference.mjs
 COPY scripts/verify-resident-availability.mjs /opt/dsh-build/verify-resident-availability.mjs
 COPY scripts/verify-resident-client.mjs /opt/dsh-build/verify-resident-client.mjs
 COPY scripts/verify-resident-onboarding.mjs /opt/dsh-build/verify-resident-onboarding.mjs

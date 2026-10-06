@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { launchVerificationBrowser, verificationSessionRow } from './verification-browser.mjs';
 import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
+import { verificationPrompt } from './verification-inference.mjs';
 const profile = process.env.DSH_PROFILE_ROOT;
 assert.match(profile ?? '', /^\/tmp\/dsh-router-startup-[^/]+\/runtime\/profiles\/web$/);
 const control = process.env.DSH_AVAILABILITY_FIXTURE;
@@ -107,6 +108,12 @@ try {
   await until(async () => await unavailable.count() === 1, 'open picker observes removal');
   await clickVerificationTarget(page, page.getByRole('menuitemradio', { name: 'Primary fixture', exact: true }));
   await until(async () => (await rpc('session/modelCatalog')).default.provider === 'local-ollama', 'explicit Daytime switch works');
+  // Exercise actual history/projection shapes, not only mocked RPC replies.
+  // This fixture returns a generic 503; it must fail on the terminal event,
+  // without retrying it as a router transition or waiting ten minutes.
+  await assert.rejects(verificationPrompt({ sessionId, text: 'Isolated terminal-error acceptance check.',
+    timeoutMs: 30000, rpc: (method, request) => rpc(`session/${method}`, request) }),
+  /Verification request ended without completion/);
   console.log('Single-model Bedrock startup, retained Nighttime session, no fallback, and live picker removal/return passed.');
 } catch (error) {
   throw new Error(`${error.message}\nSynthetic fixture browser: ${(await page.locator('body').innerText().catch(() => '')).slice(-8000)}\nBrowser diagnostics: ${browserErrors.slice(-30).join('\n').split(secret).join('[redacted]')}`, { cause: error });

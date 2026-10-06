@@ -149,6 +149,15 @@ command arguments, credentials, or captured application output. Consult
 `maintenance-status.json` and the recovery point's `failure.json` and
 `recovery-outcome.json`; do not remove a transaction journal to force an update.
 
+The resident inference gate inspects the isolated request's terminal events.
+A finished error or wrong reply fails immediately instead of polling an idle
+session for ten minutes. A structured HTTP 503 `BACKEND_DRAINING` rejection may
+retry that verification prompt for up to two minutes, only before model output
+or tools. It never retries user prompts or changes the selected model. Catalog
+discovery can succeed during router draining, so discovery alone does not prove
+that inference is ready. Persistent draining still fails acceptance and retains
+the failed update/recovery evidence.
+
 ### Repairing an older updater trapped in recovery
 
 An already-installed old worker cannot acquire new recovery behavior while it

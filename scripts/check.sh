@@ -30,6 +30,7 @@ case "${1:-}" in
     (cd "$project_dir" && python3 -B -c 'from maintenance.qualification import registered_files; registered_files(".")')
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
     node --test "$project_dir/tests/external-tls.integration.mjs"
+    node --test "$project_dir/tests/verification-inference.test.mjs"
     exit 0
     ;;
   -h|--help)
@@ -234,7 +235,8 @@ if [ "$build" -eq 1 ]; then
     --env DSH_TEST_HARNESS=1 --volume "$project_dir:/src:ro" "$harness_image" \
     --test /src/tests/sidebar-settings.test.mjs /src/tests/profile-settings-migration.test.mjs \
       /src/tests/resident-settings-migration.test.mjs /src/tests/profile-02-migration.test.mjs \
-      /src/tests/optional-bundle-composition.test.mjs /src/tests/verification-onboarding.test.mjs
+      /src/tests/optional-bundle-composition.test.mjs /src/tests/verification-onboarding.test.mjs \
+      /src/tests/verification-inference.test.mjs
 
   # Verify the image with a UID unrelated to the base image's `node` user.
   # rc2 locks package.json even for inventory reads. The immutable seed belongs

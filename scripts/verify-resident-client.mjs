@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 import { launchVerificationBrowser, verificationSessionRow } from './verification-browser.mjs';
 import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
+import { verificationPrompt } from './verification-inference.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -63,9 +64,12 @@ try {
   // The sidebar omits empty drafts. Materialize this isolated conversation
   // before opening its session-specific model controls. Offline image tests
   // intentionally have no inference endpoint; only live mode requires replies.
-  await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
-    'Text-only verification. Do not use tools or access files. Reply with READY.' }] });
-  if (!live) await rpc('cancel', { sessionId });
+  const opening = 'Text-only verification. Do not use tools or access files. Reply with READY.';
+  if (live) await verificationPrompt({ rpc, sessionId, text: opening });
+  else {
+    await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text: opening }] });
+    await rpc('cancel', { sessionId });
+  }
   const readyDeadline = Date.now() + (live ? 600000 : 90000);
   while ((await rpc('list')).items.find(item => item.sessionId === sessionId)?.running) {
     assert.ok(Date.now() < readyDeadline, 'verification session reached idle');
@@ -124,22 +128,8 @@ try {
     for (const [index, choice] of available.entries()) {
       lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' })).selected;
       const marker = `RESIDENT_${index}_${randomUUID().slice(0, 8)}`;
-      await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text:
-        `Text-only model acceptance check. Do not use tools or access files. Reply with exactly ${marker} and no other text.` }] });
-      const deadline = Date.now() + 600000;
-      let passed = false;
-      while (Date.now() < deadline) {
-        const row = (await rpc('list')).items.find(item => item.sessionId === sessionId);
-        if (!row.running && Number.isInteger(row.projections?.asOfSeq)) {
-          const history = await rpc('page', { address: { kind: 'session', sessionId }, throughSeq: row.projections.asOfSeq, maxMessages: 50 });
-          const events = history.records.map(record => record.event);
-          assert.ok(!events.some(event => event.type === 'tool/start'), 'acceptance must remain text-only');
-          passed = events.some(event => event.type === 'assistant/message' && event.data.message?.content?.some(block => block.type === 'text' && block.text.trim() === marker));
-          if (passed) break;
-        }
-        await delay(1000);
-      }
-      assert.ok(passed, `${choice.name} produced its expected reply through the application`);
+      await verificationPrompt({ rpc, sessionId, expectedText: marker, text:
+        `Text-only model acceptance check. Do not use tools or access files. Reply with exactly ${marker} and no other text.` });
       const meter = page.getByRole('button', { name: /% of context used/ });
       await clickVerificationTarget(page, meter);
       const capacity = `${Math.round(choice.contextWindow / 1000)}K`; // Upstream meter uses decimal K.

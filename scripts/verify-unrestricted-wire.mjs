@@ -84,6 +84,8 @@ try {
   const adapter = new PiAiAdapter({ resolveApiKey: async () => 'synthetic-fixture' });
   const profile = { provider: model.provider, baseURL: model.baseUrl, modelErrors: new Map(), piProvider: {}, streamIdleTimeoutMs: 80, maxConcurrency: 1, cacheRetention: 'none' };
   const snapshot = { profiles: new Map([[model.provider, profile]]), models: { getModel: () => model, streamSimple } };
+  // Dispatch consults live availability even when a request holds a snapshot.
+  adapter.current = () => snapshot;
   const options = { provider: model.provider, model: model.id, messages: [] };
   async function bounded(promise) {
     let timer;

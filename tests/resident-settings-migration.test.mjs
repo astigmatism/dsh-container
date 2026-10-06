@@ -93,3 +93,24 @@ for (const selection of ['amazon-bedrock', 'local-everyday']) {
     assert.equal(await fs.readFile(file, 'utf8'), bytes);
   });
 }
+
+test('real pinned adapter validates a first-boot unavailable placeholder beside native Bedrock', { skip: !YAML }, async t => {
+  const { patchAdapter } = await import('../scripts/patch-dsh-resident-availability.mjs');
+  const { pathToFileURL } = await import('node:url');
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'resident-adapter-'));
+  t.after(() => fs.rm(temporary, { recursive: true, force: true }));
+  await fs.symlink(path.join(runtime, 'node_modules'), path.join(temporary, 'node_modules'));
+  const source = await fs.readFile(path.join(runtime, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js'), 'utf8');
+  await fs.writeFile(path.join(temporary, 'adapter.mjs'), patchAdapter(source) + '\nexport { resolveProfiles };');
+  const { Config, resolveProfiles, PiAiAdapter } = await import(pathToFileURL(path.join(temporary, 'adapter.mjs')));
+  const config = Config({ providers: {
+    'local-everyday': { api: 'openai-responses', baseURL: 'http://127.0.0.1:1/v1', residentUnavailable: true,
+      models: [{ id: 'qwen3.8-27b-abliterated-q6_k', name: 'Nighttime' }] },
+    'amazon-bedrock': { models: [{ id: 'amazon.nova-lite-v1:0' }] },
+  } });
+  const profiles = resolveProfiles(config.providers.get());
+  const adapter = new PiAiAdapter({ profiles: () => profiles, auth: {} });
+  assert.equal((await adapter.listModels('local-everyday'))[0].available, false);
+  assert.equal((await adapter.listModels('amazon-bedrock'))[0].id, 'amazon.nova-lite-v1:0');
+  assert.throws(() => adapter.prepareCall('local-everyday', 'qwen3.8-27b-abliterated-q6_k'), error => error.code === 'MODEL_UNAVAILABLE');
+});

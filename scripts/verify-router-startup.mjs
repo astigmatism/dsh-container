@@ -123,8 +123,8 @@ try {
   };
   if (daytimeOnly) {
     settings['llm-pi-ai'].providers['amazon-bedrock'] = { apiKeyEnv: 'STARTUP_FIXTURE_KEY',
-      models: [{ id: 'anthropic.claude-3-haiku-20240307-v1:0' }] };
-    settings['agent-default-model'] = { provider: 'amazon-bedrock', model: 'anthropic.claude-3-haiku-20240307-v1:0' };
+      models: [{ id: 'amazon.nova-lite-v1:0' }] };
+    settings['agent-default-model'] = { provider: 'amazon-bedrock', model: 'amazon.nova-lite-v1:0' };
   }
   const expectedDefault = daytimeOnly ? structuredClone(settings['agent-default-model']) : { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off' };
   const settingsPath = path.join(runtime, 'settings.yaml');

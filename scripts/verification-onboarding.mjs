@@ -49,11 +49,11 @@ export async function installVerificationOnboarding(page, base) {
   // Handle them during actionability checks, within this browser only.
   for (const name of ['Preview Notice', 'Add an API key to get started']) {
     await page.addLocatorHandler(page.getByRole('dialog', { name, exact: true }),
-      () => dismissVerificationOnboarding(page));
+      () => dismissOnboarding(page));
   }
 }
 
-export async function dismissVerificationOnboarding(page) {
+async function dismissOnboarding(page) {
   const notice = page.getByRole('dialog', { name: 'Preview Notice', exact: true });
   if (await notice.isVisible()) {
     await notice.getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 5000 });

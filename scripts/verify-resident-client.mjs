@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 import { launchVerificationBrowser } from './verification-browser.mjs';
-import { installVerificationOnboarding, dismissVerificationOnboarding } from './verification-onboarding.mjs';
+import { installVerificationOnboarding } from './verification-onboarding.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -82,7 +82,6 @@ try {
   const navigationDeadline = Date.now() + 30000;
   while (true) {
     assert.ok(Date.now() < navigationDeadline, 'verification session is accessible in its workspace');
-    await dismissVerificationOnboarding(page);
     try {
       if (await sessionRow.isVisible()) { await sessionRow.click({ timeout: 500 }); break; }
       if (await group.count() && await group.getAttribute('aria-expanded') === 'false') {
@@ -118,7 +117,6 @@ try {
     }
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[data-composer-input]');
-    await dismissVerificationOnboarding(page);
     assert.deepEqual((await rpc('modelCatalog')).default, selection);
   }
   console.log('Available model selections and separate reasoning preferences survived browser reconnection.');

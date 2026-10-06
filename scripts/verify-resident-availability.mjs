@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { launchVerificationBrowser } from './verification-browser.mjs';
-import { installVerificationOnboarding, dismissVerificationOnboarding } from './verification-onboarding.mjs';
+import { installVerificationOnboarding } from './verification-onboarding.mjs';
 const profile = process.env.DSH_PROFILE_ROOT;
 assert.match(profile ?? '', /^\/tmp\/dsh-router-startup-[^/]+\/runtime\/profiles\/web$/);
 const control = process.env.DSH_AVAILABILITY_FIXTURE;
@@ -79,7 +79,6 @@ try {
   await rpc('session/rename', { sessionId, title });
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await until(async () => {
-    await dismissVerificationOnboarding(page);
     const row = page.getByText(title, { exact: true });
     if (await row.isVisible()) { await row.click(); return true; }
     const group = page.getByRole('treeitem').filter({ has: page.getByText(workspace.workspace.title, { exact: true }) }).first();

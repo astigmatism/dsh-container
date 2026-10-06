@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { installVerificationOnboarding, dismissVerificationOnboarding } from '../scripts/verification-onboarding.mjs';
+import { installVerificationOnboarding } from '../scripts/verification-onboarding.mjs';
 
 let chromium;
 try {
@@ -14,8 +14,8 @@ try {
   if (process.env.DSH_TEST_HARNESS === '1') throw error;
 }
 
-for (const credentials of [false, true]) {
-  test(`late ${credentials ? 'credential' : 'preview'} notice cannot block verification or change saved settings`, { skip: !chromium }, async t => {
+for (const credentials of [false, true]) for (const alreadyVisible of [false, true]) {
+  test(`${alreadyVisible ? 'visible' : 'late'} ${credentials ? 'credential' : 'preview'} notice cannot block verification or change saved settings`, { skip: !chromium }, async t => {
     let mutations = 0;
     const original = { ns: 'ui-settings-general', revision: 1,
       value: { welcomeNoticeVersion: 'old', unrelated: true }, user: { welcomeNoticeVersion: 'old' } };
@@ -51,8 +51,9 @@ for (const credentials of [false, true]) {
     const page = await browser.newPage();
     await installVerificationOnboarding(page, base);
     await page.goto(base);
-    await dismissVerificationOnboarding(page); // No notice exists yet.
+    assert.equal(await page.getByRole('dialog').isVisible(), false);
     await page.evaluate(() => window.showLateNotice());
+    if (alreadyVisible) await page.getByRole('dialog').waitFor({ state: 'visible' });
     await page.getByRole('button', { name: 'Target', exact: true }).click({ timeout: 5000 });
     assert.equal(await page.getByRole('button', { name: 'Clicked', exact: true }).count(), 1);
     assert.equal(mutations, 0, 'acknowledgement must never reach persisted settings');

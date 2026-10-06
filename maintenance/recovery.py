@@ -118,13 +118,19 @@ def capture(point, paths, *, helper_image=None):
     return records
 
 
-def restore(point, *, helper_image=None):
+def validate_snapshot(point):
     point = Path(point)
     records = read_json(point / 'snapshot.json')
     # Validate every snapshot before touching any destination.
     for index, record in enumerate(records):
         require(inventory(point / 'snapshot' / str(index)) == record['inventory'],
                 'Recovery snapshot failed integrity verification')
+    return records
+
+
+def restore(point, *, helper_image=None):
+    point = Path(point)
+    records = validate_snapshot(point)
     state_file = point / 'restore.json'
     state = read_json(state_file) if state_file.exists() else {'done': [], 'prepared': []}
     for index, record in enumerate(records):

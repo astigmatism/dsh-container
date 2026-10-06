@@ -109,7 +109,7 @@ from pathlib import Path
 sys.path.insert(0, '/opt')
 import maintenance.engine as engine
 from maintenance.engine import Updater
-from maintenance.common import atomic_json, atomic_text, run, compose_command
+from maintenance.common import Failure, atomic_json, atomic_text, run, compose_command
 from unittest.mock import patch
 def fixture_candidate(self):
     release=self.root/'releases'/('ci-'+uuid.uuid4().hex)
@@ -154,6 +154,8 @@ def fixture_recovery(manifest,model,root):
     # The synthetic app has no ai-router endpoint; keep the real container,
     # authenticated gateway and fixture provider checks during rollback.
     production_probe(manifest,model,root,portal=False)
+    if (Path(root)/'inject-recovery-health-failure').exists():
+        raise Failure('Previous release cannot use the current model catalog')
 engine.verify_recovered_release=fixture_recovery
 def fixture_probe(manifest,model,root,**kwargs):
     if kwargs.get('portal',True) and (Path(root)/'inject-portal-failure').exists():
@@ -388,6 +390,26 @@ USER node
     assert (state/'ego-browser/profile/Default/Cookies').read_bytes() == b'synthetic-browser-profile'
     assert (state/'root-owned').read_text() == 'root-owned operational placeholder'
     assert (state/'root-owned').stat().st_uid == 0
+    # A successful file restoration is not necessarily a healthy rollback.
+    # Reproduce an old release incompatible with an external dependency; the
+    # next real Portal action must still be able to install a healthy release.
+    (root/'inject-recovery-health-failure').write_text('fixture only')
+    result = update()
+    assert result['state'] == 'failed', result
+    status = json.loads((root/'maintenance-status.json').read_text())
+    assert status['recovery'] == 'failed' and status['files_restored'], status
+    assert status['update_error'] and status['recovery_error'], status
+    retained_point = Path(status['recovery_point'])
+    assert (root/'transaction.json').exists()
+    (root/'inject-portal-failure').unlink()
+    result = update()
+    assert result['state'] == 'succeeded', result
+    assert not (root/'transaction.json').exists()
+    assert (retained_point/'unhealthy-transaction.json').exists()
+    assert (state/'session').read_text() == 'original fixture history'
+    assert (credentials/'tls/server.crt').read_bytes() == baseline_tls
+    check_code_binds()
+    (root/'inject-recovery-health-failure').unlink()
     assert json.loads(run(['docker','inspect',unrelated]))[0]['Id'] == unrelated_id
     assert json.loads(run(['docker','inspect',unrelated]))[0]['State']['Running']
     if external_network:

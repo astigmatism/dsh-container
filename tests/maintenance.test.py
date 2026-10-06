@@ -575,7 +575,7 @@ if '-c' in sys.argv:
                     self.assertIn('DOCKER_CONFIG=/tmp/.docker', calls[1])
                     self.assertEqual(calls[1][-2:], ['--worker-action', 'verify'])
 
-    def test_interrupted_transaction_is_recovered_before_any_new_build(self):
+    def test_interrupted_transaction_is_recovered_before_new_build(self):
         updater, release = Updater(self.root), self.candidate()
         def fail(manifest, model, root, **kwargs):
             (self.data / 'session').write_text('interrupted migration')
@@ -586,11 +586,17 @@ if '-c' in sys.argv:
             updater.cutover(release)
         self.assertTrue((self.root / 'transaction.json').exists())
         restarted = Updater(self.root)
-        with patch.object(restarted, 'build_candidate') as build, patch('maintenance.engine.run'), \
+        def build_restored():
+            self.assertEqual(restarted.manifest['revision'], 'a' * 40)
+            self.assertEqual((self.data / 'session').read_text(), 'original session')
+            self.assertFalse((self.root / 'transaction.json').exists())
+            raise Failure('stop after recovery')
+        with patch.object(restarted, 'build_candidate', side_effect=build_restored) as build, \
+             patch.object(restarted, 'preflight'), patch('maintenance.engine.run'), \
              patch('maintenance.engine.validate_engine'), patch('maintenance.engine.containers', return_value=[]), \
-             patch('maintenance.engine.verify_recovered_release'), self.assertRaisesRegex(Failure, 'Recovered interrupted'):
+             patch('maintenance.engine.verify_recovered_release'), self.assertRaisesRegex(Failure, 'stop after recovery'):
             restarted.update()
-        build.assert_not_called()
+        build.assert_called_once()
         self.assertEqual((self.data / 'session').read_text(), 'original session')
         self.assertFalse((self.root / 'transaction.json').exists())
 
@@ -697,6 +703,75 @@ if '-c' in sys.argv:
             updater.cutover(release)
         self.assertTrue((self.root / 'transaction.json').exists())
         self.assertEqual(json.loads((self.root / 'maintenance-status.json').read_text())['recovery'], 'failed')
+
+    def failed_health_recovery(self):
+        updater, release = Updater(self.root), self.candidate()
+        with patch.object(updater, 'old_model', return_value=(self.model, True)), \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.probe_release', side_effect=Failure('candidate verifier failed')), \
+             patch('maintenance.engine.verify_recovered_release', side_effect=Failure('old model unavailable')), \
+             self.assertRaisesRegex(Failure, 'candidate verifier failed; Automatic recovery incomplete'):
+            updater.cutover(release)
+        return Path(json.loads((self.root / 'transaction.json').read_text())['point'])
+
+    def test_unhealthy_recovery_preserves_both_failures_and_next_update_can_repair(self):
+        point = self.failed_health_recovery()
+        status = json.loads((self.root / 'maintenance-status.json').read_text())
+        self.assertTrue(status['files_restored'])
+        self.assertEqual(status['update_error'], 'candidate verifier failed')
+        self.assertEqual(status['recovery_error'], 'old model unavailable')
+        updater = Updater(self.root)
+        before = recovery.inventory(self.data)
+        def build_restored():
+            self.assertEqual(updater.manifest['revision'], 'a' * 40)
+            self.assertTrue((point / 'unhealthy-transaction.json').exists())
+            self.assertFalse((self.root / 'transaction.json').exists())
+            raise Failure('build stopped for fixture')
+        with patch.object(updater, 'preflight'), patch.object(updater, 'build_candidate', side_effect=build_restored), \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), \
+             patch('maintenance.engine.verify_recovered_release', side_effect=Failure('old model unavailable')), \
+             self.assertRaisesRegex(Failure, 'build stopped'):
+            updater.update()
+        self.assertEqual(recovery.inventory(self.data), before)
+        self.assertEqual(json.loads((point / 'recovery-outcome.json').read_text())['recovery'], 'failed')
+        self.assertEqual((point / 'snapshot/0/session').read_text(), 'original session')
+
+    def test_incomplete_or_corrupt_restoration_never_permits_new_update(self):
+        point = self.failed_health_recovery()
+        (point / 'snapshot/0/session').write_text('corrupted')
+        updater = Updater(self.root)
+        with patch.object(updater, 'build_candidate') as build, \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), self.assertRaisesRegex(Failure, 'recovery incomplete'):
+            updater.update()
+        build.assert_not_called()
+        self.assertTrue((self.root / 'transaction.json').exists())
+        self.assertFalse((point / 'unhealthy-transaction.json').exists())
+
+    def test_interrupted_update_preview_is_read_only_and_validates_snapshot(self):
+        point = self.failed_health_recovery()
+        before = recovery.inventory(self.base)
+        with patch('maintenance.engine.validate_engine'), patch('maintenance.engine.containers', return_value=[]):
+            Updater(self.root).update(True)
+            self.assertEqual(recovery.inventory(self.base), before)
+            (point / 'snapshot/0/session').write_text('corrupted')
+            with self.assertRaisesRegex(Failure, 'integrity'):
+                Updater(self.root).update(True)
+
+    def test_restored_manifest_drift_is_not_misclassified_as_unhealthy_service(self):
+        self.failed_health_recovery()
+        manifest = json.loads((self.root / 'deployment.json').read_text())
+        manifest['portal_url'] = 'http://changed.test'
+        atomic_json(self.root / 'deployment.json', manifest)
+        updater = Updater(self.root)
+        with patch.object(updater, 'build_candidate') as build, \
+             patch('maintenance.engine.run'), patch('maintenance.engine.validate_engine'), \
+             patch('maintenance.engine.containers', return_value=[]), self.assertRaisesRegex(Failure, 'recovery incomplete'):
+            updater.update()
+        build.assert_not_called()
+        self.assertTrue((self.root / 'transaction.json').exists())
 
 
 if __name__ == '__main__':

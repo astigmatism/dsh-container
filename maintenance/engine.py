@@ -400,15 +400,20 @@ class Updater:
             self.status('ok', revision=manifest['revision'], recovery_point=str(point),
                         boot_activation='host-daemon-reload-required' if manifest.get('boot_unit') else 'unchanged')
             (self.root / 'transaction.json').unlink()
-        except BaseException:
-            self.recover()
+        except BaseException as error:
+            # Recovery can fail independently (for example an old release that
+            # cannot start against today's router). Keep the candidate failure.
+            transaction['update_error'] = str(error) if isinstance(error, Failure) else type(error).__name__
+            atomic_json(self.root / 'transaction.json', transaction)
+            atomic_json(point / 'failure.json', {'error': transaction['update_error']})
+            try:
+                self.recover()
+            except Failure as recovery_error:
+                raise Failure(transaction['update_error'] + '; ' + str(recovery_error)) from None
             raise
 
-    def recover(self):
-        file = self.root / 'transaction.json'
-        if not file.exists():
-            return
-        transaction = read_json(file)
+    def recovery_record(self):
+        transaction = read_json(self.root / 'transaction.json')
         point = Path(transaction['point'])
         require(point.resolve().parent == (self.root / 'recovery').resolve(), 'Invalid recovery point location')
         validate_engine(transaction['previous_manifest'])
@@ -418,10 +423,21 @@ class Updater:
             require(Path(labels.get('com.docker.compose.project.working_dir', '')).resolve() in allowed_roots
                     and labels.get('com.docker.compose.service') in transaction['previous_model']['services'],
                     'Recovery found a conflicting Compose deployment; services were not changed')
+        return transaction, point
+
+    def recover(self, *, allow_unhealthy=False):
+        file = self.root / 'transaction.json'
+        if not file.exists():
+            return
+        transaction, point = self.recovery_record()
         if transaction['phase'] == 'complete':
             file.unlink()
             return
-        self.status('recovering', recovery_point=str(point))
+        details = {'recovery_point': str(point)}
+        if transaction.get('update_error'):
+            details['update_error'] = transaction['update_error']
+        self.status('recovering', **details)
+        restored = False
         try:
             old_root = Path(transaction['previous_root'])
             if transaction['phase'] not in ('prepared', 'stopping'):
@@ -429,20 +445,47 @@ class Updater:
                 # before writing a valid candidate Compose file.
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'stop'])
                 recovery.restore(point, helper_image=transaction.get('maintenance_image'))
+                # Only a fully restored, valid operational generation can be
+                # used as the baseline of a fresh update. A copy/integrity or
+                # identity failure must never be treated as poor service health.
+                validate_deployment(read_json(old_root / 'deployment.json'),
+                                    read_json(old_root / 'compose.json'), old_root)
+                require(read_json(old_root / 'deployment.json') == transaction['previous_manifest'],
+                        'Restored manifest differs from the recorded generation')
+                restored = True
             if transaction['existed']:
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'up', '-d', '--force-recreate', '--no-build',
-                     '--pull', 'never', '--wait', '--wait-timeout', '900'])
+                     '--pull', 'never', '--wait', '--wait-timeout', '900'], operation='Start restored services')
                 verify_recovered_release(transaction['previous_manifest'], transaction['previous_model'], old_root)
             else:
                 run([*compose_command(old_root, point / 'previous-compose.json'), 'down'])
-            self.status('failed', recovery='succeeded', recovery_point=str(point))
+            self.status('failed', recovery='succeeded', **details)
             file.unlink()
-        except BaseException:
-            self.status('failed', recovery='failed', recovery_point=str(point))
+        except BaseException as error:
+            details['recovery_error'] = str(error) if isinstance(error, Failure) else type(error).__name__
+            outcome = dict(details, files_restored=restored, recovery='failed')
+            atomic_json(point / 'recovery-outcome.json', outcome)
+            if allow_unhealthy and restored and isinstance(error, Failure) and old_root == self.root:
+                # A subsequent explicit Update may repair an unhealthy old
+                # version. Retain the complete journal and snapshot; never
+                # claim this is successful service recovery or delete evidence.
+                atomic_json(point / 'unhealthy-transaction.json', transaction)
+                self.status('failed', **outcome)
+                file.unlink()
+                print('Previous files restored, but service health failed. Retained recovery point; preparing a fresh qualified update.', flush=True)
+                return
+            self.status('failed', **outcome)
             raise Failure('Automatic recovery incomplete; retained transaction and snapshot require inspection') from None
 
     def update(self, dry_run=False):
         if dry_run:
+            if (self.root / 'transaction.json').exists():
+                transaction, point = self.recovery_record()
+                validate_manifest(transaction['previous_manifest'], transaction['previous_root'])
+                if transaction['phase'] not in ('prepared', 'stopping', 'complete'):
+                    recovery.validate_snapshot(point)
+                print('Dry-run: interrupted transaction identity and snapshot verified. Would restore before building a fresh release; an unhealthy restored baseline retains its recovery point. No changes made.')
+                return
             self.preflight(True)
             self.prepare_source_binds()
             return
@@ -452,8 +495,11 @@ class Updater:
             except BlockingIOError:
                 raise Failure('Another maintenance operation is active') from None
             if (self.root / 'transaction.json').exists():
-                self.recover()
-                raise Failure('Recovered interrupted maintenance; retry the update explicitly')
+                self.recover(allow_unhealthy=True)
+                # Recovery replaced these files. Do not build from stale
+                # candidate settings held in this process before restoration.
+                self.manifest = read_json(self.root / 'deployment.json')
+                self.model = read_json(self.root / 'compose.json')
             self.preflight()
             self.prepare_source_binds()
             self.status('building')

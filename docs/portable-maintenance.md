@@ -132,11 +132,51 @@ Failure restores the entire previous generation and recreates containers so
 restored bind mounts take effect. Changed failed-state roots are retained beside
 their original locations with a `.failed-` suffix. Private transaction/status
 records identify the recovery point. A successful rollback still reports the
-update as failed. Interrupted transactions are recovered before another update;
-an incomplete recovery retains its journal and requires inspection. Recovery
+update as failed. Interrupted transactions are recovered before another update.
+A failed file restoration, snapshot integrity check, or deployment identity check
+retains its journal and blocks the update. A restored release that cannot become
+healthy is reported separately as `files_restored: true, recovery: failed`.
+The next explicit Portal update can build a fresh release from that restored
+configuration, retaining the old snapshot and `unhealthy-transaction.json`.
+It never reports the unhealthy rollback as successful service recovery. Recovery
 verifies the previous image with the current identity-aware gateway probe and
 model protocol so older image-local verification scripts cannot prevent a safe
 rollback.
+
+Candidate and recovery failures are recorded separately as `update_error` and
+`recovery_error`. Named verification stages appear in the Portal job log without
+command arguments, credentials, or captured application output. Consult
+`maintenance-status.json` and the recovery point's `failure.json` and
+`recovery-outcome.json`; do not remove a transaction journal to force an update.
+
+### Repairing an older updater trapped in recovery
+
+An already-installed old worker cannot acquire new recovery behavior while it
+is stuck before source fetching. For an explicitly authorized repair, fetch a
+reviewed, CI-qualified commit into a temporary directory on the deployment host,
+then invoke that release's updater against the **existing** operational manifest:
+
+```sh
+# Run as the deployment UID, with access to its Docker socket group.
+release=$(mktemp -d)
+git -C "$release" init --quiet
+git -C "$release" fetch --depth=1 https://github.com/astigmatism/dsh-container.git "$QUALIFIED_REVISION"
+git -C "$release" checkout --detach --quiet FETCH_HEAD
+test "$(git -C "$release" rev-parse HEAD)" = "$QUALIFIED_REVISION"
+python3 -B "$release/maintenance/main.py" update --manifest "$OPERATIONAL_ROOT/deployment.json" --dry-run
+python3 -B "$release/maintenance/main.py" update --manifest "$OPERATIONAL_ROOT/deployment.json"
+rm -rf "$release"
+```
+
+Verify the host, Engine ID, project, operational root and recovery point before
+running this procedure. Python 3.11+, Git, Docker and Compose are required. The
+command restores the recorded generation first and uses the normal pinned-main
+build, snapshot, cutover and verification workflow. No deployment source or
+private configuration is patched. After repair, perform an actual Portal update
+and require a succeeded job plus healthy application containers. A visible
+button alone is insufficient acceptance evidence. Keep the recovery-point path
+in the private operator record; rolling back to a release incompatible with the
+current model catalog can reproduce its startup failure.
 
 Snapshots and rollback images are retained until explicitly retired. They contain
 credentials and must not be published. No global pruning occurs. A same-disk

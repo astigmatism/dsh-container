@@ -15,6 +15,8 @@ class Failure(RuntimeError):
 
 
 def run(args, *, cwd=None, data=None, env=None, operation=None):
+    if operation:
+        print(operation, flush=True)
     result = subprocess.run([str(x) for x in args], cwd=cwd, input=data,
                             capture_output=True, text=True, env=env)
     if result.returncode:

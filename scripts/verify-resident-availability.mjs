@@ -118,5 +118,5 @@ try {
     if (original) await rpc('settings/mutate', { ns: 'agent-default-model', ops:
       ['provider', 'model', 'reasoningEffort'].map(key => Object.hasOwn(original.user ?? {}, key)
         ? { op: 'set', path: [key], value: original.user[key] } : { op: 'unset', path: [key] }) });
-  } finally { await close(); if (workspacePath) await rm(workspacePath, { recursive: true, force: true }); }
+  } finally { await page.unrouteAll({ behavior: 'wait' }); await close(); if (workspacePath) await rm(workspacePath, { recursive: true, force: true }); }
 }

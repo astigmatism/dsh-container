@@ -170,5 +170,6 @@ try {
   }
   if (workspaceId) await rpc('workspace/delete', { workspaceId }).catch(() => {});
   if (fixture) await rm(fixture, { recursive: true, force: true });
+  await page.unrouteAll({ behavior: 'wait' });
   await close();
 }

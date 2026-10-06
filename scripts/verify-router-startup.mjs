@@ -200,7 +200,7 @@ try {
 } catch (error) {
   // This isolated home contains synthetic settings only; strip launch URLs.
   const diagnostic = bootLog.split('\n').slice(-30).map(line => line.replace(/https?:\/\/\S+/g, '[endpoint]').replace(/fixture-only[^\s]*/g, '[fixture value]')).join('\n');
-  throw new Error(`${error.message.replace(/https?:\/\/\S+/g, '[endpoint]')}${diagnostic ? '\n' + diagnostic : ''}`);
+  throw new Error(`${error.message.replace(/https?:\/\/\S+/g, '[endpoint]').replace(/cookie:.*$/gim, 'cookie: [redacted]')}${diagnostic ? '\n' + diagnostic : ''}`);
 } finally {
   await stop();
   server.closeAllConnections();

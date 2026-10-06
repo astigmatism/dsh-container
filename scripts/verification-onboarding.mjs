@@ -44,16 +44,9 @@ export async function installVerificationOnboarding(page, base) {
       result: { ok: true, value: { ...virtualView(view), revision: view.revision + 1 } },
     } });
   });
-  // Notices mount asynchronously and may appear after an explicit dismissal
-  // check, while Playwright is already trying to click the underlying UI.
-  // Handle them during actionability checks, within this browser only.
-  for (const name of ['Preview Notice', 'Add an API key to get started']) {
-    await page.addLocatorHandler(page.getByRole('dialog', { name, exact: true }),
-      () => dismissOnboarding(page));
-  }
 }
 
-async function dismissOnboarding(page) {
+export async function dismissVerificationOnboarding(page) {
   const notice = page.getByRole('dialog', { name: 'Preview Notice', exact: true });
   if (await notice.isVisible()) {
     await notice.getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 5000 });
@@ -63,5 +56,20 @@ async function dismissOnboarding(page) {
   if (await credentials.isVisible()) {
     await credentials.getByRole('button', { name: 'Configure later', exact: true }).click({ timeout: 5000 });
     await credentials.waitFor({ state: 'hidden', timeout: 5000 });
+  }
+}
+
+/** Retry a blocked click after dismissing a late notice. All work is awaited:
+ * no background locator handlers may outlive the action or browser teardown. */
+export async function clickVerificationTarget(page, locator, { timeout = 30000 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (true) {
+    await dismissVerificationOnboarding(page);
+    try {
+      await locator.click({ timeout: Math.max(1, Math.min(500, deadline - Date.now())) });
+      return;
+    } catch (error) {
+      if (error.name !== 'TimeoutError' || Date.now() >= deadline) throw error;
+    }
   }
 }

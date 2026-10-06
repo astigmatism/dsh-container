@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { installVerificationOnboarding } from '../scripts/verification-onboarding.mjs';
+import { installVerificationOnboarding, clickVerificationTarget } from '../scripts/verification-onboarding.mjs';
 
 let chromium;
 try {
@@ -58,7 +58,7 @@ for (const credentials of [false, true]) for (const alreadyVisible of [false, tr
         document.querySelector('#target').disabled = false;
       } else window.showLateNotice();
     }, alreadyVisible);
-    await page.getByRole('button', { name: 'Target', exact: true }).click({ timeout: 5000 });
+    await clickVerificationTarget(page, page.getByRole('button', { name: 'Target', exact: true }), { timeout: 5000 });
     assert.equal(await page.getByRole('button', { name: 'Clicked', exact: true }).count(), 1);
     assert.equal(mutations, 0, 'acknowledgement must never reach persisted settings');
     const response = await page.request.post(`${base}/api/settings/describe`);

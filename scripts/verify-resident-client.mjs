@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 import { launchVerificationBrowser } from './verification-browser.mjs';
-import { installVerificationOnboarding } from './verification-onboarding.mjs';
+import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -83,27 +83,27 @@ try {
   while (true) {
     assert.ok(Date.now() < navigationDeadline, 'verification session is accessible in its workspace');
     try {
-      if (await sessionRow.isVisible()) { await sessionRow.click({ timeout: 500 }); break; }
+      if (await sessionRow.isVisible()) { await clickVerificationTarget(page, sessionRow, { timeout: 500 }); break; }
       if (await group.count() && await group.getAttribute('aria-expanded') === 'false') {
-        await group.getByText(created.workspace.title, { exact: true }).click({ timeout: 500 });
+        await clickVerificationTarget(page, group.getByText(created.workspace.title, { exact: true }), { timeout: 500 });
       }
     } catch (error) { if (error.name !== 'TimeoutError') throw error; }
     await delay(100);
   }
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
-  await trigger.click();
-  await page.getByRole('menuitem', { name: /^Model/ }).click();
+  await clickVerificationTarget(page, trigger);
+  await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Model/ }));
   for (const row of expected) {
     const option = page.getByRole('menuitemradio', { name: row.name, exact: true });
     await option.waitFor();
     assert.equal(await option.isDisabled(), !row.available);
   }
-  await trigger.click();
-  await trigger.click();
-  await page.getByRole('menuitem', { name: /^Effort/ }).click();
+  await clickVerificationTarget(page, trigger);
+  await clickVerificationTarget(page, trigger);
+  await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Effort/ }));
   assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
-  await trigger.click();
+  await clickVerificationTarget(page, trigger);
   console.log(`Live Harness catalog and rendered picker include ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
   // Model selection saves the next-request preference asynchronously. Verify
   // both choices and distinct reasoning settings survive browser reconnection.
@@ -141,7 +141,7 @@ try {
       }
       assert.ok(passed, `${choice.name} produced its expected reply through the application`);
       const meter = page.getByRole('button', { name: /% of context used/ });
-      await meter.click();
+      await clickVerificationTarget(page, meter);
       const capacity = `${Math.round(choice.contextWindow / 1000)}K`; // Upstream meter uses decimal K.
       await page.getByRole('dialog').filter({ hasText: new RegExp(`/ ${capacity}`) }).waitFor();
       await page.keyboard.press('Escape');

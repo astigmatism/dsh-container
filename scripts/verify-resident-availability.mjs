@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { launchVerificationBrowser } from './verification-browser.mjs';
-import { installVerificationOnboarding } from './verification-onboarding.mjs';
+import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
 const profile = process.env.DSH_PROFILE_ROOT;
 assert.match(profile ?? '', /^\/tmp\/dsh-router-startup-[^/]+\/runtime\/profiles\/web$/);
 const control = process.env.DSH_AVAILABILITY_FIXTURE;
@@ -80,18 +80,18 @@ try {
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await until(async () => {
     const row = page.getByText(title, { exact: true });
-    if (await row.isVisible()) { await row.click(); return true; }
+    if (await row.isVisible()) { await clickVerificationTarget(page, row); return true; }
     const group = page.getByRole('treeitem').filter({ has: page.getByText(workspace.workspace.title, { exact: true }) }).first();
     if (await group.count() && await group.getAttribute('aria-expanded') === 'false') {
-      await group.getByText(workspace.workspace.title, { exact: true }).click();
+      await clickVerificationTarget(page, group.getByText(workspace.workspace.title, { exact: true }));
     }
     return false;
   }, 'fixture session visible');
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
   await until(async () => /unavailable/i.test(await trigger.innerText()), 'selected Nighttime shows its unavailable status');
-  await trigger.click();
-  await page.getByRole('menuitem', { name: /^Model/ }).click();
+  await clickVerificationTarget(page, trigger);
+  await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Model/ }));
   const unavailable = page.getByRole('menuitemradio', { name: 'Nighttime — unavailable', exact: true });
   await unavailable.waitFor();
   assert.equal(await unavailable.isDisabled(), true);
@@ -105,7 +105,7 @@ try {
   assert.equal((await rpc('session/modelCatalog')).default.provider, night.provider);
   await setNight(false);
   await until(async () => await unavailable.count() === 1, 'open picker observes removal');
-  await page.getByRole('menuitemradio', { name: 'Primary fixture', exact: true }).click();
+  await clickVerificationTarget(page, page.getByRole('menuitemradio', { name: 'Primary fixture', exact: true }));
   await until(async () => (await rpc('session/modelCatalog')).default.provider === 'local-ollama', 'explicit Daytime switch works');
   console.log('Single-model Bedrock startup, retained Nighttime session, no fallback, and live picker removal/return passed.');
 } catch (error) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { patchAdapter, patchRegistry, patchCatalog, patchClient } from '../scripts/patch-dsh-resident-availability.mjs';
+import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCodec } from '../scripts/patch-dsh-resident-availability.mjs';
 import { EndpointConcurrencyGate } from '../scripts/patch-dsh-llm-pi-ai.mjs';
 const fixture = JSON.parse(await readFile(new URL('./fixtures/dsh-resident-availability-0.2.0-rc.2.json', import.meta.url)));
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -34,7 +34,7 @@ function adapter() {
 const request = { provider: 'local-everyday', model: 'night', messages: [] };
 
 test('pinned availability patches are idempotent and fail on source drift', () => {
-  for (const [key, patch] of [['adapter', patchAdapter], ['registry', patchRegistry], ['catalog', patchCatalog], ['client', patchClient]]) {
+  for (const [key, patch] of [['adapter', patchAdapter], ['registry', patchRegistry], ['catalog', patchCatalog], ['client', patchClient], ['codec', patchCatalogCodec], ['clientCodec', patchCatalogCodec]]) {
     const result = patch(fixture[key]);
     assert.equal(patch(result), result);
     assert.throws(() => patch('unknown new runtime'), /source drift/);
@@ -101,4 +101,14 @@ test('client renders unavailable choices disabled and prevents alternate-picker 
   assert.equal(selectionOf(state, 'local-everyday/night'), undefined);
   state.groups[0].models[0].available = true;
   assert.equal(selectionOf(state, 'local-everyday/night').model, 'night');
+});
+
+
+test('host and browser RPC codecs preserve model availability', () => {
+  for (const key of ['codec', 'clientCodec']) {
+    const patched = patchCatalogCodec(fixture[key]);
+    assert.match(patched, /['"]available['"]: (?:z\.)?boolean\(\)\.optional\(\)/);
+    // The added field belongs to each model, inside its models array.
+    assert.ok(patched.indexOf('available') > patched.indexOf('models'));
+  }
 });

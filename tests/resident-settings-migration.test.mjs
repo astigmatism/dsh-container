@@ -57,11 +57,13 @@ for (const selection of ['amazon-bedrock', 'local-everyday']) {
     const rows = YAML.parse(await fs.readFile(file, 'utf8'));
     const providers = rows.find(row => row.id === 'llm-pi-ai').config.providers;
     for (const provider of Object.values(providers)) provider.baseURL = `http://127.0.0.1:${server.address().port}/v1`;
-    const external = { api: 'bedrock-converse-stream', apiKeyEnv: 'BEDROCK_PRIVATE_REFERENCE', custom: { retain: true } };
+    const external = { api: 'bedrock-converse-stream', apiKeyEnv: 'BEDROCK_PRIVATE_REFERENCE', headers: { Authorization: 'process.env.PRIVATE_FIXTURE' }, custom: { retain: true } };
     providers['amazon-bedrock'] = external;
     const selected = { provider: selection, model: selection === 'local-everyday' ? catalog.data[1].id : 'external', reasoningEffort: 'high' };
     rows.find(row => row.id === 'agent-default-model').config = selected;
-    await fs.writeFile(file, YAML.stringify(rows), { mode: 0o600 });
+    await fs.writeFile(file, YAML.stringify(rows).replace('Authorization: process.env.PRIVATE_FIXTURE',
+      'Authorization: !!js process.env.PRIVATE_FIXTURE # retain provider expression'), { mode: 0o600 });
+    await fs.appendFile(file, '\n- id: unrelated-expression\n  config:\n    token: !!js process.env.PRIVATE_FIXTURE # retain expression and comment\n');
     const stat = await fs.stat(file);
     const session = `${home}/session.jsonl`;
     await fs.writeFile(session, 'unchanged session history');
@@ -69,7 +71,10 @@ for (const selection of ['amazon-bedrock', 'local-everyday']) {
       env: { ...process.env, DSH_RUNTIME_ROOT: runtime },
     });
     await launch();
-    const migrated = YAML.parse(await fs.readFile(file, 'utf8'));
+    const migratedText = await fs.readFile(file, 'utf8');
+    assert.match(migratedText, /!!js process.env.PRIVATE_FIXTURE # retain expression and comment/);
+    assert.match(migratedText, /Authorization: !!js process.env.PRIVATE_FIXTURE # retain provider expression/);
+    const migrated = YAML.parse(migratedText, { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }] });
     assert.deepEqual(migrated.find(row => row.id === 'agent-default-model').config, selected);
     const next = migrated.find(row => row.id === 'llm-pi-ai').config.providers;
     assert.deepEqual(next['amazon-bedrock'], external);

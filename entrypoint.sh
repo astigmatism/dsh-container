@@ -35,8 +35,8 @@ fi
 
 # Reconcile known router capabilities before any lazy agent/settings scope can
 # read the persisted file. Failed active-model migrations stop startup. The
-# migrator can defer a network outage only when both resident routes are already
-# valid locally; it never falls back to an incomplete or retired configuration.
+# migrator can defer a network outage only for valid saved resident settings,
+# including known optional absence; incomplete or retired settings still fail.
 router_migrator=${DSH_ROUTER_SETTINGS_MIGRATOR:-/opt/dsh-build/migrate-resident-models.mjs}
 if [ -f "$router_migrator" ]; then
   node "$router_migrator" --startup "$runtime_home/settings.yaml"

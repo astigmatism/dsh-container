@@ -21,6 +21,7 @@ const parsed = document.toJS();
 const profile = Array.isArray(parsed);
 const state = profile ? Object.fromEntries(parsed.filter(row => row.id && row.config).map(row => [row.id, row.config])) : parsed;
 const initialState = JSON.stringify(state);
+const changes = [];
 const { synchronizeRouterSettings, applyOperation, currentResidentSettings } = await loadRouterContract();
 const current = currentResidentSettings(state['llm-pi-ai'], state['agent-default-model']);
 try {
@@ -28,7 +29,11 @@ await synchronizeRouterSettings({
   get: namespace => state[namespace],
   describe: () => [{ ns: 'llm-pi-ai', user: state['llm-pi-ai'] }],
   mutate: async (namespace, operations) => {
-    for (const operation of operations) applyOperation(state[namespace], operation);
+    for (const operation of operations) {
+      const previous = operation.path.reduce((value, key) => value?.[key], state[namespace]);
+      changes.push({ namespace, operation, previous: structuredClone(previous) });
+      applyOperation(state[namespace], operation);
+    }
   }
 });
 } catch (error) {
@@ -45,14 +50,33 @@ if (JSON.stringify(state) === initialState) {
   if (!startup) fs.writeFileSync(path + '.before-residents-' + Date.now(), original, { mode: 0o600, flag: 'wx' });
   const temporary = path + '.resident-' + randomUUID();
   try {
-    if (profile) {
-      for (const id of ['llm-pi-ai', 'agent-default-model']) {
-        const row = document.contents.items.find(row => row.get('id') === id);
-        if (row) row.set('config', state[id]);
-        else document.contents.add(document.createNode({ id, config: state[id] }));
+    // Patch only changed leaves in the YAML document. Re-serializing the
+    // namespace would turn unrelated !js expressions into plain strings.
+    const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+    const patch = (keys, previous, value) => {
+      if (JSON.stringify(previous) === JSON.stringify(value)) return;
+      if (object(previous) && object(value) && YAML.isMap(document.getIn(keys, true))) {
+        for (const key of Object.keys(previous)) if (!Object.hasOwn(value, key)) document.deleteIn([...keys, key]);
+        for (const [key, child] of Object.entries(value)) patch([...keys, key], previous[key], child);
+      } else if (Array.isArray(previous) && Array.isArray(value) && previous.length === value.length) {
+        value.forEach((child, index) => patch([...keys, index], previous[index], child));
+      } else document.setIn(keys, value);
+    };
+    for (const { namespace, operation, previous } of changes) {
+      let prefix = [namespace];
+      if (profile) {
+        let index = document.contents.items.findIndex(row => row.get('id') === namespace);
+        if (index < 0) {
+          document.contents.add(document.createNode({ id: namespace, config: {} }));
+          index = document.contents.items.length - 1;
+        }
+        prefix = [index, 'config'];
       }
+      const keys = [...prefix, ...operation.path];
+      if (operation.op === 'unset') document.deleteIn(keys);
+      else patch(keys, previous, operation.value);
     }
-    fs.writeFileSync(temporary, profile ? String(document) : YAML.stringify(state), { mode: stat.mode & 0o777, flag: 'wx' });
+    fs.writeFileSync(temporary, String(document), { mode: stat.mode & 0o777, flag: 'wx' });
     fs.chownSync(temporary, stat.uid, stat.gid);
     fs.chmodSync(temporary, stat.mode & 0o777);
     fs.renameSync(temporary, path);

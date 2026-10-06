@@ -40,6 +40,19 @@ export function patchCatalog(input) {
   s = replace(s, 'return models.some((model) => model.id === selection.model);', 'return models.some((model) => model.id === selection.model && model.available !== false);');
   return s;
 }
+export function patchCatalogCodec(input) {
+  const codecMarker = marker + '-codec';
+  if (input.includes(codecMarker)) return input;
+  // Only the modelCatalog result's model descriptor, never arbitrary names.
+  const start = input.indexOf('const _deepseek_ai_dsh_api_session_controller_session_modelCatalog_result$schema =');
+  const end = input.indexOf('let _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath', start);
+  if (start < 0 || end < 0) throw new Error('Resident availability source drift: model catalog codec');
+  let section = input.slice(start, end);
+  const bundled = section.includes('"models": array(object({');
+  const before = bundled ? '"models": array(object({' : "'models': z.array(z.object({";
+  section = replace(section, before, before + (bundled ? '\n"available": boolean().optional(),' : "\n'available': z.boolean().optional(),"));
+  return input.slice(0, start) + '// ' + codecMarker + '\n' + section + input.slice(end);
+}
 export function patchClient(input) {
   if (input.includes(marker)) return input;
   let s = replace(input, 'var ModelCatalogDirectory = class {', `// ${marker}\n\t\tvar ModelCatalogDirectory = class {`);
@@ -53,14 +66,22 @@ export function patchClient(input) {
   return s;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv[2] === '--profile-registry') {
+    const file = process.argv[3] + '/dsh-llm/lib/index.js';
+    await writeFile(file, patchRegistry(await readFile(file, 'utf8')));
+  } else {
   const root = process.argv[2] ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai';
   for (const [file, patch] of [
     ['dsh-llm-pi-ai/lib/index.js', patchAdapter],
     ['dsh-llm/lib/index.js', patchRegistry],
     ['dsh-api-session-controller/lib/index.js', patchCatalog],
     ['dsh-client-ui-model-selection/lib/client.js', patchClient],
+    ['dsh-api-session-controller/lib/typert.host.js', patchCatalogCodec],
+    ['dsh-api-session-controller/lib/typert.remote-client.js', patchCatalogCodec],
+    ['dsh-api-remotes/lib/client.js', patchCatalogCodec],
   ]) {
     const path = `${root}/${file}`;
     await writeFile(path, patch(await readFile(path, 'utf8')));
   }
+}
 }

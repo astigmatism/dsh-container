@@ -168,6 +168,7 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
     && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store
 RUN cd /opt/dsh-seed/profiles/web \
     && node /opt/dsh-build/verify-sidebar-terminal.mjs \
+    && node /opt/dsh-build/patch-dsh-resident-availability.mjs --profile-registry /opt/dsh-seed/profiles/web/node_modules/@deepseek-ai \
     && node /opt/dsh-build/patch-dsh-preset-policy.mjs \
     && node /opt/dsh-build/patch-dsh-session-pin.mjs \
     && node /opt/dsh-build/patch-dsh-appearance.mjs \

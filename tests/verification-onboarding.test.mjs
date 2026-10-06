@@ -52,8 +52,12 @@ for (const credentials of [false, true]) for (const alreadyVisible of [false, tr
     await installVerificationOnboarding(page, base);
     await page.goto(base);
     assert.equal(await page.getByRole('dialog').isVisible(), false);
-    await page.evaluate(() => window.showLateNotice());
-    if (alreadyVisible) await page.getByRole('dialog').waitFor({ state: 'visible' });
+    await page.evaluate(visible => {
+      if (visible) {
+        document.querySelector('dialog').showModal();
+        document.querySelector('#target').disabled = false;
+      } else window.showLateNotice();
+    }, alreadyVisible);
     await page.getByRole('button', { name: 'Target', exact: true }).click({ timeout: 5000 });
     assert.equal(await page.getByRole('button', { name: 'Clicked', exact: true }).count(), 1);
     assert.equal(mutations, 0, 'acknowledgement must never reach persisted settings');

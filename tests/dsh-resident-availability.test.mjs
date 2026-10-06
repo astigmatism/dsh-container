@@ -112,3 +112,23 @@ test('host and browser RPC codecs preserve model availability', () => {
     assert.ok(patched.indexOf('available') > patched.indexOf('models'));
   }
 });
+
+
+test('keyboard selection also blocks unavailable models without submitting an RPC', () => {
+  const source = patchClient(fixture.client);
+  const start = source.indexOf('const choose = (selection) => {');
+  const end = source.indexOf('const chooseEffort', start);
+  const submissions = [];
+  const choices = [{ selection: { provider: 'local-everyday', model: 'night' }, model: { available: false } },
+    { selection: { provider: 'amazon-bedrock', model: 'nova' }, model: {} }];
+  const choose = vm.runInNewContext(source.slice(start, end) + '\nchoose', {
+    choices, state: { current: null }, closeAfterSelection() {}, submit: value => submissions.push(value),
+  });
+  choose(choices[0].selection);
+  assert.equal(submissions.length, 0);
+  choose(choices[1].selection);
+  assert.equal(submissions[0].provider, 'amazon-bedrock');
+  choices[0].model.available = true;
+  choose(choices[0].selection);
+  assert.equal(submissions[1].provider, 'local-everyday');
+});

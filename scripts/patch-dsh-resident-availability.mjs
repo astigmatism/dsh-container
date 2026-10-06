@@ -62,6 +62,9 @@ export function patchClient(input) {
 \t\t\t\tctx.effect(() => () => clearInterval(residentTimer));`);
   s = replace(s, 'group.models.some((model) => model.id === selection.model)', 'group.models.some((model) => model.id === selection.model && model.available !== false)');
   s = replace(s, 'title: model.name,\n\t\t\t\t\t\t\t\t\t\t\t\t\tdisabled: busy,', 'title: model.name,\n\t\t\t\t\t\t\t\t\t\t\t\t\tdisabled: busy || model.available === false,');
+  s = replace(s, 'const choose = (selection) => {', `const choose = (selection) => {
+                if (!choices.some(choice => choice.selection.provider === selection.provider && choice.selection.model === selection.model && choice.model.available !== false)) return;`);
+  s = replace(s, 'for (const model of group.models) this.reasoning.set(', 'for (const model of group.models) if (model.available !== false) this.reasoning.set(');
   s = replace(s, 'if (rowId(group.id, model.id) !== id) continue;', 'if (rowId(group.id, model.id) !== id || model.available === false) continue;');
   return s;
 }

@@ -174,7 +174,8 @@ try {
   const retained = await rpc('settings/describe');
   const model = retained.namespaces.find(row => row.ns === 'agent-default-model').value;
   const sidebar = retained.namespaces.find(row => row.ns === 'better-sidebar').value;
-  assert.equal(model.reasoningEffort, 'low');
+  if (daytimeOnly) assert.deepEqual(model, expectedDefault, 'Bedrock default is restored without adding reasoning preferences');
+  else assert.equal(model.reasoningEffort, 'low');
   assert.deepEqual(sidebar.tabsEnabled, { subagent: false, sidechat: true });
   for (let restart = 0; restart < 2; restart++) {
     await stop();

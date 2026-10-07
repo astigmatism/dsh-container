@@ -1,298 +1,219 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { capabilitiesDocument, residentModel, paired, solo, draining, DAYTIME_ID, NIGHTTIME_ID, NIGHTTIME_MTP3_ID } from "./fixtures/router-contract.mjs";
 
 const pluginSource = await readFile(new URL("../seed/plugins/dsh-router-model-discovery.js", import.meta.url), "utf8");
+const plugin = await import(`data:text/javascript;base64,${Buffer.from(pluginSource).toString("base64")}`);
 const {
-  apply,
-  capabilityOps,
-  dshReasoningEfforts,
-  provisionProviderOps,
-  routerMetadataOf,
-} = await import(`data:text/javascript;base64,${Buffer.from(pluginSource).toString("base64")}`);
+  RESIDENT_SERVICES, residentStatus, residentLabel, residentMessage, residentStateRecord, planResidentProvider,
+  dshReasoningEfforts, validateRouterMetadata, routerClientName, routerBaseOf, migrateResidentRoute,
+  isBlockingStatus, describeStatus,
+} = plugin;
 
-function entry(overrides = {}) {
-  return {
-    id: "local-active",
-    x_ollama_router: {
-      schema_version: 2,
-      complete: true,
-      warnings: [],
-      capabilities: ["completion", "thinking"],
-      context_window: 131072,
-      max_output_tokens: 16384,
-      active_request_limit: 2,
-      input_modalities: ["text"],
-      reasoning: {
-        supported: true,
-        efforts: { off: "none", low: "low", medium: "medium", xhigh: "xhigh" },
-        aliases: { none: "off", minimal: "low", high: "xhigh", max: "xhigh" },
-        default: "medium",
-        boolean_true_behavior: { mode: "reject" },
-        output_limit_policy: "cap",
-        absolute_max_output_tokens: 16384,
-        per_effort: {
-          off: { enabled: false, default_output_tokens: 512, max_output_tokens: 4096 },
-          low: { enabled: true, default_output_tokens: 1536, max_output_tokens: 1536 },
-          medium: { enabled: true, default_output_tokens: 3072, max_output_tokens: 3072 },
-          xhigh: { enabled: true, default_output_tokens: 16384, max_output_tokens: 16384 },
-        },
-      },
-      ...overrides,
-    },
-  };
-}
-
-test("consumes the complete router reasoning vocabulary and aliases", () => {
-  const metadata = routerMetadataOf(entry());
-  assert.deepEqual(dshReasoningEfforts(metadata.reasoning), {
-    off: "none",
-    minimal: "low",
-    low: "low",
-    medium: "medium",
-    high: "xhigh",
-    xhigh: "xhigh",
-    max: "xhigh",
-  });
+test("resident routes send the stable service IDs only", () => {
+  assert.deepEqual(RESIDENT_SERVICES, { "local-ollama": "daytime", "local-everyday": "nighttime" });
+  assert.doesNotMatch(pluginSource, /qwen3\.8|abliterated|mtp3/i, "the plugin hard-codes no canonical model ID");
 });
 
-test("represents a definitive non-reasoning marker without model-name inference", () => {
-  const candidate = entry();
-  candidate.x_ollama_router.reasoning.supported = false;
-  candidate.x_ollama_router.capabilities = ["completion"];
-  candidate.x_ollama_router.reasoning.efforts = {};
-  candidate.x_ollama_router.reasoning.aliases = {};
-  candidate.x_ollama_router.reasoning.per_effort = {};
-  const metadata = routerMetadataOf(candidate);
-  assert.equal(dshReasoningEfforts(metadata.reasoning), false);
+test("paired: both services are available with the serving model's limits", () => {
+  const document = paired();
+  const day = residentStatus(document, "daytime");
+  const night = residentStatus(document, "nighttime");
+  assert.equal(day.status, "available");
+  assert.equal(night.status, "available");
+  assert.equal(day.served, DAYTIME_ID);
+  // Admission: input + output + context_safety_reserve <= context_window (§8).
+  assert.equal(day.capabilities.contextWindow, 163840 - 1024);
+  assert.equal(night.capabilities.contextWindow, 98304 - 1024);
+  assert.equal(day.capabilities.maxConcurrency, 1);
+  assert.deepEqual(day.capabilities.input, ["text", "image"]);
+  assert.deepEqual(night.capabilities.input, ["text"]);
+  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated Q6_K (96K) · NSFW");
+  assert.equal(residentLabel(day), "Qwen3.8 27B Q6_K (160K)");
 });
 
-test("rejects incomplete discovery metadata rather than persisting guesses", () => {
-  const candidate = entry();
-  candidate.x_ollama_router.complete = false;
-  assert.throws(() => routerMetadataOf(candidate), /complete schema-v2/);
+test("solo: Nighttime is offline with the configuration ID; Daytime is unaffected", () => {
+  const document = solo();
+  const night = residentStatus(document, "nighttime");
+  assert.equal(night.status, "offline");
+  assert.equal(night.configuration, "flash-next-solo-128k");
+  assert.equal(night.reason, "exclusive_configuration");
+  assert.equal(residentLabel(night), "Nighttime — offline (flash-next-solo-128k)");
+  assert.equal(describeStatus(night), "offline (flash-next-solo-128k)");
+  assert.match(residentMessage(night), /offline in router configuration "flash-next-solo-128k".*Switch this session to Daytime/);
+  assert.equal(isBlockingStatus(night.status), true);
+  assert.equal(residentStatus(document, "daytime").status, "available");
+  assert.equal(residentStatus(document, "daytime").capabilities.contextWindow, 131072 - 1024);
 });
 
-test("rejects invalid capacity and reasoning defaults before mutating settings", () => {
-  const noConcurrency = entry({ active_request_limit: 0 });
-  assert.throws(() => routerMetadataOf(noConcurrency), /active_request_limit/);
-
-  const inconsistentOutput = entry({ max_output_tokens: 32768 });
-  assert.throws(() => routerMetadataOf(inconsistentOutput), /inconsistent output limits/);
-
-  const invalidDefault = entry();
-  invalidDefault.x_ollama_router.reasoning.default = "ultra";
-  assert.throws(() => routerMetadataOf(invalidDefault), /reasoning default is not supported/);
-});
-
-test("contract synchronization corrects context, output, concurrency, and capabilities", () => {
-  const settings = {
-    providers: {
-      local: {
-        cacheRetention: "none",
-        maxConcurrency: 4,
-        reasoning: "off",
-        models: [{
-          id: "local-active",
-          contextWindow: 262144,
-          maxTokens: 32768,
-          input: ["text", "image"],
-          reasoningEfforts: { off: "none", max: "max" },
-        }],
-      },
-    },
-  };
-  const storedSettings = {
-    providers: {
-      local: {
-        models: [{
-          id: "local-active",
-          contextWindow: 262144,
-          maxTokens: 32768,
-          input: ["text", "image"],
-          reasoningEfforts: { off: "none", max: "max" },
-        }],
-      },
-    },
-  };
-  const ops = capabilityOps(settings, "local", "local-active", routerMetadataOf(entry()), storedSettings);
-  assert.deepEqual(ops.map((op) => op.path.at(-1)), ["maxConcurrency", "models"]);
-  assert.equal(ops[0].value, 2);
-  assert.equal(ops[1].value[0].maxTokens, 16384);
-  assert.equal(ops[1].value[0].contextWindow, 131072);
-  assert.deepEqual(ops[1].value[0].input, ["text"]);
-  assert.equal("compat" in ops[1].value[0], false);
-  assert.equal(settings.providers.local.models[0].maxTokens, 32768);
-  assert.equal(settings.providers.local.cacheRetention, "none");
-});
-
-test("capability synchronization is a no-op once metadata is current", () => {
-  const settings = {
-    providers: {
-      local: {
-        maxConcurrency: 2,
-        reasoning: "medium",
-        models: [{
-          id: "local-active",
-          contextWindow: 131072,
-          maxTokens: 16384,
-          input: ["text"],
-          reasoningEfforts: {
-            off: "none",
-            minimal: "low",
-            low: "low",
-            medium: "medium",
-            high: "xhigh",
-            xhigh: "xhigh",
-            max: "xhigh",
-          },
-        }],
-      },
-    },
-  };
-  assert.deepEqual(capabilityOps(settings, "local", "local-active", routerMetadataOf(entry())), []);
-});
-
-test("new Nighttime profile is provisioned from an existing 128K runtime provider", () => {
-  const settings = {
-    providers: {
-      "local-ollama": {
-        displayName: "Local Router (128K context)",
-        api: "openai-responses",
-        baseURL: "http://ai-router:11434/v1",
-        maxConcurrency: 2,
-        reasoning: "medium",
-        models: [{
-          id: "local-active",
-          name: "Local Active Model (128K context)",
-          contextWindow: 131072,
-          maxTokens: 32768,
-          input: ["text", "image"],
-        }],
-      },
-    },
-  };
-  const ops = provisionProviderOps(settings, "local-everyday", "qwen3.8-27b-abliterated-q6_k");
-  assert.equal(ops.length, 1);
-  assert.deepEqual(ops[0].path, ["providers", "local-everyday"]);
-  assert.equal(ops[0].value.displayName, "Nighttime (128K)");
-  assert.equal(ops[0].value.baseURL, "http://ai-router:11434/v1");
-  assert.equal(ops[0].value.maxConcurrency, 1);
-  assert.equal(ops[0].value.reasoning, "medium");
-  assert.equal(ops[0].value.models[0].name, "Nighttime (128K)");
-  assert.equal(ops[0].value.models[0].contextWindow, 131072);
-  assert.equal(settings.providers["local-everyday"], undefined);
-});
-
-test("profile provisioning avoids materializing resolved schema defaults", () => {
-  const stored = {
-    providers: {
-      "local-ollama": {
-        api: "openai-responses",
-        baseURL: "http://ai-router:11434/v1",
-        models: [{ id: "local-active", contextWindow: 131072, maxTokens: 32768 }],
-      },
-    },
-  };
-  const resolved = structuredClone(stored);
-  Object.assign(resolved.providers["local-ollama"], {
-    modelOverrides: {},
-    headers: {},
-    defaultContextWindow: 262144,
-    maxRequestImageBytes: 20971520,
-  });
-  const [operation] = provisionProviderOps(
-    resolved,
-    "local-everyday",
-    "qwen3.8-27b-abliterated-q6_k",
-    stored,
-  );
-  assert.equal(operation.value.contextWindow, undefined);
-  assert.equal(operation.value.modelOverrides, undefined);
-  assert.equal(operation.value.headers, undefined);
-  assert.equal(operation.value.maxRequestImageBytes, undefined);
-  assert.equal(operation.value.models[0].contextWindow, 131072);
-});
-
-test("resident profiles take labels and capacities from discovery while retaining deliberate effort", () => {
-  for (const [provider, model, context, label] of [
-    ["local-ollama", "local-active", 131072, "Daytime (128K)"],
-    ["local-ollama", "local-active", 147456, "Daytime (144K)"],
-    ["local-ollama", "local-active", 163840, "Daytime (160K)"],
-    ["local-everyday", "qwen3.8-27b-abliterated-q6_k", 131072, "Nighttime (128K)"],
+test("Nighttime unhealthy or incomplete is recorded on its own and never blocks Daytime", () => {
+  const unhealthy = paired({ models: [residentModel(), residentModel({ service: "nighttime", available: false })] });
+  assert.equal(residentStatus(unhealthy, "nighttime").status, "unavailable");
+  assert.equal(residentStatus(unhealthy, "nighttime").reason, "backend unavailable");
+  assert.equal(residentLabel(residentStatus(unhealthy, "nighttime")), "Nighttime — unavailable");
+  assert.equal(residentStatus(unhealthy, "daytime").status, "available");
+  for (const damage of [
+    meta => { meta.warnings = ["BACKEND_SLOT_COUNT_MISMATCH"]; },
+    meta => { meta.complete = false; },
+    meta => { meta.schema_version = 3; },
+    meta => { meta.reasoning.default = "unsupported"; },
+    meta => { meta.context_safety_reserve = -1; },
+    meta => { meta.capabilities = ["completion"]; },
   ]) {
-    const settings = {providers: {[provider]: {displayName: "old", maxConcurrency: 2, reasoning: "off", models: [{id:model,name:"old",contextWindow:262144,maxTokens:32768}]}}};
-    const metadata = routerMetadataOf(entry({display_name:label,context_window:context,active_request_limit:1}));
-    const ops = capabilityOps(settings, provider, model, metadata);
-    assert.deepEqual(ops.map(op => op.path.at(-1)), ["displayName","maxConcurrency","models"]);
-    assert.equal(ops[0].value,label);
-    assert.equal(ops[1].value,1);
-    assert.equal(ops[2].value[0].id,model);
-    assert.equal(ops[2].value[0].name,label);
-    assert.equal(ops[2].value[0].contextWindow,context);
-    assert.equal(settings.providers[provider].reasoning,"off");
+    const night = residentModel({ service: "nighttime" });
+    damage(night.metadata);
+    const document = paired({ models: [residentModel(), night] });
+    const state = residentStatus(document, "nighttime");
+    assert.equal(state.status, "incomplete", state.reason);
+    assert.equal(residentLabel(state), "Nighttime — incomplete metadata");
+    assert.equal(residentStatus(document, "daytime").status, "available");
+  }
+  const warned = residentModel({ service: "nighttime" });
+  warned.metadata.warnings = ["BACKEND_VISION_MISMATCH"];
+  assert.match(residentStatus(paired({ models: [residentModel(), warned] }), "nighttime").reason, /BACKEND_VISION_MISMATCH/);
+  const mismatch = residentModel({ service: "nighttime" });
+  mismatch.slots = 2;
+  assert.equal(residentStatus(paired({ models: [residentModel(), mismatch] }), "nighttime").status, "incomplete");
+});
+
+test("draining or maintenance: every model waits, none is blocked, nothing falls back", () => {
+  for (const document of [draining(), capabilitiesDocument({ accepting: false, draining: false, maintenance: true }), draining(solo())]) {
+    for (const service of ["daytime", "nighttime"]) {
+      const state = residentStatus(document, service);
+      assert.equal(state.status, "switching", service);
+      assert.equal(isBlockingStatus(state.status), false);
+      assert.match(residentLabel(state), /router switching configuration$/);
+    }
+  }
+  assert.equal(residentStatus(capabilitiesDocument({ accepting: false, draining: false, maintenance: true }), "daytime").reason, "maintenance");
+});
+
+test("router unreachable: both models are unavailable with a recoverable message", () => {
+  for (const service of ["daytime", "nighttime"]) {
+    const state = residentStatus(null, service);
+    assert.equal(state.status, "unavailable");
+    assert.equal(state.reason, "router unreachable");
+    assert.match(residentMessage(state), /router is unreachable/);
   }
 });
 
-test("plugin synchronizes through 0.1.7 settings descriptors without the removed get API", async () => {
-  const previousFetch = globalThis.fetch;
-  const settings = {
-    providers: {
-      "local-ollama": {
-        baseURL: "http://router.example/v1",
-        displayName: "Local Ollama (128k)",
-        maxConcurrency: 1,
-        reasoning: "off",
-        models: [{
-          id: "local-active",
-          name: "Local active model (128k)",
-          contextWindow: 131072,
-          maxTokens: 32768,
-          input: ["text", "image"],
-          reasoningEfforts: { off: "none", max: "max" },
-        }],
-      },
-    },
-  };
+test("a disappeared ID without an offline entry, an invalid document, and an ambiguous service", () => {
+  assert.equal(residentStatus(paired({ models: [residentModel()] }), "nighttime").reason, "not offered by the router");
+  assert.equal(residentStatus({ object: "router.capabilities" }, "daytime").status, "incomplete");
+  const twice = paired({ models: [residentModel(), residentModel({ id: "other", service: "daytime" })] });
+  assert.equal(residentStatus(twice, "daytime").status, "incomplete");
+});
+
+test("a new canonical ID behind nighttime (MTP3) stays available; the ID is information only", () => {
+  const before = residentStatus(paired(), "nighttime");
+  const after = residentStatus(paired({ models: [residentModel(), residentModel({ service: "nighttime", id: NIGHTTIME_MTP3_ID })] }), "nighttime");
+  assert.equal(before.status, "available");
+  assert.equal(after.status, "available");
+  assert.equal(before.served, NIGHTTIME_ID);
+  assert.equal(after.served, NIGHTTIME_MTP3_ID);
+  const record = JSON.stringify(residentStateRecord(after));
+  assert.doesNotMatch(record, /fixture-/);
+});
+
+test("limits are recomputed from the serving model after a context change", () => {
+  const first = residentStatus(paired({ models: [residentModel(), residentModel({ service: "nighttime", contextWindow: 131072 })] }), "nighttime");
+  const second = residentStatus(paired({ models: [residentModel(), residentModel({ service: "nighttime", contextWindow: 98304, slots: 2 })] }), "nighttime");
+  const stored = { api: "openai-responses", baseURL: "http://router/v1", reasoning: "medium", models: [{ id: "nighttime", name: "old", custom: "kept" }] };
+  const one = planResidentProvider({ name: "local-everyday", state: first, stored, clientName: "deepseek-harness/test" });
+  const two = planResidentProvider({ name: "local-everyday", state: second, stored: one, clientName: "deepseek-harness/test" });
+  assert.equal(one.models[0].contextWindow, 131072 - 1024);
+  assert.equal(two.models[0].contextWindow, 98304 - 1024);
+  assert.equal(one.maxConcurrency, 1);
+  assert.equal(two.maxConcurrency, 2);
+  assert.equal(two.models[0].custom, "kept");
+  assert.equal(two.residentState.limits, "current");
+});
+
+test("while a model is unavailable its last limits are kept and marked stale", () => {
+  const available = planResidentProvider({ name: "local-everyday", state: residentStatus(paired(), "nighttime"),
+    stored: { baseURL: "http://router/v1", models: [{ id: "nighttime" }] }, clientName: "deepseek-harness/test" });
+  const offline = planResidentProvider({ name: "local-everyday", state: residentStatus(solo(), "nighttime"), stored: available, clientName: "deepseek-harness/test" });
+  assert.equal(offline.models[0].contextWindow, available.models[0].contextWindow);
+  assert.deepEqual(offline.models[0].reasoningEfforts, available.models[0].reasoningEfforts);
+  assert.equal(offline.residentUnavailable, true);
+  assert.equal(offline.residentState.limits, "stale");
+  assert.equal(offline.residentState.status, "offline");
+  const switching = planResidentProvider({ name: "local-everyday", state: residentStatus(draining(), "nighttime"), stored: available, clientName: "deepseek-harness/test" });
+  assert.equal(switching.residentUnavailable, false, "a draining router makes requests wait rather than fail");
+  assert.equal(switching.residentState.limits, "stale");
+});
+
+test("planning migrates old IDs, preserves preferences and identifies the client", () => {
+  const stored = { api: "openai-responses", apiKeyEnv: "KEEP", baseURL: "http://router/v1", reasoning: "low",
+    headers: { "x-client-name": "stale", Other: "kept" }, retryPolicy: { mode: "normal", maxRetries: 2 },
+    models: [{ id: "qwen3.8-27b-abliterated-q6_k", name: "Nighttime (128K)", custom: "kept" }] };
+  const next = planResidentProvider({ name: "local-everyday", state: residentStatus(paired(), "nighttime"), stored, clientName: "deepseek-harness/host-7" });
+  assert.deepEqual(next.models.map(row => row.id), ["nighttime"]);
+  assert.equal(next.models[0].custom, "kept");
+  assert.equal(next.apiKeyEnv, "KEEP");
+  assert.equal(next.reasoning, "low");
+  assert.deepEqual(next.retryPolicy, stored.retryPolicy);
+  assert.deepEqual(next.headers, { Other: "kept", "X-Client-Name": "deepseek-harness/host-7" });
+  assert.doesNotMatch(JSON.stringify(next), /qwen3\.8|fixture-/);
+  const provisioned = planResidentProvider({ name: "local-everyday", state: residentStatus(solo(), "nighttime"),
+    daytime: { baseURL: "http://router/v1", apiKeyEnv: "KEEP", reasoning: "medium", models: [{ id: "daytime", contextWindow: 163840 }] },
+    clientName: "deepseek-harness/host-7" });
+  assert.deepEqual(provisioned.models, [{ id: "nighttime", name: "Nighttime" }], "a new Nighttime route inherits no Daytime limits");
+  assert.equal(provisioned.residentUnavailable, true);
+});
+
+test("old session and default routes migrate to service IDs", () => {
+  assert.deepEqual(migrateResidentRoute({ provider: "local-ollama", model: "local-active", reasoningEffort: "high" }),
+    { provider: "local-ollama", model: "daytime", reasoningEffort: "high" });
+  assert.deepEqual(migrateResidentRoute({ provider: "local-everyday", model: "qwen3.8-27b-abliterated-q6_k" }),
+    { provider: "local-everyday", model: "nighttime" });
+  const external = { provider: "amazon-bedrock", model: "anthropic.fixture" };
+  assert.equal(migrateResidentRoute(external), external);
+  const current = { provider: "local-ollama", model: "daytime" };
+  assert.equal(migrateResidentRoute(current), current);
+});
+
+test("X-Client-Name: deepseek-harness/<instance> from setting, environment, then hostname", () => {
+  assert.equal(routerClientName({ instance: "192.168.1.7", env: {} }), "deepseek-harness/192.168.1.7");
+  assert.equal(routerClientName({ env: { HARNESS_CLIENT_INSTANCE: "lab box" } }), "deepseek-harness/lab-box");
+  assert.match(routerClientName({ env: {} }), /^deepseek-harness\/[A-Za-z0-9._:@-]+$/);
+  assert.equal(routerBaseOf("http://ai-router:11434/v1/"), "http://ai-router:11434");
+  assert.throws(() => routerBaseOf("http://user:secret@router/v1"), /without embedded credentials/);
+});
+
+test("router reasoning vocabulary maps to Harness selector levels", () => {
+  const metadata = validateRouterMetadata(residentModel().metadata);
+  assert.deepEqual(dshReasoningEfforts(metadata.reasoning), {
+    off: "none", minimal: "low", low: "low", medium: "medium", high: "xhigh", xhigh: "xhigh", max: "xhigh",
+  });
+  const none = residentModel().metadata;
+  Object.assign(none, { capabilities: ["completion", "tools", "vision"] });
+  none.reasoning = { ...none.reasoning, supported: false, efforts: {}, aliases: {}, per_effort: {} };
+  assert.equal(dshReasoningEfforts(validateRouterMetadata(none).reasoning), false);
+  const bounded = residentModel({ unrestricted: false }).metadata;
+  assert.equal(validateRouterMetadata(bounded).max_output_tokens, 8192);
+  bounded.reasoning.per_effort.medium.default_output_tokens = 9000;
+  assert.throws(() => validateRouterMetadata(bounded), /invalid limits/);
+});
+
+test("the plugin registers the session-route waterfall and owns its timers", async () => {
+  const listeners = [];
   let dispose;
-  let resolveMutation;
-  const mutation = new Promise((resolve) => {
-    resolveMutation = resolve;
-  });
-  const settingsService = {
-    describe: () => [{ ns: "llm-pi-ai", value: settings, user: settings }],
-    mutate: async (_namespace, ops) => resolveMutation(ops),
-  };
-  globalThis.fetch = async () => new Response(JSON.stringify({data:[entry()]}), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+  const settings = { describe: () => [{ ns: "llm-pi-ai", value: { providers: {} }, user: { providers: {} } }], mutate: async () => {} };
+  plugin.apply({
+    on: (name, listener, options) => listeners.push({ name, listener, options }),
+    inject: (services, callback) => {
+      assert.deepEqual(services, ["settings"]);
+      callback({ settings, logger: { info() {}, warn() {} }, effect: (callback) => { dispose = callback(); } });
+    },
+  }, { providers: ["local-ollama", "local-everyday"], pollIntervalMs: 60_000 });
   try {
-    const scopedContext = {
-      settings: settingsService,
-      effect: (callback) => {
-        dispose = callback();
-      },
-      logger: { info() {}, warn() {} },
-    };
-    apply({
-      inject: (services, callback) => {
-        assert.deepEqual(services, ["settings"]);
-        callback(scopedContext);
-      },
-    }, {
-      providers: ["local-ollama"],
-      model: "local-active",
-      pollIntervalMs: 60_000,
-    });
-    const ops = await mutation;
-    assert.deepEqual(ops.map((op) => op.path.at(-1)), ["displayName", "maxConcurrency", "models"]);
-    assert.equal(ops[0].value, "Daytime (128K)");
-    assert.equal(ops[1].value, 2);
-    assert.equal(ops[2].value[0].name, "Daytime (128K)");
-    assert.equal(ops[2].value[0].maxTokens, 16384);
-  } finally {
-    dispose?.();
-    globalThis.fetch = previousFetch;
-  }
+    assert.equal(listeners[0].name, "agent/request");
+    assert.equal(listeners[0].options.prepend, true);
+    assert.deepEqual(await listeners[0].listener({}, async () => ({ provider: "local-everyday", model: "qwen3.8-27b-abliterated-q6_k" })),
+      { provider: "local-everyday", model: "nighttime" });
+    assert.equal(typeof globalThis[Symbol.for("dsh-container.router-contract.v1")]?.report, "function");
+  } finally { dispose?.(); }
+  assert.equal(globalThis[Symbol.for("dsh-container.router-contract.v1")], undefined);
 });

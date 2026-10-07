@@ -367,8 +367,10 @@ if ! compose exec -T harness node --input-type=module -e '
   exit "$configuration_exit"
 fi
 
+# Reachability uses the capabilities document, never /health (LLM Router
+# client contract §7); a pre-contract managed router answers its listing.
 if ! compose exec -T harness node -e \
-  "fetch('http://ai-router:11434/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
+  "const h={'x-client-name':'deepseek-harness/'+(process.env.HARNESS_CLIENT_INSTANCE||require('os').hostname())};fetch('http://ai-router:11434/v1/router/capabilities',{headers:h}).then(async r=>{if(r.status===404)r=await fetch('http://ai-router:11434/v1/models',{headers:h});if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
   if ! docker info >/dev/null 2>&1; then
     echo "Docker Engine became unavailable during model-provider verification." >&2
     exit "$docker_compose_exit"

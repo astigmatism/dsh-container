@@ -28,13 +28,18 @@ step after an operator updates a selected deployment through Service Portal.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
-- Two resident OpenAI Responses models at `http://ai-router:11434/v1`:
-  Daytime (128K) and Nighttime (128K), each with one independent generation slot
-  and no inherited output ceiling.
+- Two resident OpenAI Responses routes at `http://ai-router:11434/v1` that send
+  the LLM Router's stable service IDs `daytime` and `nighttime`. Their context,
+  slots, modalities and efforts come from the serving model, and they follow
+  the [LLM Router client contract](docs/llm-router-contract.md), including its
+  conformance map.
 - The model picker includes Daytime and optional Nighttime alongside configured
-  external providers. Missing Nighttime remains visible but unavailable, and saved
-  selections never fall back to another model. Startup and discovery refresh
-  preserve external defaults, credentials, session history and reasoning choices.
+  external providers. Each resident shows exactly one state (available, offline
+  with its configuration, unavailable, router switching configuration, or
+  incomplete metadata). Saved selections never fall back to another model, and
+  a model that returns is selectable again without action. Startup never fails
+  because of router state. Startup and discovery refresh preserve external
+  defaults, credentials, session history and reasoning choices.
   The built-in DeepSeek adapter remains disabled in the web profile.
 - Explicit DSH medium reasoning by default; the raw router default remains
   template-defined. Off, low, medium, and xhigh are supported,
@@ -195,8 +200,9 @@ local and production validation agents.
 Remote Ollama mode is the portable default and is intended for deploying
 Harness on another machine on the LAN. Compose maps the canonical `ai-router`
 name directly to `REMOTE_OLLAMA_HOST`. The production router owns the OpenAI
-Responses endpoint, tools, reasoning, vision, schema-v2 discovery, and
-`local-active` translation; remote mode does not start a local router service.
+Responses endpoint, tools, reasoning, vision, capabilities discovery and change
+events, and the `daytime`/`nighttime` service IDs; remote mode does not start a
+local router service.
 
 ```sh
 git clone https://github.com/astigmatism/dsh-container.git
@@ -276,38 +282,53 @@ it does not modify the old checkout's `.env`.
 
 ## Persisted settings lifecycle
 
-`config/settings.yaml` seeds **Daytime (128K)** through
-`local-ollama/local-active` and **Nighttime (128K)** through
-`local-everyday/qwen3.8-27b-abliterated-q6_k`. Each resident model has one
-independent generation slot. The former 256K selection is retired.
+`config/settings.yaml` seeds **Daytime** as `local-ollama/daytime` and
+**Nighttime** as `local-everyday/nighttime`. Their 128K limits are placeholders
+until the first successful discovery. The former 256K selection is retired.
+Canonical model IDs (which change with every AI Runtime configuration) are never
+configured or stored; they appear only as information in discovery logs.
 
-The discovery plugin reads each model's router metadata, including
-`x_ollama_router.display_name`, context, concurrency, modalities and effort
-mappings. Both resident models advertise their actual input and tool capabilities.
-Daytime currently selects Qwen3.8-Flash-Next AD-4.27 at 128K. Switching the
-model host to `daytime-27b` advertises the original 27B model at 160K; discovery
-and the Update and Restart verifier follow that advertised label and capacity.
-The live picker and context meter are checked against validated router metadata,
-while offline image checks use their isolated seed settings. No Harness source
-edit is needed when switching between these profiles.
-Stable API IDs remain separate from display names. Daytime retains `local-active`
-for existing sessions. Nighttime may be absent from a valid catalog: its picker
-entry is disabled, its saved selections remain unchanged, and generation fails
-clearly until the user switches models or the same Nighttime model returns.
+Discovery follows the router as the [client contract](docs/llm-router-contract.md)
+requires. At startup it reads `GET /v1/router/capabilities`, then subscribes to
+`GET /v1/router/events`. While the stream is down it polls every 30 seconds
+with `If-None-Match`, and reconnects with a 3 → 30 second backoff. A stream with
+no bytes for 60 seconds counts as dead. Each new `revision` re-synchronizes
+immediately, and settings updates push the new states to open pickers. Each
+model is evaluated on its own:
 
-A normal image update atomically reconciles repository-owned resident providers
-before Harness launches; runtime discovery maintains their capabilities and
-availability. It preserves external providers and defaults, including Bedrock,
-credential storage, session history and unrelated settings. Only recognized
-retired Daytime identities migrate to the stable Daytime route. The built-in
-DeepSeek adapter remains disabled by the versioned web profile.
+| Router state | Picker | Requests |
+| --- | --- | --- |
+| Listed and `available` with complete metadata | its display name (with an `· NSFW` badge when declared) | sent; context budget = `context_window` − `context_safety_reserve`, concurrency = `slots` |
+| In `offline_services` | `Nighttime — offline (<configuration>)` | fail at once, no retries |
+| Listed with `available: false`, absent, or router unreachable | `… — unavailable` | fail at once, no retries |
+| `accepting_requests: false` (drain or maintenance) | `… — router switching configuration` | wait 2 → 30 s without switching models |
+| Metadata incomplete, invalid or warning-bearing | `… — incomplete metadata` | fail at once, no retries |
 
-Invalid discovery metadata leaves settings unchanged and fails startup or
-verification. The narrow startup transport-outage fallback applies only to
-already valid saved resident settings; runtime outages retain the last validated
-state and report the failure. See [optional residents and override adoption](docs/optional-residents.md)
+Limits change only while a model is available. Otherwise its last limits are
+kept, marked stale and not acted on. Request errors are classified by the
+router's `error.code` before HTTP status. `SERVICE_OFFLINE` and
+`MODEL_NOT_FOUND` end the request at once and re-synchronize.
+`BACKEND_UNAVAILABLE` uses the provider's bounded retries, after which the
+model is marked unavailable. `BACKEND_DRAINING` and `MAINTENANCE_MODE` wait.
+Queue keepalive comments count as stream activity, so a request waiting in the
+router queue is never abandoned by the idle timer. Every router request carries
+`X-Client-Name: deepseek-harness/<instance>`. The instance comes from
+`HARNESS_CLIENT_INSTANCE`, then `HARNESS_TLS_IP`, then the container hostname.
+Transitions are logged, for example
+`nighttime: available → offline (flash-next-solo-128k)`.
+
+A normal image update atomically migrates repository-owned resident providers
+before Harness launches. The update converts old model IDs to service IDs in
+settings, defaults and compaction policies. Existing sessions move to the
+service ID on their next request. It preserves external providers and defaults,
+including Bedrock, credential storage, session history and unrelated settings.
+Only invalid local settings stop startup. An unreachable router starts Harness
+with its stored settings and both models unavailable, and discovery recovers
+automatically. See [optional residents and override adoption](docs/optional-residents.md)
 for upgrade and rollback guidance, including executable bind mounts that can
-otherwise shadow corrected image files.
+otherwise shadow corrected image files. The router archives every generation;
+treat conversations with the resident models as passing through a logged
+service (contract §12).
 
 `scripts/migrate-resident-models.mjs` uses the same synchronization for explicit
 local maintenance and keeps a private backup when it changes a file.

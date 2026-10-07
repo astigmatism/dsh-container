@@ -30,3 +30,8 @@ place. Keep destination identities and local deployment settings outside Git;
 the intentional model-router and speech-service defaults remain application
 dependencies. Qualify all supported topologies and custom deployment adoption
 with synthetic fixtures before releasing changes.
+
+Router integration (provider requests, model discovery, availability, retries,
+limits) must uphold `docs/llm-router-contract.md`. Update its conformance map
+with any such change. Never edit the vendored contract text; replace it only
+when the LLM Router maintainer announces a new version.

@@ -25,7 +25,7 @@ const browserErrors = [];
 page.on('pageerror', error => browserErrors.push(error.message));
 page.on('console', message => { if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text()); });
 page.on('requestfailed', request => browserErrors.push(`${new URL(request.url()).pathname}: ${request.failure()?.errorText}`));
-const night = { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k' };
+const night = { provider: 'local-everyday', model: 'nighttime' };
 async function rpc(method, request = {}) {
   const response = await context.request.post(`${base}/api/${method}`, { data: {
     type: 'client-request', rpcId: randomUUID(), method,
@@ -65,7 +65,7 @@ try {
   // Persist a real Nighttime conversation before testing disappearance. A
   // prompt rejected before dispatch can leave a blank draft hidden by Sidebar.
   await rpc('session/prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text: 'Materialize the Nighttime fixture; do not use tools.' }] });
-  await until(async () => (await (await fetch(`${control}/__fixture/requests`)).json()).includes(night.model), 'Nighttime dispatch uses its exact model');
+  await until(async () => (await (await fetch(`${control}/__fixture/requests`)).json()).includes(night.model), 'Nighttime dispatch sends the nighttime service ID');
   await rpc('session/cancel', { sessionId });
   await until(async () => !(await rpc('session/list')).items.find(row => row.sessionId === sessionId)?.running, 'Nighttime fixture is idle');
   await setNight(false);
@@ -90,19 +90,21 @@ try {
   }, 'fixture session visible');
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
-  await until(async () => /unavailable/i.test(await trigger.innerText()), 'selected Nighttime shows its unavailable status');
+  await until(async () => /offline/i.test(await trigger.innerText()), 'selected Nighttime shows its offline status');
   await clickVerificationTarget(page, trigger);
   await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Model/ }));
-  const unavailable = page.getByRole('menuitemradio', { name: 'Nighttime — unavailable', exact: true });
+  // Exactly one state: offline, with the configuration ID from offline_services.
+  const unavailable = page.getByRole('menuitemradio', { name: 'Nighttime — offline (fixture-solo)', exact: true });
   await unavailable.waitFor();
   assert.equal(await unavailable.isDisabled(), true);
   await setNight(true);
   await delay(1000);
   assert.deepEqual(await (await fetch(`${control}/__fixture/requests`)).json(), before, 'reappearance never replays the failed prompt');
   // The same open picker must update without reload or reconnection.
-  await until(async () => await page.getByRole('menuitemradio', { name: 'Secondary fixture', exact: true }).count() === 1,
+  // The router declares Nighttime NSFW; the picker carries the badge.
+  await until(async () => await page.getByRole('menuitemradio', { name: 'Secondary fixture · NSFW', exact: true }).count() === 1,
     'open picker observes Nighttime return');
-  assert.equal(await page.getByRole('menuitemradio', { name: 'Secondary fixture', exact: true }).isDisabled(), false);
+  assert.equal(await page.getByRole('menuitemradio', { name: 'Secondary fixture · NSFW', exact: true }).isDisabled(), false);
   assert.equal((await rpc('session/modelCatalog')).default.provider, night.provider);
   await setNight(false);
   await until(async () => await unavailable.count() === 1, 'open picker observes removal');

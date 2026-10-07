@@ -1,26 +1,87 @@
 # Optional Nighttime and deployment-local code overrides
 
-Daytime keeps provider `local-ollama` and model `local-active`. Nighttime keeps
-provider `local-everyday` and model `qwen3.8-27b-abliterated-q6_k`. A successful,
-valid router catalog may omit Nighttime. Its provider is retained with
-`residentUnavailable: true`; the picker displays **Nighttime — unavailable** and
-disables selection. The model-catalog entry carries `available: false`, and its
-provider is omitted from `routableProviders` while retaining its visible group.
-Saved defaults and sessions retain their identities and
-reasoning preferences. Sending or dispatching a queued request fails with
-`MODEL_UNAVAILABLE`; no alternate model is selected. Existing streams are not
-cancelled by discovery. Valid reappearance enables subsequent requests without
-replaying failures. A newly absent model has no inferred capability metadata.
+Resident routing follows the [LLM Router client contract](llm-router-contract.md)
+(version 1). Its conformance map records how each requirement is met. Daytime
+is provider `local-ollama` with model `daytime`; Nighttime is provider
+`local-everyday` with model `nighttime`. These are the router's stable service
+IDs. The canonical model behind a service (for example an MTP3 variant of
+Nighttime) can change with any AI Runtime configuration and is never configured
+or stored.
+
+## What the router can do to a resident, and what Harness shows
+
+AI Runtime switches configurations by hand and without notice. Paired
+configurations run Daytime and Nighttime together; solo configurations stop
+Nighttime and give Daytime every GPU. Within either kind, a service's context
+window and canonical model can change. Discovery reads
+`/v1/router/capabilities` at startup and follows `/v1/router/events`. Each new
+`revision` re-synchronizes at once, and the picker updates without reload.
+Each model is evaluated on its own, so one model's state never blocks updates
+to the other. The picker shows exactly one state per resident:
+
+| State | Picker label | Selecting | Requests |
+| --- | --- | --- | --- |
+| available | display name, `· NSFW` when the router declares it | allowed | sent with the serving model's limits |
+| offline (in `offline_services`) | `Nighttime — offline (flash-next-solo-128k)` | blocked | fail at once with `MODEL_UNAVAILABLE`; no retries |
+| unavailable (backend unhealthy, ID absent, or router unreachable) | `Nighttime — unavailable` | blocked | fail at once; no retries |
+| router switching configuration (draining or maintenance) | `Nighttime — router switching configuration` | allowed | wait 2 → 30 s and retry the same model |
+| incomplete metadata (warnings, `complete: false`, invalid fields) | `Nighttime — incomplete metadata` | blocked | fail at once; no retries |
+
+**Fallback is deliberately disabled** (contract §5). A Harness session is a long
+conversation. Switching models silently would change its context window,
+compaction and refusal behavior. A blocked request says what happened and asks
+the user to switch the session to Daytime. When Nighttime returns, it becomes
+selectable again with no action, and failed prompts are never replayed.
+
+The state is recorded in each resident provider's settings
+(`residentUnavailable` and `residentState`: status, label, message,
+configuration ID, reason and whether limits are `current`, `stale` or `stored`).
+Limits change only while a model is available. They are the serving model's
+`context_window` minus `metadata.context_safety_reserve`, and its `slots` as
+`maxConcurrency`. While a model is not available, its last limits are kept,
+marked stale and not acted on. The 128K values in `config/settings.yaml` are
+placeholders until the first successful discovery.
+
+Request-time router errors are classified by `error.code` first. This covers
+HTTP bodies and in-stream `response.failed`/`error` events.
+
+- **`SERVICE_OFFLINE`, `MODEL_NOT_FOUND`:** the request ends at once without
+  consuming retries; the model is held offline or unavailable and the document
+  is re-read.
+- **`BACKEND_UNAVAILABLE`:** the provider's bounded retry policy applies; three
+  such failures mark the model unavailable until a new revision or 60 seconds.
+- **`BACKEND_DRAINING`, `MAINTENANCE_MODE`:** the request waits on its own retry
+  chain (2 → 30 s, unbounded while the router keeps switching). It does not
+  touch the provider retry budget, and each attempt re-resolves the model, so a
+  model that went offline in the new configuration fails then.
+- **Other 5xx, 408, 429 and network errors:** retried. **Other 4xx:** fail.
+
+Queue keepalive comments count as stream activity. A request that waits in the
+router queue longer than `streamIdleTimeoutMs` is therefore never abandoned.
+
+Startup never fails because of router state. Only invalid local settings stop
+`scripts/migrate-resident-models.mjs --startup`. If the router is unreachable,
+Harness starts with its stored settings, marks both models unavailable and
+recovers automatically. The migration also converts old model IDs to service
+IDs. It covers the provider map, the saved default, compaction `modelPolicies`
+and any other `provider`/`model` pair of a resident route. Existing sessions
+recorded their route with the old ID. Each one is rewritten to the service ID
+on its next request, and the adapter accepts old IDs for side calls such as
+compaction summaries.
 
 Discovery owns the two resident entries and the recognized retired Daytime
 profile only. External providers (including Amazon Bedrock), credentials,
 external default selections, unrelated settings and session history survive.
-Only the optional model's `ROUTER_MODEL_NOT_FOUND` condition in a structurally
-valid catalog means absence. HTTP errors, malformed catalogs, ambiguous aliases,
-unhealthy advertised models and invalid capability metadata remain errors.
-Startup may retain already valid stored resident settings during the existing
-narrow timeout/connection-failure fallback; runtime failures preserve the last
-validated settings and log the discovery failure.
+Every router request and discovery fetch sends
+`X-Client-Name: deepseek-harness/<instance>`. The instance comes from
+`HARNESS_CLIENT_INSTANCE`, else `HARNESS_TLS_IP`, else the container hostname.
+The `router-model-discovery` setting `clientInstance` overrides it. Transitions
+are logged to the Harness log and the container log, for example
+`router-model-discovery: nighttime: available → offline (flash-next-solo-128k)`.
+
+A pre-contract router without `/v1/router/capabilities`, such as the vendored
+managed-mode router, is read from its `/v1/models` listing. `local-active`
+maps to Daytime there, and limits it does not publish are kept as stored.
 
 ## Review and adopt executable overrides
 
@@ -102,11 +163,15 @@ After the separately authorized update, the installed verifier must pass:
 ```
 
 Confirm healthy Harness and gateway containers, authenticated access, retained
-Bedrock configuration/default, working Daytime inference, disabled Nighttime,
-and the Portal **Update and restart** capability. The resident client gate uses
-isolated sessions and restores the raw default fields, including an unavailable
-Nighttime default. It does not run paid external-provider inference. Verify the
-four effective mounts now point into the selected operational release.
+Bedrock configuration/default, working inference for each available resident,
+the expected state for any other resident, and the Portal **Update and restart**
+capability. The router's current configuration never fails verification: an
+offline, unavailable, incomplete or switching model is reported and skipped,
+while its recorded state, label and (when available) limits must match the
+capabilities document. The resident client gate uses isolated sessions and
+restores the raw default fields, including an unavailable Nighttime default. It
+does not run paid external-provider inference. Verify the four effective mounts
+now point into the selected operational release.
 
 Automatic failure recovery restores settings/state, image identities, operational
 configuration and original bind mappings. Private `maintenance-status.json`
@@ -134,8 +199,10 @@ successful recovery point. It recreates the previous containers and verifies
 health, authenticated access and the current resident contract, rather than
 trusting old image-local verifiers.
 
-**Restoring the currently broken release can restore the same restart loop.**
-An absent Nighttime model will still break that old startup script. Successful
+**Restoring a release older than this contract can restore its restart loop.**
+Releases before service IDs fail their startup script when Nighttime is
+missing or unhealthy. Rollback verification accepts their old route IDs
+(`allowLegacyIds`) but cannot repair that script. Successful
 file/image restoration is not proof of a healthy service: a failed health or
 contract probe leaves recovery failed and retains the journal. Do not change the
 production router or edit old files to hide this; recover to a separately
@@ -143,12 +210,20 @@ reviewed compatible release through the authorized deployment workflow.
 
 ## Qualification
 
-Host: focused discovery, migration and adapter/client fixture tests plus
-`./scripts/check.sh --host`. Set `DSH_RUNTIME_ROOT` to a host-compatible pinned
-Harness runtime to run YAML migration tests; they are mandatory in the packaged
-CI runtime (`DSH_TEST_HARNESS=1`) and must not silently skip there.
+Host: `./scripts/check.sh --host` runs the router contract tests
+(`tests/router-model-discovery.test.mjs`, `tests/router-provider-remote.test.mjs`,
+`tests/dsh-resident-availability.test.mjs`, `tests/dsh-llm-pi-ai-patch.test.mjs`,
+`tests/llm-router-contract.test.mjs`) against synthetic paired, solo, unhealthy,
+incomplete, draining, unreachable and changing documents, plus a fake event
+stream. Set `DSH_RUNTIME_ROOT` to a host-compatible pinned Harness runtime to
+run YAML migration tests; they are mandatory in the packaged CI runtime
+(`DSH_TEST_HARNESS=1`) and must not silently skip there.
 
-GitHub CI: `./scripts/check.sh --build`, including both real-entrypoint startup
-catalogs, Bedrock preservation, the rendered picker transitioning absent →
-present → absent without reconnection, and synthetic maintenance/recovery tests.
-No Docker is required on the development Mac.
+GitHub CI: `./scripts/check.sh --build`. It runs `verify-router-client-wire.mjs`
+against the installed adapter (queue keepalives past the idle timeout, every
+error code, `X-Client-Name`). It runs both real-entrypoint startup fixtures,
+which serve capabilities and events, and checks Bedrock preservation. It
+checks the rendered picker moving offline → available (with the NSFW badge) →
+offline without reconnection, and synthetic maintenance/recovery tests. No
+Docker is required on the development Mac. Never switch AI Runtime
+configurations to test; use the synthetic fixtures.

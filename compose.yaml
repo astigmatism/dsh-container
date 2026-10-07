@@ -48,6 +48,10 @@ services:
       # memory failure while refolding session artifacts. Keep it fail-closed
       # unless an operator deliberately accepts that risk.
       DSH_TOKEN_ENABLED: "${DSH_TOKEN_ENABLED:-false}"
+      # LLM Router requests identify themselves as deepseek-harness/<instance>
+      # (docs/llm-router-contract.md §2). Defaults to the host's TLS address,
+      # then the container hostname, so router history can tell Harnesses apart.
+      HARNESS_CLIENT_INSTANCE: "${HARNESS_CLIENT_INSTANCE:-${HARNESS_TLS_IP:-}}"
     volumes:
       - ./data/dsh:/data/dsh
       - ./data/backend-auth:/run/dsh-backend-auth

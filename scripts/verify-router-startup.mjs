@@ -15,42 +15,97 @@ const runtime = path.join(parent, 'runtime');
 const tokenIndexPath = path.join(runtime, 'storages/dsh_token_index.json');
 const tokenIndex = JSON.stringify({ unit: { name: 'dsh_token_index', version: 1 },
   global: { v: 1, data: { tz: 'UTC', foldVersion: 1, builtAt: 1 } }, tables: { shards: {} } });
-const primaryId = 'qwen3.8-27b-q8_0';
+const primaryId = 'fixture-daytime-q8';
 const daytimeOnly = process.argv.includes('--daytime-only');
-const secondaryId = 'qwen3.8-27b-abliterated-q6_k';
-const entries = [primaryId, secondaryId].map((id, index) => ({ id, x_ollama_router: {
-  schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: id,
-  aliases: index ? [] : ['local-active'], display_name: index ? 'Secondary fixture' : 'Primary fixture',
-  context_window: 131072, active_request_limit: 1,
-  output_policy: 'unrestricted', max_output_tokens: null, default_output_tokens: null,
-  input_modalities: index ? ['text'] : ['text', 'image'],
-  capabilities: index ? ['completion', 'thinking'] : ['completion', 'thinking', 'tools', 'vision'],
-  health: { available: true, status: 200 }, reasoning: {
-    supported: true, default: 'default', output_limit_policy: 'reject', absolute_max_output_tokens: null,
-    efforts: { default: 'default', off: 'none', low: 'low', medium: 'medium', xhigh: 'xhigh' },
-    aliases: { minimal: 'low', high: 'xhigh', max: 'xhigh' },
-    per_effort: Object.fromEntries(['default', 'off', 'low', 'medium', 'xhigh'].map(level => [level, {
-      enabled: level !== 'off', default_output_tokens: null, max_output_tokens: null
-    }]))
-  }
-}}));
-const nighttimeEntry = entries[1];
-if (daytimeOnly) entries.pop();
+const secondaryId = 'fixture-nighttime-q6';
+const reasoning = {
+  supported: true, default: 'default', output_limit_policy: 'reject', absolute_max_output_tokens: null,
+  efforts: { default: 'default', off: 'none', low: 'low', medium: 'medium', xhigh: 'xhigh' },
+  aliases: { minimal: 'low', high: 'xhigh', max: 'xhigh' },
+  per_effort: Object.fromEntries(['default', 'off', 'low', 'medium', 'xhigh'].map(level => [level, {
+    enabled: level !== 'off', default_output_tokens: null, max_output_tokens: null
+  }]))
+};
+// Synthetic LLM Router capabilities (docs/llm-router-contract.md §4). Canonical
+// IDs are fixture-only and must never be persisted by Harness.
+const residents = [primaryId, secondaryId].map((id, index) => {
+  const service = index ? 'nighttime' : 'daytime';
+  const metadata = {
+    schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: id,
+    aliases: index ? ['nighttime'] : ['local-active', 'daytime'], display_name: index ? 'Secondary fixture' : 'Primary fixture',
+    context_window: 131072, context_safety_reserve: 1024, active_request_limit: 1,
+    output_policy: 'unrestricted', max_output_tokens: null, default_output_tokens: null,
+    input_modalities: index ? ['text'] : ['text', 'image'],
+    capabilities: index ? ['completion', 'thinking'] : ['completion', 'thinking', 'tools', 'vision'],
+    health: { available: true, status: 200 }, nsfw: index === 1, reasoning,
+  };
+  return { id, service, display_name: metadata.display_name, aliases: metadata.aliases, available: true, slots: 1,
+    context_window: 131072, input_modalities: metadata.input_modalities, capabilities: metadata.capabilities,
+    nsfw: index === 1, capability_score: index ? 60 : 70, metadata };
+});
+let nightOnline = !daytimeOnly;
+let revision = 0;
+const subscribers = new Set();
+function capabilities() {
+  const models = nightOnline ? residents : residents.slice(0, 1);
+  return {
+    object: 'router.capabilities', schema_version: 1, revision: `fixture-${revision}`, complete: true, warnings: [],
+    router: { name: 'fixture-router', version: '0', accepting_requests: true, draining: false, drain_reason: null, maintenance: false },
+    configuration: { id: nightOnline ? 'fixture-paired' : 'fixture-solo', exclusive: !nightOnline },
+    default_model: primaryId, models,
+    offline_services: nightOnline ? [] : [{ model: secondaryId, aliases: ['nighttime'], display_name: 'Secondary fixture', role: 'everyday', reason: 'exclusive_configuration' }],
+    ids: Object.fromEntries(models.flatMap(model => [[model.id, model.id], ...model.aliases.map(alias => [alias, model.id])])),
+  };
+}
+function publish() {
+  revision += 1;
+  const frame = `event: capabilities\nid: fixture-${revision}\ndata: ${JSON.stringify(capabilities())}\n\n`;
+  for (const response of subscribers) response.write(frame);
+}
 const inferenceRequests = [];
 const server = http.createServer((request, response) => {
   if (daytimeOnly && request.url.startsWith('/__fixture/')) {
-    if (request.url === '/__fixture/night/on' && entries.length === 1) entries.push(nighttimeEntry);
-    if (request.url === '/__fixture/night/off') entries.splice(1);
+    if (request.url === '/__fixture/night/on' && !nightOnline) { nightOnline = true; publish(); }
+    if (request.url === '/__fixture/night/off' && nightOnline) { nightOnline = false; publish(); }
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify(inferenceRequests)); return;
   }
+  const clientName = request.headers['x-client-name'];
+  if (typeof clientName !== 'string' || !clientName.startsWith('deepseek-harness/')) {
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { code: 'FIXTURE_CLIENT_NAME_REQUIRED', message: 'X-Client-Name is required' } })); return;
+  }
   if (request.method === 'POST') {
     let body = ''; request.on('data', chunk => { body += chunk; });
-    request.on('end', () => { inferenceRequests.push(JSON.parse(body).model); response.writeHead(503); response.end('synthetic inference unavailable'); });
+    request.on('end', () => {
+      const model = JSON.parse(body).model;
+      inferenceRequests.push(model);
+      if (model === 'nighttime' && !nightOnline) {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'Secondary fixture is offline in runtime configuration "fixture-solo" (exclusive_configuration).', type: 'server_error', param: 'model', code: 'SERVICE_OFFLINE' } }));
+        return;
+      }
+      response.writeHead(503); response.end('synthetic inference unavailable');
+    });
     return;
   }
-  response.writeHead(200, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({ data: entries }));
+  if (request.url === '/v1/router/events') {
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+    response.write(`retry: 3000\n\nevent: capabilities\nid: fixture-${revision}\ndata: ${JSON.stringify(capabilities())}\n\n`);
+    subscribers.add(response);
+    const keepalive = setInterval(() => response.write(': keepalive\n\n'), 15000);
+    response.once('close', () => { clearInterval(keepalive); subscribers.delete(response); });
+    return;
+  }
+  if (request.url === '/v1/router/capabilities') {
+    const etag = `"fixture-${revision}"`;
+    if (request.headers['if-none-match'] === etag) { response.writeHead(304, { etag }); response.end(); return; }
+    response.writeHead(200, { 'content-type': 'application/json', etag });
+    response.end(JSON.stringify(capabilities()));
+    return;
+  }
+  response.writeHead(404, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ error: { code: 'MODEL_NOT_FOUND', message: 'fixture route' } }));
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const baseURL = `http://127.0.0.1:${server.address().port}/v1`;
@@ -126,7 +181,7 @@ try {
       models: [{ id: 'amazon.nova-lite-v1:0' }] };
     settings['agent-default-model'] = { provider: 'amazon-bedrock', model: 'amazon.nova-lite-v1:0' };
   }
-  const expectedDefault = daytimeOnly ? structuredClone(settings['agent-default-model']) : { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off' };
+  const expectedDefault = daytimeOnly ? structuredClone(settings['agent-default-model']) : { provider: 'local-ollama', model: 'daytime', reasoningEffort: 'off' };
   const settingsPath = path.join(runtime, 'settings.yaml');
   await fs.writeFile(settingsPath, JSON.stringify(settings), { mode: 0o600 });
   start();
@@ -144,7 +199,15 @@ try {
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].reasoning, 'medium');
       if (!daytimeOnly) assert.equal(current['llm-pi-ai'].providers['local-everyday'].reasoning, 'medium');
-      else assert.equal(current['llm-pi-ai'].providers['local-everyday'].residentUnavailable, true);
+      else {
+        assert.equal(current['llm-pi-ai'].providers['local-everyday'].residentUnavailable, true);
+        assert.equal(current['llm-pi-ai'].providers['local-everyday'].residentState.label, 'Nighttime — offline (fixture-solo)');
+      }
+      // Contract §3: resident routes persist service IDs only, never canonical IDs.
+      const residents = JSON.stringify([current['agent-default-model'], current['llm-pi-ai'].providers['local-ollama'], current['llm-pi-ai'].providers['local-everyday']]);
+      assert.doesNotMatch(residents, /fixture-(?:daytime|nighttime)-q|local-active/);
+      assert.deepEqual(current['llm-pi-ai'].providers['local-ollama'].models.map(row => row.id), ['daytime']);
+      assert.deepEqual(current['llm-pi-ai'].providers['local-everyday'].models.map(row => row.id), ['nighttime']);
       const migratedPath = path.join(runtime, 'profiles/web/cordis.patch.yml');
       assert.equal((await fs.stat(migratedPath)).mode & 0o777, 0o600);
       await fs.access(path.join(runtime, '.container-settings-v1.json'));

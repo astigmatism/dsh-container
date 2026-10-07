@@ -61,12 +61,13 @@
     maxTokens: null
     compactionRetries: 1
     maxOverflowRetries: 1
+    # Policies match the router service IDs that resident routes send.
     modelPolicies:
       - provider: local-ollama
-        model: local-active
+        model: daytime
         thresholdRatio: 0.70
       - provider: local-everyday
-        model: qwen3.8-27b-abliterated-q6_k
+        model: nighttime
         thresholdRatio: 0.70
 
 - id: command-compact
@@ -120,12 +121,16 @@
         readDefaultOffset: 1
         readDefaultLimit: 2000
 
+# LLM Router client contract v1 (docs/llm-router-contract.md): read
+# /v1/router/capabilities, follow /v1/router/events, poll every 30 s with
+# If-None-Match while the stream is down. Requests identify themselves as
+# deepseek-harness/<HARNESS_CLIENT_INSTANCE or hostname>; set clientInstance
+# here to override the instance name.
 - insert:
     - id: router-model-discovery
       name: '../../../../.dsh-plugins/dsh-router-model-discovery.js'
       config:
         providers: [ local-ollama, local-everyday ]
-        model: local-active
         pollIntervalMs: 30000
 
 # Suggested follow-up prompts beneath the latest completed answer. The live

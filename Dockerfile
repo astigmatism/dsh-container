@@ -63,6 +63,7 @@ COPY scripts/patch-dsh-session-pin.mjs /opt/dsh-build/patch-dsh-session-pin.mjs
 COPY scripts/patch-dsh-appearance.mjs /opt/dsh-build/patch-dsh-appearance.mjs
 COPY scripts/patch-unrestricted-policy.mjs /opt/dsh-build/patch-unrestricted-policy.mjs
 COPY scripts/verify-unrestricted-wire.mjs /opt/dsh-build/verify-unrestricted-wire.mjs
+COPY scripts/verify-router-client-wire.mjs /opt/dsh-build/verify-router-client-wire.mjs
 COPY scripts/verify-dsh-inference-contract.mjs /opt/dsh-build/verify-dsh-inference-contract.mjs
 COPY scripts/verify-local-model-profiles.mjs /opt/dsh-build/verify-local-model-profiles.mjs
 COPY scripts/verify-router-contract.mjs /opt/dsh-build/verify-router-contract.mjs
@@ -98,6 +99,7 @@ RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/patch-dsh-resident-availability.mjs \
     && node /opt/dsh-build/patch-unrestricted-policy.mjs \
     && node /opt/dsh-build/verify-unrestricted-wire.mjs \
+    && node /opt/dsh-build/verify-router-client-wire.mjs \
     && node /opt/dsh-build/verify-dsh-inference-contract.mjs \
     && node /opt/dsh-build/verify-dsh-context-compaction.mjs \
     && node /opt/dsh-build/patch-dsh-cancellation-presentation.mjs \

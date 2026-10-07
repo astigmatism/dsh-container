@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_TARGET = "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js";
-const PATCH_MARKER = "dsh-router-contract-v2";
+const PATCH_MARKER = "dsh-router-contract-v3";
 const DEFAULT_CONTEXT_CLASSIFIER_TARGETS = [
   "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/lib/index.js",
   "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/lib/types/error.js",
@@ -59,6 +59,84 @@ export function isContextWindowOverflowDetail(detail) {
     /\b(?:request|prompt|input|messages?)\s+(?:is\s+|are\s+)?too\s+(?:large|long)\s+for\s+(?:(?:this|the)\s+)?(?:model(?:'s)?\s+)?context(?:\s+window)?\b/i.test(detail) ||
     /\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b/i.test(detail) ||
     /\b(?:input|prompt|request|messages?)\b.{0,40}\b(?:exceed(?:s|ed)?|overflows?|is\s+larger\s+than)\b.{0,40}\b(?:the\s+)?(?:model(?:'s)?\s+)?context(?:\s+(?:length|window))?\b/i.test(detail);
+}
+
+/** Process-wide channel to the router-model-discovery plugin (docs/llm-router-contract.md §10). */
+export const ROUTER_CONTRACT_HUB = Symbol.for("dsh-container.router-contract.v1");
+const ROUTER_CONTRACT_CODES = new Set(["SERVICE_OFFLINE", "MODEL_NOT_FOUND", "BACKEND_UNAVAILABLE", "BACKEND_DRAINING", "MAINTENANCE_MODE"]);
+
+/**
+ * Read a router error code from a pi-ai assistant message. The patched pi-ai
+ * transport records `routerError` from the SDK error object (`error.code`) or
+ * from an in-stream `response.failed`/`error` event; the error text is only a
+ * fallback for transports that do not.
+ */
+export function routerErrorOf(message, text) {
+  const structured = message?.routerError;
+  if (structured !== null && typeof structured === "object" && typeof structured.code === "string" && structured.code.length > 0) {
+    return {
+      code: structured.code,
+      ...(Number.isInteger(structured.status) ? { status: structured.status } : {}),
+      detail: typeof structured.message === "string" && structured.message.length > 0 ? structured.message : text,
+    };
+  }
+  if (typeof text !== "string") return undefined;
+  const http = /\bAPI error \((\d{3})\): (\{[\s\S]*\})\s*$/.exec(text);
+  if (http) {
+    try {
+      const body = JSON.parse(http[2]);
+      const error = body !== null && typeof body.error === "object" && body.error !== null ? body.error : body;
+      if (typeof error?.code === "string" && error.code.length > 0) {
+        return { code: error.code, status: Number(http[1]), detail: typeof error.message === "string" ? error.message : text };
+      }
+    } catch {}
+  }
+  const inStream = /^(?:Error Code )?([A-Z][A-Z0-9_]+): ([\s\S]*)$/.exec(text);
+  if (inStream && ROUTER_CONTRACT_CODES.has(inStream[1])) return { code: inStream[1], detail: inStream[2] };
+  return undefined;
+}
+
+/**
+ * Classify a failed router request by `error.code` first, then HTTP status
+ * (contract §10). Fallback is disabled by the owner (§5), so SERVICE_OFFLINE
+ * and MODEL_NOT_FOUND end at once without consuming retries; draining and
+ * maintenance wait (ROUTER_SWITCHING); BACKEND_UNAVAILABLE and other 5xx use
+ * the provider's bounded retry policy. Undefined keeps the existing classifier.
+ */
+export function routerFailureOf(message, text) {
+  const error = routerErrorOf(message, text);
+  if (error === undefined) return undefined;
+  try { globalThis[ROUTER_CONTRACT_HUB]?.report?.(message?.provider, { code: error.code, status: error.status, message: error.detail }); } catch {}
+  const service = typeof message?.model === "string" ? message.model : "model";
+  const label = { daytime: "Daytime", nighttime: "Nighttime" }[service] ?? JSON.stringify(service);
+  const status = error.status === undefined ? {} : { status: error.status };
+  const detail = typeof error.detail === "string" && error.detail.length > 0 && error.detail !== text ? ` Router: ${error.detail}` : "";
+  switch (error.code) {
+    case "SERVICE_OFFLINE":
+      return { message: `${label} is offline in the router's current configuration (SERVICE_OFFLINE). Switch this session to another model; Harness makes ${label} selectable again automatically when it returns.${detail}`, code: "MODEL_UNAVAILABLE", ...status };
+    case "MODEL_NOT_FOUND":
+      return { message: `The router does not offer ${label} (MODEL_NOT_FOUND). Switch this session to another model.${detail}`, code: "MODEL_UNAVAILABLE", ...status };
+    case "BACKEND_DRAINING":
+    case "MAINTENANCE_MODE":
+      return { message: `The router is switching configuration (${error.code}); Harness waits and retries ${label} without changing models.${detail}`, code: "ROUTER_SWITCHING", ...status };
+    case "BACKEND_UNAVAILABLE":
+      return { message: `The router reports that ${label}'s backend is unavailable (BACKEND_UNAVAILABLE).${detail}`, code: "SERVER", ...status };
+    case "context_length_exceeded":
+      return undefined;
+  }
+  if (error.status === undefined) return undefined;
+  if (error.status === 408) return { message: text, code: "TRANSPORT", status: 408 };
+  if (error.status === 429) return { message: text, code: "RATE_LIMIT", status: 429 };
+  if (error.status >= 500) return { message: text, code: "SERVER", ...status };
+  // Other 4xx: the request is invalid. Never retry or fall back.
+  return { message: text, code: error.status === 401 || error.status === 403 ? "AUTH" : "INVALID_REQUEST", ...status };
+}
+
+/** Fetch wrapper whose marker lets the patched router transport report byte activity. */
+export function routerActivityFetch(watchdog) {
+  const activityFetch = (...args) => globalThis.fetch(...args);
+  activityFetch.routerActivity = () => watchdog.pulse();
+  return activityFetch;
 }
 
 /**
@@ -157,7 +235,7 @@ export function patchSource(input) {
   source = replaceOnce(
     source,
     `function classifyPiAiError(message) {`,
-    `function renderPiAiError(value) {\n\tif (typeof value === "string") return value;\n\tif (value instanceof Error && value.message.length > 0) return value.message;\n\tif (value !== null && typeof value === "object") {\n\t\tconst nested = value.error;\n\t\tconst message = (typeof value.message === "string" && value.message.length > 0 ? value.message : void 0) ?? (nested !== null && typeof nested === "object" && typeof nested.message === "string" && nested.message.length > 0 ? nested.message : void 0);\n\t\tconst code = (typeof value.code === "string" && value.code.length > 0 ? value.code : void 0) ?? (nested !== null && typeof nested === "object" && typeof nested.code === "string" && nested.code.length > 0 ? nested.code : void 0);\n\t\tif (message !== void 0) return code === void 0 ? message : \`\${code}: \${message}\`;\n\t\ttry {\n\t\t\tconst encoded = JSON.stringify(value);\n\t\t\tif (encoded !== void 0 && encoded !== "{}") return encoded;\n\t\t} catch {}\n\t}\n\treturn String(value);\n}\nfunction classifyPiAiError(message) {`,
+    `const ROUTER_CONTRACT_HUB = Symbol.for("dsh-container.router-contract.v1");\nconst ROUTER_CONTRACT_CODES = new Set(${JSON.stringify([...ROUTER_CONTRACT_CODES])});\n${routerErrorOf.toString()}\n${routerFailureOf.toString()}\n${routerActivityFetch.toString()}\nfunction renderPiAiError(value) {\n\tif (typeof value === "string") return value;\n\tif (value instanceof Error && value.message.length > 0) return value.message;\n\tif (value !== null && typeof value === "object") {\n\t\tconst nested = value.error;\n\t\tconst message = (typeof value.message === "string" && value.message.length > 0 ? value.message : void 0) ?? (nested !== null && typeof nested === "object" && typeof nested.message === "string" && nested.message.length > 0 ? nested.message : void 0);\n\t\tconst code = (typeof value.code === "string" && value.code.length > 0 ? value.code : void 0) ?? (nested !== null && typeof nested === "object" && typeof nested.code === "string" && nested.code.length > 0 ? nested.code : void 0);\n\t\tif (message !== void 0) return code === void 0 ? message : \`\${code}: \${message}\`;\n\t\ttry {\n\t\t\tconst encoded = JSON.stringify(value);\n\t\t\tif (encoded !== void 0 && encoded !== "{}") return encoded;\n\t\t} catch {}\n\t}\n\treturn String(value);\n}\nfunction classifyPiAiError(message) {`,
     "structured pi-ai error rendering",
   );
 
@@ -185,8 +263,15 @@ export function patchSource(input) {
   source = replaceOnce(
     source,
     `\t\tcase "error": {\n\t\t\tconst text = message.errorMessage ?? "pi-ai stream error";`,
-    `\t\tcase "error": {\n\t\t\tconst text = errorText ?? "pi-ai stream error";`,
+    `\t\tcase "error": {\n\t\t\tconst text = errorText ?? "pi-ai stream error";\n\t\t\t// ${PATCH_MARKER}: router error.code first (docs/llm-router-contract.md §10).\n\t\t\tconst routed = routerFailureOf(message, text);\n\t\t\tif (routed !== void 0) return { kind: "error", failure: routed };`,
     "terminal error rendering",
+  );
+
+  source = replaceOnce(
+    source,
+    `\tswitch (message.stopReason) {`,
+    `\tif (message.stopReason !== "error" && message.stopReason !== "aborted") try { globalThis[ROUTER_CONTRACT_HUB]?.success?.(message.provider); } catch {}\n\tswitch (message.stopReason) {`,
+    "router success reporting",
   );
 
   source = replaceOnce(
@@ -208,6 +293,13 @@ export function patchSource(input) {
     `\t\t\tconst watchdog = __addDisposableResource(env_1, idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);\n\t\t\ttry {`,
     `\t\t\tconst watchdog = __addDisposableResource(env_1, idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);\n\t\t\tlet releaseConcurrency;\n\t\t\ttry {`,
     "concurrency lease declaration",
+  );
+
+  source = replaceOnce(
+    source,
+    `\t\t\t\t\tsignal: watchdog.signal,\n\t\t\t\t\theaders: requestHeaders(profile.headers)\n`,
+    `\t\t\t\t\tsignal: watchdog.signal,\n\t\t\t\t\theaders: requestHeaders(profile.headers),\n\t\t\t\t\t// ${PATCH_MARKER}: router queue keepalives (SSE comments) count as stream activity.\n\t\t\t\t\t...model.api === "openai-responses" ? { fetch: routerActivityFetch(watchdog) } : {}\n`,
+    "router stream activity",
   );
 
   source = replaceOnce(

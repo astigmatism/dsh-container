@@ -50,7 +50,7 @@ async function prompt(text) {
 }
 try {
   await rpc('rename', { sessionId, title: 'Harness deployment verification — cancellation and recovery' });
-  await rpc('selectModel', { sessionId, provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off' });
+  await rpc('selectModel', { sessionId, provider: 'local-ollama', model: 'daytime', reasoningEffort: 'off' });
   await prompt('This is a text-only cancellation smoke test. Do not use any tools or access files. Print the integers from 1 to 10000, one per line, until interrupted.');
   await waitFor(item => item.running);
   await delay(2000);

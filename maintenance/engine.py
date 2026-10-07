@@ -113,7 +113,8 @@ def verify_recovered_release(manifest, model, root):
     end = code.index('export async function verifyConfiguredRoutes', start)
     module = 'data:text/javascript;base64,' + base64.b64encode(plugin.read_bytes()).decode()
     code = code[:start] + 'export async function loadRouterContract() { return import(' + json.dumps(module) + '); }\n' + code[end:]
-    code += "\nawait verifyConfiguredRoutes(await readSettings('/data/dsh/settings.yaml'), {primaryBrowser: true});\n"
+    # A recovered older release may still store pre-service-ID routes.
+    code += "\nawait verifyConfiguredRoutes(await readSettings('/data/dsh/settings.yaml'), {primaryBrowser: true, allowLegacyIds: true});\n"
     run(['docker', 'exec', '-i', by_service[harness]['Id'], 'node', '--input-type=module'],
         data=code, operation='Recovered resident availability verification')
 

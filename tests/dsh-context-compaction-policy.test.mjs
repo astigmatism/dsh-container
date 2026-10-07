@@ -37,7 +37,7 @@ test("Host keeps preset policy templates without mounting duplicate compaction s
 
 test("both selectable context profiles use the 70 percent request budget policy", () => {
   const compact = block("compaction-basic", "command-compact");
-  for (const [provider, model] of [["local-ollama", "local-active"], ["local-everyday", "qwen3.8-27b-abliterated-q6_k"]]) {
+  for (const [provider, model] of [["local-ollama", "daytime"], ["local-everyday", "nighttime"]]) {
     assert.match(
       compact,
       new RegExp(`provider: ${provider.replaceAll("-", "\\-")}\\n\\s+model: ${model}\\n\\s+thresholdRatio: 0\\.70`),
@@ -89,7 +89,7 @@ test("captured tool-result pruning returns far below the policy threshold", () =
 });
 
 test("context overflow remains outside the ordinary retry set", () => {
-  for (const [provider, model] of [["local-ollama", "local-active"], ["local-everyday", "qwen3.8-27b-abliterated-q6_k"]]) {
+  for (const [provider, model] of [["local-ollama", "daytime"], ["local-everyday", "nighttime"]]) {
     const start = settings.indexOf(`    ${provider}:\n`);
     assert.notEqual(start, -1);
     const retryLine = settings.slice(start).match(/retryableCodes: \[([^\]]+)\]/)?.[1] ?? "";

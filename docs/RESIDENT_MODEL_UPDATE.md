@@ -5,6 +5,13 @@ and portable update procedures are documented in [optional residents](optional-r
 and [portable maintenance](portable-maintenance.md). The two-model-only migration
 and destination-specific rollout below describe the earlier release.
 
+**Superseded on 2026-10-07** by the [LLM Router client contract](llm-router-contract.md)
+release. Resident routes now send the service IDs `daytime` and `nighttime`.
+Discovery reads `/v1/router/capabilities` and `/v1/router/events` instead of
+`/v1/models`. Each model is evaluated independently, so router state never stops
+startup or verification. The IDs and the all-or-nothing validation described
+below are no longer current.
+
 This Harness change replaces historical router-profile assertions with shared,
 validated discovery and preserves explicit DSH reasoning choices. It supports
 legacy alias-only catalogs, canonical model IDs with alias metadata, and the

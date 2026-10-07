@@ -31,6 +31,16 @@ case "${1:-}" in
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
     node --test "$project_dir/tests/external-tls.integration.mjs"
     node --test "$project_dir/tests/verification-inference.test.mjs"
+    # LLM Router client contract (docs/llm-router-contract.md): synthetic
+    # capabilities documents, event stream and error codes; no live router.
+    node --test "$project_dir/tests/llm-router-contract.test.mjs" \
+      "$project_dir/tests/router-model-discovery.test.mjs" \
+      "$project_dir/tests/router-provider-remote.test.mjs" \
+      "$project_dir/tests/resident-settings-migration.test.mjs" \
+      "$project_dir/tests/dsh-resident-availability.test.mjs" \
+      "$project_dir/tests/dsh-llm-pi-ai-patch.test.mjs" \
+      "$project_dir/tests/local-inference-contract.test.mjs" \
+      "$project_dir/tests/dsh-context-compaction-policy.test.mjs"
     exit 0
     ;;
   -h|--help)
@@ -132,6 +142,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-llm-pi-ai.mjs
     node --check scripts/patch-unrestricted-policy.mjs
     node --check scripts/verify-unrestricted-wire.mjs
+    node --check scripts/verify-router-client-wire.mjs
     node --check scripts/verify-dsh-session-control.mjs
     node --check scripts/initialize-sidebar-settings.mjs
     node --check scripts/verify-sidebar-terminal.mjs

@@ -3,6 +3,9 @@ import test from "node:test";
 
 import {
   EndpointConcurrencyGate,
+  ROUTER_CONTRACT_HUB,
+  routerActivityFetch,
+  routerFailureOf,
   isContextWindowOverflowDetail,
   patchContextClassifierSource,
   patchSource,
@@ -75,6 +78,8 @@ var PiAiAdapter = class extends LlmAdapter {
 \t\t\ttry {
 \t\t\tconst context = {};
 \t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {
+\t\t\t\t\tsignal: watchdog.signal,
+\t\t\t\t\theaders: requestHeaders(profile.headers)
 \t\t\t}), model.contextWindow)[Symbol.asyncIterator]();
 \t\t\tyield iterator;
 \t\t\t} finally {
@@ -86,7 +91,7 @@ var PiAiAdapter = class extends LlmAdapter {
 
 function evaluatePatchedFixture(classifier = () => false) {
   const patched = patchSource(fixture);
-  const start = patched.indexOf("function renderPiAiError");
+  const start = patched.indexOf("const ROUTER_CONTRACT_HUB");
   const end = patched.indexOf("const afterMapStopReason");
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
@@ -107,6 +112,8 @@ test("pinned pi-ai patch consumes router capacities and normalizes stream errors
   assert.match(patched, /releaseConcurrency\?\.\(\)/);
   assert.match(patched, /const errorText =/);
   assert.match(patched, /message: errorText/);
+  assert.match(patched, /routerFailureOf\(message, text\)/);
+  assert.match(patched, /fetch: routerActivityFetch\(watchdog\)/);
   assert.equal(patchSource(patched), patched, "patch is idempotent");
 });
 
@@ -233,4 +240,54 @@ test("structured and string router context failures map to canonical overflow", 
     assert.match(result.failure.message, /Formatted input \(101165\)/);
     assert.match(result.failure.message, /CONTEXT_LIMIT_EXCEEDED/);
   }
+});
+
+const sdkText = (status, error) => `local-everyday API error (${status}): ${JSON.stringify(error)}`;
+
+test("router errors are classified by error.code before HTTP status (contract §10)", () => {
+  const reports = [];
+  globalThis[ROUTER_CONTRACT_HUB] = { report: (provider, event) => reports.push([provider, event.code]) };
+  try {
+    const cases = [
+      [{ routerError: { code: "SERVICE_OFFLINE", status: 503, message: "offline in runtime configuration \"solo\"" } }, "MODEL_UNAVAILABLE"],
+      [{}, "MODEL_UNAVAILABLE", sdkText(404, { message: "unknown", type: "invalid_request_error", code: "MODEL_NOT_FOUND" })],
+      [{}, "SERVER", sdkText(503, { message: "unhealthy", code: "BACKEND_UNAVAILABLE" })],
+      [{}, "ROUTER_SWITCHING", sdkText(503, { message: "draining", code: "BACKEND_DRAINING" })],
+      [{}, "ROUTER_SWITCHING", sdkText(503, { message: "maintenance", code: "MAINTENANCE_MODE" })],
+      [{}, "ROUTER_SWITCHING", "Error Code BACKEND_DRAINING: draining"],
+      [{}, "SERVER", "BACKEND_UNAVAILABLE: stalled for 120 s"],
+      [{}, "SERVER", sdkText(500, { message: "new", code: "UNKNOWN_FUTURE_CODE" })],
+      [{}, "TRANSPORT", sdkText(408, { message: "timeout", code: "REQUEST_TIMEOUT" })],
+      [{}, "RATE_LIMIT", sdkText(429, { message: "slow down", code: "RATE_LIMITED" })],
+      [{}, "INVALID_REQUEST", sdkText(422, { message: "bad", code: "UNKNOWN_FUTURE_REQUEST_CODE" })],
+      [{}, "AUTH", sdkText(401, { message: "no", code: "UNAUTHORIZED" })],
+    ];
+    for (const [extra, code, text = "fixture"] of cases) {
+      const failure = routerFailureOf({ provider: "local-everyday", model: "nighttime", ...extra }, text);
+      assert.equal(failure?.code, code, text);
+      if (code === "MODEL_UNAVAILABLE") assert.match(failure.message, /Switch this session to another model/);
+      if (code === "ROUTER_SWITCHING") assert.match(failure.message, /waits and retries Nighttime without changing models/);
+    }
+    assert.deepEqual(reports.slice(0, 5).map(row => row[1]), ["SERVICE_OFFLINE", "MODEL_NOT_FOUND", "BACKEND_UNAVAILABLE", "BACKEND_DRAINING", "MAINTENANCE_MODE"]);
+    assert.ok(reports.every(row => row[0] === "local-everyday"));
+    assert.equal(routerFailureOf({ model: "nighttime" }, sdkText(400, { code: "context_length_exceeded" })), undefined,
+      "context overflow keeps its canonical classification");
+    assert.equal(routerFailureOf({ model: "nighttime" }, "OpenAI Responses stream ended before a terminal response event"), undefined);
+  } finally { delete globalThis[ROUTER_CONTRACT_HUB]; }
+});
+
+test("generated adapter routes router codes through the patched terminal classifier", () => {
+  const { mapStopReason } = evaluatePatchedFixture();
+  const result = mapStopReason({ stopReason: "error", provider: "local-everyday", model: "nighttime",
+    errorMessage: sdkText(503, { message: "Nighttime is offline", type: "server_error", param: "model", code: "SERVICE_OFFLINE" }) }, 97280);
+  assert.equal(result.failure.code, "MODEL_UNAVAILABLE");
+  assert.equal(result.failure.status, 503);
+});
+
+test("queue keepalive bytes pulse the idle watchdog through the fetch marker", async () => {
+  let pulses = 0;
+  const wrapped = routerActivityFetch({ pulse: () => { pulses += 1; } });
+  wrapped.routerActivity();
+  assert.equal(pulses, 1);
+  assert.equal(typeof wrapped, "function");
 });

@@ -53,7 +53,7 @@ For an internal target, require the setting explicitly:
 
 The script verifies the pinned plugin, launches Chromium headlessly as a smoke
 test, proves the ego stream and control routes require Harness authentication, and
-checks that `local-active` advertises complete image, vision, and tool support.
+checks that the Daytime route (`daytime`) advertises complete image, vision, and tool support.
 It does not replace the model-level acceptance prompt below.
 
 ## Pipeline acceptance prompt

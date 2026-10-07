@@ -22,7 +22,7 @@ const responses = await readFile(PI_ROOT + "/api/openai-responses.js", "utf8");
 const responsesShared = await readFile(PI_ROOT + "/api/openai-responses-shared.js", "utf8");
 
 requireMarkers("dsh-llm-pi-ai", adapter, [
-  "dsh-router-contract-v2",
+  "dsh-router-contract-v3",
   "maxConcurrency: z.number().step(1).min(1)",
   "releaseConcurrency = await this.concurrency.acquire(profile, upstream)",
   "releaseConcurrency?.()",
@@ -72,7 +72,7 @@ const { convertResponsesMessages } = await import(
 );
 
 const model = {
-  id: "local-active",
+  id: "daytime",
   provider: "local-ollama",
   api: "openai-responses",
   baseUrl: "http://ai-router:11434/v1",
@@ -97,7 +97,7 @@ const context = {
       ],
       api: "openai-responses",
       provider: "local-ollama",
-      model: "local-active",
+      model: "daytime",
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
       stopReason: "toolUse",
       timestamp: 1,
@@ -143,7 +143,7 @@ const replayContext = {
       ],
       api: "openai-responses",
       provider: "local-ollama",
-      model: "local-active",
+      model: "daytime",
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
       stopReason: "toolUse",
       timestamp: 1,

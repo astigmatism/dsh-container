@@ -1,73 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { loadRouterContract, verifyConfiguredRoutes, residentClientExpectations } from '../scripts/verify-router-contract.mjs';
+import { fakeRouter, paired, solo, draining, residentModel, legacySettings, settingsService, NIGHTTIME_MTP3_ID } from './fixtures/router-contract.mjs';
 const run = promisify(execFile);
 const root = fileURLToPath(new URL('..', import.meta.url));
 const contract = await loadRouterContract();
-const { routerMetadataOf, resolveRouterEntry, synchronizeRouterSettings, applyOperation } = contract;
-const PRIMARY = 'qwen3.8-27b-q8_0';
-const SECONDARY = 'qwen3.8-27b-abliterated-q6_k';
+const { synchronizeRouterSettings, applyOperation, RouterWatch, ResidentDiscovery, routerClientName, ROUTER_CONTRACT_HUB } = contract;
+const CLIENT = routerClientName();
+const service = (state, mutations) => settingsService(state, mutations, applyOperation);
+const providers = state => state['llm-pi-ai'].providers;
+const canonical = /fixture-(?:daytime|nighttime)|qwen3\.8|local-active/;
 
-function entry(id, { unrestricted = true, primary = id === PRIMARY } = {}) {
-  const max = unrestricted ? null : 8192;
-  const defaultTokens = unrestricted ? null : 1024;
-  return { id, object: 'model', x_ollama_router: {
-    schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: id,
-    aliases: primary ? ['local-active'] : [], display_name: primary ? 'Primary' : 'Secondary',
-    health: { available: true, status: 200 }, context_window: 131072,
-    active_request_limit: 1, output_policy: unrestricted ? 'unrestricted' : 'bounded',
-    max_output_tokens: max, default_output_tokens: defaultTokens,
-    input_modalities: primary ? ['text', 'image'] : ['text'],
-    capabilities: primary ? ['completion', 'thinking', 'tools', 'vision'] : ['completion', 'thinking'],
-    reasoning: {
-      supported: true, default: unrestricted ? 'default' : 'medium',
-      efforts: { default: 'default', off: 'none', low: 'low', medium: 'medium', xhigh: 'xhigh' },
-      aliases: { none: 'off', minimal: 'low', high: 'xhigh', max: 'xhigh' },
-      output_limit_policy: 'reject', absolute_max_output_tokens: max,
-      per_effort: Object.fromEntries(['default', 'off', 'low', 'medium', 'xhigh'].map(level => [level,
-        { enabled: level !== 'off', default_output_tokens: defaultTokens, max_output_tokens: max }]))
-    }
-  }};
+async function eventually(check, message, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    try { return await check(); } catch (error) { if (Date.now() > deadline) throw new Error(`${message}: ${error.message}`); }
+    await delay(20);
+  }
 }
-function alias(row) {
-  return { ...structuredClone(row), id: 'local-active', x_ollama_router: { ...structuredClone(row.x_ollama_router), alias: true } };
-}
-function legacySettings(baseURL) {
-  return {
-    'agent-default-model': { provider: 'local-ollama-256k', model: 'local-active', reasoningEffort: 'off', custom: 'retain' },
-    'custom-setting': { preserved: true },
-    'llm-pi-ai': { providers: {
-      'local-ollama': { api: 'openai-responses', apiKeyEnv: 'UNCHANGED_CREDENTIAL_REFERENCE', baseURL, reasoning: 'medium', maxConcurrency: 2,
-        models: [{ id: 'local-active', name: 'Legacy', contextWindow: 262144, maxTokens: 32768, input: ['text', 'image'], custom: 'retain' }] },
-      'local-ollama-256k': { baseURL, models: [{ id: 'local-active' }] },
-      custom: { baseURL: 'https://unrelated.invalid', reasoning: 'low', models: [{ id: 'custom' }] }
-    }}
-  };
-}
-function service(state, mutations = []) {
-  return {
-    get: namespace => state[namespace],
-    describe: () => [{ ns: 'llm-pi-ai', user: state['llm-pi-ai'] }],
-    mutate: async (namespace, ops) => {
-      mutations.push({ namespace, ops });
-      for (const op of ops) applyOperation(state[namespace], op);
-    }
-  };
-}
-async function fixture(t, data) {
+
+/** The exact remote-direct section of scripts/verify.sh, run against a settings file. */
+async function remoteVerifier(t) {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'dsh-router-remote-'));
-  const state = { data };
-  const server = http.createServer((_req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(state)); });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const baseURL = `http://127.0.0.1:${server.address().port}/v1`;
-  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(temporary, { recursive: true, force: true }); });
+  t.after(() => rm(temporary, { recursive: true, force: true }));
   const verify = await readFile(path.join(root, 'scripts/verify.sh'), 'utf8');
   const start = verify.indexOf('if [ "$mode" = --remote-ollama ]; then');
   const end = verify.indexOf('\n# Trusted TLS gateway verification.', start);
@@ -87,266 +49,306 @@ compose() {
 ${verify.slice(start, end)}
 `);
   const settingsFile = path.join(temporary, 'settings.json');
-  return { state, baseURL, settingsFile, async remote(settings) {
+  return async settings => {
     await writeFile(settingsFile, JSON.stringify(settings));
     return run('sh', [wrapper], { env: { ...process.env, TEST_NODE: process.execPath, TEST_ROOT: root, TEST_SETTINGS: settingsFile } });
-  }};
+  };
 }
 
-test('normal startup migration and the exact remote-direct verifier accept canonical-only aliases, then explicit alias rows', async t => {
-  const primary = entry(PRIMARY), secondary = entry(SECONDARY);
-  const f = await fixture(t, [primary, secondary]);
-  const state = legacySettings(f.baseURL);
+test('startup migration moves legacy routes to service IDs, takes limits from each serving model, and identifies itself', async t => {
+  const router = await fakeRouter(t, paired());
+  const remote = await remoteVerifier(t);
+  const state = legacySettings(router.baseURL);
   const mutations = [];
-  await synchronizeRouterSettings(service(state, mutations));
-  const providers = state['llm-pi-ai'].providers;
-  assert.equal(providers['local-ollama'].models[0].maxTokens, null);
-  assert.equal(providers['local-ollama'].reasoning, 'medium');
-  assert.deepEqual(providers['local-everyday'].models[0].input, ['text']);
-  assert.equal(providers['local-everyday'].models[0].contextWindow, 131072);
-  assert.equal(providers['local-everyday'].reasoning, 'medium');
-  assert.equal(providers['local-ollama'].models[0].custom, 'retain');
-  assert.equal(providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
-  assert.deepEqual(Object.keys(providers).sort(), ['custom', 'local-everyday', 'local-ollama']);
+  const { results, errors } = await synchronizeRouterSettings(service(state, mutations));
+  assert.deepEqual(errors, []);
+  const day = providers(state)['local-ollama'], night = providers(state)['local-everyday'];
+  assert.deepEqual(day.models.map(row => row.id), ['daytime']);
+  assert.deepEqual(night.models.map(row => row.id), ['nighttime']);
+  assert.equal(day.models[0].contextWindow, 163840 - 1024);
+  assert.equal(night.models[0].contextWindow, 98304 - 1024);
+  assert.equal(day.maxConcurrency, 1, 'slots, not a stored value, set maxConcurrency');
+  assert.equal(day.models[0].maxTokens, null);
+  assert.equal(day.models[0].custom, 'retain');
+  assert.equal(day.apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
+  assert.equal(night.models[0].name, 'Qwen3.8 27B Abliterated Q6_K (96K) · NSFW');
+  assert.equal(day.headers['X-Client-Name'], CLIENT);
+  assert.equal(night.headers['X-Client-Name'], CLIENT);
+  assert.equal(results.get('local-everyday').state.status, 'available');
+  assert.deepEqual(Object.keys(providers(state)).sort(), ['custom', 'local-everyday', 'local-ollama']);
+  assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'daytime', reasoningEffort: 'off', custom: 'retain' });
   assert.deepEqual(state['custom-setting'], { preserved: true });
-  assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'local-active', reasoningEffort: 'off', custom: 'retain' });
-  assert.equal(providers['local-ollama-256k'], undefined);
-  assert.match((await f.remote(state)).stdout, /Verified/);
-  f.state.data.push(alias(primary));
-  assert.match((await f.remote(state)).stdout, /Verified/);
+  assert.doesNotMatch(JSON.stringify(state['llm-pi-ai'].providers['local-ollama']) + JSON.stringify(night), canonical,
+    'nothing persisted refers to a canonical model ID');
+  assert.ok(router.state.clientNames.every(name => name === CLIENT), 'every discovery fetch sends X-Client-Name');
   const count = mutations.length;
   await synchronizeRouterSettings(service(state, mutations));
-  assert.equal(mutations.length, count, 'startup migration is idempotent');
+  assert.equal(mutations.length, count, 'migration is idempotent');
   await verifyConfiguredRoutes(state, { browser: true });
-  state['agent-default-model'] = { provider: 'local-everyday', model: SECONDARY };
+  assert.match((await remote(state)).stdout, /Verified/);
+  state['agent-default-model'] = { provider: 'local-everyday', model: 'nighttime' };
   await assert.rejects(verifyConfiguredRoutes(state, { browser: true }), /missing vision capability/);
-  providers['local-ollama'].maxConcurrency = 2;
-  await assert.rejects(f.remote(state), error => error.code === 22 && /concurrency is not synchronized/.test(error.stderr));
 });
 
-test('legacy bounded alias and actual IDs remain valid while explicit effort choices survive migration', async t => {
-  const primary = entry(PRIMARY, { unrestricted: false });
-  const f = await fixture(t, [alias(primary), entry(SECONDARY, { unrestricted: false })]);
-  const state = legacySettings(f.baseURL);
-  state['llm-pi-ai'].providers['local-ollama'].reasoning = 'low';
-  await synchronizeRouterSettings(service(state));
-  assert.equal(state['llm-pi-ai'].providers['local-ollama'].reasoning, 'low');
-  assert.equal(state['llm-pi-ai'].providers['local-ollama'].models[0].maxTokens, 8192);
-  assert.equal(state['llm-pi-ai'].providers['local-everyday'].models[0].id, SECONDARY);
-  assert.match((await f.remote(state)).stdout, /Verified/);
-  f.state.data = [primary, entry(SECONDARY, { unrestricted: false })];
-  state['llm-pi-ai'].providers['local-ollama'].models[0].id = PRIMARY;
-  await assert.rejects(f.remote(state), error => error.code === 22);
-  await synchronizeRouterSettings(service(state));
-  assert.match((await f.remote(state)).stdout, /Verified/);
-});
-
-test('malformed or unavailable metadata fails closed before startup mutation and remote verification', async t => {
-  const f = await fixture(t, [entry(PRIMARY), entry(SECONDARY)]);
-  const state = legacySettings(f.baseURL);
-  for (const mutate of [
-    meta => { meta.warnings = ['BACKEND_STATUS_UNAVAILABLE']; },
-    meta => { meta.health.available = false; },
-    meta => { delete meta.default_output_tokens; },
-    meta => { meta.reasoning.absolute_max_output_tokens = 32768; },
-    meta => { meta.reasoning.per_effort.medium.max_output_tokens = 32768; },
-    meta => { meta.output_policy = 'unknown'; },
-    meta => { meta.capabilities = ['completion', 'thinking']; },
-    meta => { meta.reasoning.default = 'unsupported'; }
-  ]) {
-    f.state.data = [entry(PRIMARY), entry(SECONDARY)];
-    mutate(f.state.data[0].x_ollama_router);
-    const before = structuredClone(state);
-    await assert.rejects(synchronizeRouterSettings(service(state)));
-    assert.deepEqual(state, before);
-    await assert.rejects(f.remote(state), error => error.code === 22);
-  }
-});
-
-test('resolver rejects ambiguous aliases and inconsistent alias rows, and validates both output policies', () => {
-  const primary = entry(PRIMARY);
-  assert.equal(resolveRouterEntry({ data: [primary] }, 'local-active'), primary);
-  assert.throws(() => resolveRouterEntry({ data: [primary, structuredClone(primary)] }, 'local-active'), /ambiguous/);
-  const mismatched = alias(primary);
-  mismatched.x_ollama_router.active_request_limit = 2;
-  assert.throws(() => resolveRouterEntry({ data: [primary, mismatched] }, 'local-active'), /disagrees/);
-  const bounded = entry(PRIMARY, { unrestricted: false });
-  assert.equal(routerMetadataOf(bounded).max_output_tokens, 8192);
-  bounded.x_ollama_router.reasoning.per_effort.medium.default_output_tokens = 9000;
-  assert.throws(() => routerMetadataOf(bounded), /invalid limits/);
-});
-
-
-test('provisioning rejects an inherited effort absent from the target before any mutation', async t => {
-  const secondary = entry(SECONDARY);
-  delete secondary.x_ollama_router.reasoning.efforts.medium;
-  delete secondary.x_ollama_router.reasoning.per_effort.medium;
-  const f = await fixture(t, [entry(PRIMARY), secondary]);
-  const state = legacySettings(f.baseURL);
-  const before = structuredClone(state);
-  const mutations = [];
-  await assert.rejects(synchronizeRouterSettings(service(state, mutations)), /configured reasoning effort: medium/);
-  assert.equal(mutations.length, 0);
-  assert.deepEqual(state, before);
-});
-
-
-test('remote-direct readiness retains the primary vision/tools requirement without imposing it on the secondary', async t => {
-  const primary = entry(PRIMARY);
-  primary.x_ollama_router.input_modalities = ['text'];
-  primary.x_ollama_router.capabilities = ['completion', 'thinking'];
-  const f = await fixture(t, [primary, entry(SECONDARY)]);
-  const state = legacySettings(f.baseURL);
-  await synchronizeRouterSettings(service(state));
-  await verifyConfiguredRoutes(state);
-  await assert.rejects(f.remote(state), error => error.code === 22 && /missing vision capability/.test(error.stderr));
-});
-
-test('resident aliases converge while external providers and defaults survive', async t => {
-  const primary = entry(PRIMARY), night = entry(SECONDARY);
-  primary.x_ollama_router.context_window = 163840;
-  primary.x_ollama_router.display_name = 'Daytime (160K)';
-  night.x_ollama_router.display_name = 'Nighttime (128K)';
-  const f = await fixture(t, [primary, night]);
-  const state = legacySettings(f.baseURL);
-  const day = state['llm-pi-ai'].providers['local-ollama'];
-  day.models = [{ id: 'daytime-swift', name: 'Daytime-Swift (128K)' }, { id: PRIMARY }, { id: 'local-active', custom: 'retain' }];
-  state['agent-default-model'] = { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max', custom: 'retain' };
-  state['credentials-fixture'] = { untouched: 'synthetic credential' };
-  await synchronizeRouterSettings(service(state));
-  await verifyConfiguredRoutes(state);
-  assert.deepEqual(Object.keys(state['llm-pi-ai'].providers).sort(), ['custom', 'local-everyday', 'local-ollama']);
-  const model = state['llm-pi-ai'].providers['local-ollama'].models[0];
-  assert.equal(model.id, 'local-active');
-  assert.equal(model.name, 'Daytime (160K)');
-  assert.equal(model.contextWindow, 163840);
-  assert.equal(model.maxTokens, null);
-  assert.equal(model.reasoningEfforts.max, 'xhigh');
-  assert.equal(model.custom, 'retain');
-  assert.deepEqual(state['agent-default-model'], { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max', custom: 'retain' });
-  assert.deepEqual(state['credentials-fixture'], { untouched: 'synthetic credential' });
-});
-
-test('single-model startup preserves Bedrock and Nighttime removal/return preserves selection', async t => {
-  const f = await fixture(t, [entry(PRIMARY)]);
-  const state = legacySettings(f.baseURL);
+test('solo configuration: Nighttime offline with the configuration ID never blocks Daytime or verification', async t => {
+  const router = await fakeRouter(t, solo());
+  const remote = await remoteVerifier(t);
+  const state = legacySettings(router.baseURL);
   const bedrock = { api: 'bedrock-converse-stream', region: 'us-west-2', apiKeyEnv: 'BEDROCK_SECRET' };
-  state['llm-pi-ai'].providers['amazon-bedrock'] = bedrock;
+  providers(state)['amazon-bedrock'] = bedrock;
   state['agent-default-model'] = { provider: 'amazon-bedrock', model: 'external-model', reasoningEffort: 'high' };
-  const selected = structuredClone(state['agent-default-model']);
-  const mutations = [];
-  await synchronizeRouterSettings(service(state, mutations));
-  await verifyConfiguredRoutes(state);
-  const night = state['llm-pi-ai'].providers['local-everyday'];
+  await synchronizeRouterSettings(service(state));
+  const night = providers(state)['local-everyday'];
   assert.equal(night.residentUnavailable, true);
-  assert.deepEqual(night.models, [{ id: SECONDARY, name: 'Nighttime' }]);
-  assert.deepEqual(state['agent-default-model'], selected);
-  assert.deepEqual(state['llm-pi-ai'].providers['amazon-bedrock'], bedrock);
-  const count = mutations.length;
-  await synchronizeRouterSettings(service(state, mutations));
-  assert.equal(mutations.length, count);
-  state['agent-default-model'] = { provider: 'local-everyday', model: SECONDARY, reasoningEffort: 'high' };
-  const nightSelected = structuredClone(state['agent-default-model']);
-  f.state.data.push(entry(SECONDARY));
-  await synchronizeRouterSettings(service(state));
-  const capabilities = structuredClone(state['llm-pi-ai'].providers['local-everyday'].models);
-  assert.equal(state['llm-pi-ai'].providers['local-everyday'].residentUnavailable, false);
-  f.state.data.pop();
-  await synchronizeRouterSettings(service(state));
-  await verifyConfiguredRoutes(state);
-  assert.deepEqual(state['llm-pi-ai'].providers['local-everyday'].models, capabilities);
-  assert.deepEqual(state['agent-default-model'], nightSelected);
-  assert.equal((await residentClientExpectations(state))[1].available, false);
-  f.state.data.push(entry(SECONDARY));
-  await synchronizeRouterSettings(service(state));
-  assert.deepEqual(state['agent-default-model'], nightSelected);
-  assert.deepEqual(state['llm-pi-ai'].providers['amazon-bedrock'], bedrock);
+  assert.equal(night.residentState.status, 'offline');
+  assert.equal(night.residentState.label, 'Nighttime — offline (flash-next-solo-128k)');
+  assert.equal(night.residentState.limits, 'stale');
+  assert.deepEqual(night.models.map(row => row.id), ['nighttime']);
+  assert.equal(providers(state)['local-ollama'].models[0].contextWindow, 131072 - 1024);
+  assert.deepEqual(providers(state)['amazon-bedrock'], bedrock);
+  assert.deepEqual(state['agent-default-model'], { provider: 'amazon-bedrock', model: 'external-model', reasoningEffort: 'high' });
+  const notices = [];
+  const rows = await verifyConfiguredRoutes(state, { log: notice => notices.push(notice) });
+  assert.deepEqual(rows.map(row => row.status), ['available', 'offline']);
+  assert.match(notices.join('\n'), /nighttime: offline \(flash-next-solo-128k\); skipped/);
+  const output = await remote(state);
+  assert.match(output.stdout, /nighttime: offline \(flash-next-solo-128k\); skipped/);
+  assert.match(output.stdout, /Verified/);
+  const expected = await residentClientExpectations(state);
+  assert.deepEqual(expected.map(row => [row.name, row.available]), [['Qwen3.8 Flash-Next (128K)', true], ['Nighttime — offline (flash-next-solo-128k)', false]]);
 });
 
-test('invalid catalogs and optional metadata never masquerade as intentional absence', async t => {
-  const f = await fixture(t, [entry(PRIMARY)]);
-  const state = legacySettings(f.baseURL);
-  await synchronizeRouterSettings(service(state));
-  const before = structuredClone(state);
-  const badNight = entry(SECONDARY); badNight.x_ollama_router.complete = false;
-  for (const data of [[], null, [null], [entry(PRIMARY), {}], [entry(PRIMARY), badNight],
-    [entry(PRIMARY), { id: 'bad', x_ollama_router: { aliases: 'wrong' } }], [entry(SECONDARY)]]) {
-    f.state.data = data;
-    await assert.rejects(synchronizeRouterSettings(service(state)));
-    assert.deepEqual(state, before);
-  }
-});
-
-test('live picker verification follows Flash 128K and the 27B 160K recovery profile', async t => {
-  const flash = 'qwen3.8-flash-next-ad4.27';
-  const night = entry(SECONDARY);
-  night.x_ollama_router.display_name = 'Nighttime (128K)';
-  const f = await fixture(t, [entry(PRIMARY), night]);
-  const state = legacySettings(f.baseURL);
-  for (const [id, capacity, name] of [
-    [PRIMARY, 163840, 'Daytime (160K)'],
-    [flash, 131072, 'Daytime (128K)'],
-    [PRIMARY, 163840, 'Daytime (160K)'],
-  ]) {
-    const primary = entry(id, { primary: true });
-    Object.assign(primary.x_ollama_router, { context_window: capacity, display_name: name });
-    f.state.data = [primary, night, alias(primary)];
+for (const [label, document, status] of [
+  ['unhealthy', paired({ models: [residentModel({ contextWindow: 196608 }), residentModel({ service: 'nighttime', available: false })] }), 'unavailable'],
+  ['incomplete', (() => {
+    const night = residentModel({ service: 'nighttime' });
+    night.metadata.warnings = ['BACKEND_SLOT_CONTEXT_MISMATCH'];
+    return paired({ models: [residentModel({ contextWindow: 196608 }), night] });
+  })(), 'incomplete'],
+]) {
+  test(`Nighttime ${label}: recorded on its own while Daytime limits still update`, async t => {
+    const router = await fakeRouter(t, paired());
+    const state = legacySettings(router.baseURL);
     await synchronizeRouterSettings(service(state));
-    const expected = await residentClientExpectations(state);
-    assert.deepEqual(expected, [
-      { provider: 'local-ollama', model: 'local-active', available: true, name, contextWindow: capacity, reasoningEffort: 'medium' },
-      { provider: 'local-everyday', model: SECONDARY, available: true, name: 'Nighttime (128K)', contextWindow: 131072, reasoningEffort: 'medium' },
-    ]);
-    assert.match((await f.remote(state)).stdout, /Verified/);
-  }
-  // A live gate must not accept stale settings merely because its UI agrees.
-  state['llm-pi-ai'].providers['local-ollama'].models[0].contextWindow = 131072;
-  await assert.rejects(residentClientExpectations(state), /context is not synchronized/);
-  state['llm-pi-ai'].providers['local-ollama'].models[0].contextWindow = 163840;
-  state['llm-pi-ai'].providers['local-ollama'].models[0].name = 'Daytime (128K)';
-  await assert.rejects(residentClientExpectations(state), /display name is not synchronized/);
-});
+    const before = structuredClone(providers(state)['local-everyday'].models);
+    router.publish(document);
+    const { errors } = await synchronizeRouterSettings(service(state));
+    assert.deepEqual(errors, []);
+    assert.equal(providers(state)['local-ollama'].models[0].contextWindow, 196608 - 1024, 'Daytime is never frozen by Nighttime');
+    const night = providers(state)['local-everyday'];
+    assert.equal(night.residentState.status, status);
+    assert.equal(night.residentUnavailable, true);
+    assert.deepEqual(night.models, before, 'last limits are retained, marked stale');
+    assert.equal(night.residentState.limits, 'stale');
+    await verifyConfiguredRoutes(state);
+  });
+}
 
-test('offline picker checks use isolated settings without contacting a router', async t => {
-  const primary = entry(PRIMARY), night = entry(SECONDARY);
-  const f = await fixture(t, [primary, night]);
-  const state = legacySettings(f.baseURL);
+test('router draining: both models wait (not blocked), limits stay stale, verification passes', async t => {
+  const router = await fakeRouter(t, paired());
+  const state = legacySettings(router.baseURL);
   await synchronizeRouterSettings(service(state));
-  for (const provider of Object.values(state['llm-pi-ai'].providers)) provider.baseURL = 'invalid://offline';
-  state['llm-pi-ai'].providers['local-ollama'].reasoning = 'low';
-  const expected = await residentClientExpectations(state, { live: false });
-  assert.equal(expected[0].name, 'Primary');
-  assert.equal(expected[0].contextWindow, 131072);
-  assert.equal(expected[0].reasoningEffort, 'low');
-  state['llm-pi-ai'].providers.extra = {};
-  assert.deepEqual(await residentClientExpectations(state, { live: false }), expected);
+  router.publish(draining());
+  await synchronizeRouterSettings(service(state));
+  for (const name of ['local-ollama', 'local-everyday']) {
+    assert.equal(providers(state)[name].residentState.status, 'switching');
+    assert.equal(providers(state)[name].residentUnavailable, false);
+    assert.match(providers(state)[name].residentState.label, /— router switching configuration$/);
+  }
+  assert.deepEqual((await verifyConfiguredRoutes(state)).map(row => row.status), ['switching', 'switching']);
 });
 
-test('web composition explicitly disables the built-in DeepSeek catalog', async () => {
-  const patch = await readFile(path.join(root, 'seed/profile/managed/cordis.patch.yml'), 'utf8');
-  assert.match(patch, /- id: llm-deepseek\n\s+disabled: true/);
+test('router unreachable at startup: stored settings are kept, both models are unavailable, discovery recovers', async t => {
+  const router = await fakeRouter(t, paired());
+  const state = legacySettings(router.baseURL);
+  const stored = structuredClone(providers(state)['local-ollama'].models[0]);
+  router.unreachable();
+  const failures = [];
+  const { errors, results } = await synchronizeRouterSettings(service(state), { onFetchError: (_base, error) => failures.push(error) });
+  assert.deepEqual(errors, [], 'an unreachable router is not a startup failure');
+  assert.equal(failures.length, 1);
+  for (const name of ['local-ollama', 'local-everyday']) {
+    assert.equal(results.get(name).state.reason, 'router unreachable');
+    assert.equal(providers(state)[name].residentUnavailable, true);
+  }
+  assert.equal(providers(state)['local-ollama'].models[0].contextWindow, stored.contextWindow);
+  assert.deepEqual(providers(state)['local-ollama'].models.map(row => row.id), ['daytime'], 'local migration still happens');
+  router.reachable();
+  await synchronizeRouterSettings(service(state));
+  assert.equal(providers(state)['local-ollama'].residentState.status, 'available');
+  assert.equal(providers(state)['local-ollama'].residentUnavailable, false);
 });
 
-test('resolved defaults initialize providers when no user provider map is stored', async t => {
-  const f = await fixture(t, [entry(PRIMARY), entry(SECONDARY)]);
-  const state = legacySettings(f.baseURL);
-  const settings = service(state);
-  settings.describe = () => [{ ns: 'llm-pi-ai', user: {} }];
-  await synchronizeRouterSettings(settings);
+test('a new canonical ID behind nighttime between revisions keeps it available with nothing canonical persisted', async t => {
+  const router = await fakeRouter(t, paired());
+  const state = legacySettings(router.baseURL);
+  await synchronizeRouterSettings(service(state));
+  router.publish(paired({ models: [residentModel(), residentModel({ service: 'nighttime', id: NIGHTTIME_MTP3_ID, contextWindow: 131072 })] }));
+  await synchronizeRouterSettings(service(state));
+  const night = providers(state)['local-everyday'];
+  assert.equal(night.residentState.status, 'available');
+  assert.equal(night.models[0].contextWindow, 131072 - 1024);
+  assert.doesNotMatch(JSON.stringify(state), /fixture-nighttime|mtp3/);
   await verifyConfiguredRoutes(state);
-  assert.equal(state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE');
 });
 
-test('a concurrent edit to a resident credential reference is not overwritten by discovery', async t => {
-  const f = await fixture(t, [entry(PRIMARY), entry(SECONDARY)]);
-  const state = legacySettings(f.baseURL);
-  const settings = service(state), get = settings.get;
+test('the live verifier rejects stale limits, labels, identity and canonical IDs', async t => {
+  const router = await fakeRouter(t, paired());
+  const remote = await remoteVerifier(t);
+  const state = legacySettings(router.baseURL);
+  await synchronizeRouterSettings(service(state));
+  const saved = structuredClone(providers(state)['local-ollama']);
+  for (const [mutate, pattern] of [
+    [day => { day.models[0].contextWindow = 131072; }, /context is not synchronized/],
+    [day => { day.models[0].name = 'Daytime (128K)'; }, /display name is not synchronized/],
+    [day => { day.maxConcurrency = 2; }, /concurrency is not synchronized/],
+    [day => { delete day.headers; }, /X-Client-Name/],
+    [day => { day.models[0].id = 'local-active'; }, /service ID "daytime"/],
+    [day => { day.residentUnavailable = true; }, /availability is not synchronized/],
+  ]) {
+    providers(state)['local-ollama'] = structuredClone(saved);
+    mutate(providers(state)['local-ollama']);
+    await assert.rejects(verifyConfiguredRoutes(state), pattern);
+    await assert.rejects(remote(state), error => error.code === 22 && pattern.test(error.stderr));
+  }
+  providers(state)['local-ollama'] = saved;
+  await verifyConfiguredRoutes(state);
+});
+
+test('rollback verification accepts settings from releases that predate service IDs', async t => {
+  const router = await fakeRouter(t, solo());
+  const state = legacySettings(router.baseURL);
+  delete providers(state)['local-ollama-256k'];
+  providers(state)['local-everyday'].residentUnavailable = true;
+  await assert.rejects(verifyConfiguredRoutes(state), /service ID/);
+  const rows = await verifyConfiguredRoutes(state, { allowLegacyIds: true, primaryBrowser: true });
+  assert.deepEqual(rows.map(row => row.status), ['available', 'offline']);
+});
+
+test('a concurrent edit to a resident route is never overwritten; the other model still converges', async t => {
+  const router = await fakeRouter(t, paired());
+  const state = legacySettings(router.baseURL);
+  const settings = service(state);
+  const describe = settings.describe;
   let reads = 0;
-  settings.get = namespace => {
-    if (namespace === 'llm-pi-ai' && ++reads === 2) state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv = 'NEW_CREDENTIAL_REFERENCE';
-    return get(namespace);
+  settings.describe = () => {
+    if (++reads === 3) providers(state)['local-ollama'].apiKeyEnv = 'NEW_CREDENTIAL_REFERENCE';
+    return describe();
   };
-  await assert.rejects(synchronizeRouterSettings(settings), /settings changed during discovery/);
-  assert.equal(state['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'NEW_CREDENTIAL_REFERENCE');
-  assert.equal(state['llm-pi-ai'].providers['local-everyday'], undefined);
+  const { errors } = await synchronizeRouterSettings(settings);
+  assert.match(errors.map(row => `${row.provider}: ${row.error.message}`).join('\n'), /local-ollama: resident settings changed during discovery/);
+  assert.equal(providers(state)['local-ollama'].apiKeyEnv, 'NEW_CREDENTIAL_REFERENCE');
+  assert.deepEqual(providers(state)['local-everyday'].models.map(row => row.id), ['nighttime'], 'Nighttime is independent of Daytime');
+});
+
+test('event stream: revisions are followed, the stream reconnects with backoff, and polling revalidates with If-None-Match', async t => {
+  const router = await fakeRouter(t, paired());
+  const documents = [];
+  const reachability = [];
+  const watch = new RouterWatch(router.baseURL, { clientName: CLIENT, pollMs: 200, retryMs: 40, maxRetryMs: 120, deadMs: 300,
+    onDocument: document => documents.push(document.revision), onReachability: reachable => reachability.push(reachable) }).start();
+  t.after(() => watch.stop());
+  await eventually(() => assert.equal(router.state.eventConnections, 1), 'subscribes to /v1/router/events');
+  const first = router.state.document.revision;
+  await eventually(() => assert.deepEqual(documents, [first]), 'the startup document is read once per revision');
+  const next = solo();
+  router.publish(next);
+  await eventually(() => assert.equal(documents.at(-1), next.revision), 'a capabilities event replaces the copy');
+  router.disconnect();
+  await eventually(() => assert.equal(router.state.eventConnections, 2), 'reconnects after a drop');
+  assert.ok(router.state.notModified >= 1, 'polls while disconnected with If-None-Match');
+  assert.equal(documents.filter(revision => revision === next.revision).length, 1, 'an unchanged revision is not re-applied');
+  // 60 s (here 300 ms) without bytes, keepalives included, is a dead stream.
+  const keepalive = setInterval(() => router.keepalive(), 50);
+  await delay(450);
+  clearInterval(keepalive);
+  assert.equal(router.state.eventConnections, 2, 'keepalives keep the stream alive');
+  await eventually(() => assert.equal(router.state.eventConnections, 3), 'a silent stream is replaced', 2000);
+  assert.ok(router.state.clientNames.every(name => name === CLIENT));
+  assert.deepEqual(reachability, [true]);
+});
+
+test('TOO_MANY_SUBSCRIBERS falls back to polling the capabilities endpoint', async t => {
+  const router = await fakeRouter(t, paired());
+  router.state.refuseEvents = true;
+  const documents = [];
+  const watch = new RouterWatch(router.baseURL, { clientName: CLIENT, pollMs: 100, retryMs: 20, maxRetryMs: 100, deadMs: 500,
+    onDocument: document => documents.push(document.revision) }).start();
+  t.after(() => watch.stop());
+  await eventually(() => assert.equal(documents.length, 1), 'startup document');
+  router.state.document = solo();
+  await eventually(() => assert.equal(documents.at(-1), router.state.document.revision), 'polling picks up a change');
+});
+
+test('discovery service: transitions are logged and pushed, request-time codes re-sync, and models return with no action', async t => {
+  const router = await fakeRouter(t, paired());
+  const state = legacySettings(router.baseURL);
+  const logs = [];
+  const logger = { info: message => logs.push(message), warn: message => logs.push(message) };
+  let describes = 0;
+  const settings = service(state);
+  const describe = settings.describe;
+  settings.describe = () => { describes += 1; return describe(); };
+  const discovery = new ResidentDiscovery({ settings, logger, pollIntervalMs: 60_000, clientName: CLIENT, echo: false,
+    watchOptions: { retryMs: 30, maxRetryMs: 100, deadMs: 1000, pollMs: 200 } }).start();
+  t.after(() => discovery.stop());
+  const night = () => providers(state)['local-everyday'];
+  await eventually(() => assert.equal(night().residentState?.status, 'available'), 'startup sync');
+  router.publish(solo());
+  await eventually(() => assert.equal(night().residentState.status, 'offline'), 'a pushed revision re-syncs immediately');
+  assert.ok(logs.includes('router-model-discovery: nighttime: available → offline (flash-next-solo-128k)'), logs.join('\n'));
+  assert.ok(describes > 0, 'settings/document-updated is flushed for open pickers');
+  router.publish(paired());
+  await eventually(() => assert.equal(night().residentState.status, 'available'), 'Nighttime becomes selectable again with no action');
+  assert.equal(night().residentUnavailable, false);
+  // The document can lag: a SERVICE_OFFLINE answer marks the model offline at once.
+  const hub = globalThis[ROUTER_CONTRACT_HUB];
+  hub.report('local-everyday', { code: 'SERVICE_OFFLINE', message: 'X is offline in runtime configuration "flash-next-solo-128k" (exclusive_configuration).' });
+  await eventually(() => assert.equal(night().residentState.status, 'offline'), 'SERVICE_OFFLINE holds the model offline');
+  assert.equal(night().residentState.configuration, 'flash-next-solo-128k');
+  router.publish(solo());
+  await eventually(() => assert.equal(night().residentState.reason, 'exclusive_configuration'), 'the document supersedes the hold');
+  router.publish(paired());
+  await eventually(() => assert.equal(night().residentState.status, 'available'), 'returns again');
+  // BACKEND_UNAVAILABLE after the bounded provider retries marks it unavailable.
+  for (let attempt = 0; attempt < 3; attempt += 1) hub.report('local-everyday', { code: 'BACKEND_UNAVAILABLE' });
+  await eventually(() => assert.equal(night().residentState.status, 'unavailable'), 'repeated backend failures mark it unavailable');
+  assert.equal(providers(state)['local-ollama'].residentState.status, 'available', 'Daytime is independent');
+  router.publish(paired());
+  await eventually(() => assert.equal(night().residentState.status, 'available'), 'a new revision clears the hold');
+  // Router gone: both unavailable; back: recovered automatically.
+  router.unreachable();
+  await eventually(() => assert.equal(providers(state)['local-ollama'].residentState.reason, 'router unreachable'), 'unreachable', 5000);
+  assert.ok(logs.some(line => line === 'router-model-discovery: daytime: available → unavailable (router unreachable)'), logs.join('\n'));
+  router.reachable();
+  await eventually(() => assert.equal(providers(state)['local-ollama'].residentState.status, 'available'), 'recovers', 5000);
+});
+
+test('a pre-contract router without /v1/router/capabilities keeps Daytime usable from its model listing', async t => {
+  const http = await import('node:http');
+  const listing = { data: [{ id: 'local-active', object: 'model', x_ollama_router: {
+    schema_version: 1, alias: true, upstream_model: 'fixture-managed:q8', context_window: 262144, active_request_limit: 1,
+    input_modalities: ['text', 'image'], capabilities: ['completion', 'thinking', 'tools', 'vision'], complete: true, warnings: [] } }] };
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push([req.url, req.headers['x-client-name']]);
+    if (req.url === '/v1/models') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(listing)); return; }
+    res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"error":{"code":"NOT_FOUND"}}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const state = legacySettings(`http://127.0.0.1:${server.address().port}/v1`);
+  const before = structuredClone(providers(state)['local-ollama'].models[0]);
+  const { errors } = await synchronizeRouterSettings(service(state));
+  assert.deepEqual(errors, []);
+  const day = providers(state)['local-ollama'];
+  assert.equal(day.residentUnavailable, false);
+  assert.equal(day.residentState.status, 'available');
+  assert.equal(day.residentState.limits, 'stored');
+  assert.equal(day.models[0].contextWindow, before.contextWindow, 'unpublished limits are not invented');
+  assert.deepEqual(day.models.map(row => row.id), ['daytime']);
+  assert.equal(providers(state)['local-everyday'].residentState.status, 'unavailable');
+  assert.ok(seen.some(([url, name]) => url === '/v1/models' && name === CLIENT));
+  const rows = await verifyConfiguredRoutes(state, { log() {} });
+  assert.deepEqual(rows.map(row => row.status), ['available', 'unavailable']);
 });

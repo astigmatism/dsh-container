@@ -29,8 +29,8 @@ function config(thresholdRatio = 0.70) {
     compactionRetries: 1,
     maxOverflowRetries: 1,
     modelPolicies: [
-      { provider: "local-ollama", model: "local-active", thresholdRatio },
-      { provider: "local-everyday", model: "qwen3.8-27b-abliterated-q6_k", thresholdRatio },
+      { provider: "local-ollama", model: "daytime", thresholdRatio },
+      { provider: "local-everyday", model: "nighttime", thresholdRatio },
     ],
     auto: true,
   };
@@ -66,7 +66,7 @@ function userEvent(seq) {
 function pressureAgent(provider) {
   const events = [userEvent(0), userEvent(1), userEvent(2)];
   return {
-    options: { provider, model: provider === "local-everyday" ? "qwen3.8-27b-abliterated-q6_k" : "local-active" },
+    options: { provider, model: provider === "local-everyday" ? "nighttime" : "daytime" },
     session: {
       events,
       surface: { nodes: [0, 1, 2], replaceGeneration: 0 },
@@ -74,7 +74,7 @@ function pressureAgent(provider) {
         return events[seq];
       },
       requestHeader() {
-        return { config: { provider, model: provider === "local-everyday" ? "qwen3.8-27b-abliterated-q6_k" : "local-active" } };
+        return { config: { provider, model: provider === "local-everyday" ? "nighttime" : "daytime" } };
       },
     },
   };
@@ -208,7 +208,7 @@ function recoveryAgent() {
     session: {
       surface: { replaceGeneration: 0 },
       requestHeader() {
-        return { config: { provider: "local-ollama", model: "local-active" } };
+        return { config: { provider: "local-ollama", model: "daytime" } };
       },
     },
   };
@@ -283,8 +283,8 @@ if (mode === "--effective-config") {
     assert.equal(config.compactionRetries, 1);
     assert.equal(config.maxOverflowRetries, 1);
     assert.deepEqual(config.modelPolicies, [
-      { provider: 'local-ollama', model: 'local-active', thresholdRatio: 0.7 },
-      { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k', thresholdRatio: 0.7 },
+      { provider: 'local-ollama', model: 'daytime', thresholdRatio: 0.7 },
+      { provider: 'local-everyday', model: 'nighttime', thresholdRatio: 0.7 },
     ]);
     for (const row of stack) assert.equal(row.disabled, false);
     assert.deepEqual(stack.find(row => row.id === 'tool-result-pruner').config,

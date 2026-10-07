@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 
 const endpoint = (process.env.DSH_SCHEMA_AB_ENDPOINT ?? "http://192.168.1.4:11434").replace(/\/$/u, "");
-const model = process.env.DSH_SCHEMA_AB_MODEL ?? "local-active";
+const model = process.env.DSH_SCHEMA_AB_MODEL ?? "daytime";
 const trials = Number.parseInt(process.env.DSH_SCHEMA_AB_TRIALS ?? "6", 10);
 const temperature = Number.parseFloat(process.env.DSH_SCHEMA_AB_TEMPERATURE ?? "0.7");
 const modulePath = process.env.DSH_TOOL_FS_MODULE
@@ -106,6 +106,7 @@ for (let index = 0; index < trials; index += 1) {
       headers: {
         "content-type": "application/json",
         authorization: "Bearer local-only",
+        "x-client-name": "deepseek-harness/read-schema-qualification",
       },
       body: JSON.stringify({
         model,

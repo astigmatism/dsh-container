@@ -4,9 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 function draining(reason) {
   if (reason?.kind !== 'error') return false;
+  // The patched adapter classifies BACKEND_DRAINING/MAINTENANCE_MODE as
+  // ROUTER_SWITCHING (docs/llm-router-contract.md §7, §10).
+  if (reason.error?.code === 'ROUTER_SWITCHING') return true;
   const match = / API error \(503\): (\{.*\})$/.exec(reason.error?.message ?? '');
   if (!match) return false;
-  try { return JSON.parse(match[1]).code === 'BACKEND_DRAINING'; }
+  try { return ['BACKEND_DRAINING', 'MAINTENANCE_MODE'].includes(JSON.parse(match[1]).code); }
   catch { return false; }
 }
 

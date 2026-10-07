@@ -1,6 +1,8 @@
+# Resident routes send the LLM Router's stable service IDs (daytime, nighttime),
+# never canonical model IDs. See docs/llm-router-contract.md.
 agent-default-model:
   provider: local-ollama
-  model: local-active
+  model: daytime
   reasoningEffort: medium
 
 permission:
@@ -35,8 +37,11 @@ llm-pi-ai:
         mode: normal
         maxRetries: 2
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
+      # Placeholder limits until the first successful router discovery. The
+      # router-model-discovery plugin replaces them with the serving model's
+      # context_window (less context_safety_reserve), slots and features.
       models:
-        - id: local-active
+        - id: daytime
           name: Daytime (128K)
           contextWindow: 131072
           maxTokens: null
@@ -65,8 +70,9 @@ llm-pi-ai:
         mode: normal
         maxRetries: 2
         retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
+      # Placeholder limits until the first successful router discovery.
       models:
-        - id: qwen3.8-27b-abliterated-q6_k
+        - id: nighttime
           name: Nighttime (128K)
           contextWindow: 131072
           maxTokens: null

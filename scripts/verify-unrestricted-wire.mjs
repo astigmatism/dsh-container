@@ -54,7 +54,7 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 try {
-  const model = { id: 'local-active', provider: 'local-ollama', api: 'openai-responses',
+  const model = { id: 'daytime', provider: 'local-ollama', api: 'openai-responses',
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`, contextWindow: 32768, maxTokens: null,
     reasoning: true, thinkingLevelMap: { off: 'none', low: 'low', medium: 'medium', xhigh: 'xhigh' },
     input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };

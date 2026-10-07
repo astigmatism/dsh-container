@@ -15,11 +15,13 @@ function providerBlock(name, nextName) {
 const canonical = providerBlock("local-ollama", "local-everyday");
 const expanded = providerBlock("local-everyday");
 
-test("canonical selection uses only the public alias and seeds the deliberate DSH medium default", () => {
-  assert.match(settings, /^agent-default-model:\n  provider: local-ollama\n  model: local-active\n  reasoningEffort: medium\n\n/m);
+test("seeded selections send only router service IDs and the deliberate DSH medium default", () => {
+  assert.match(settings, /^agent-default-model:\n  provider: local-ollama\n  model: daytime\n  reasoningEffort: medium\n\n/m);
   assert.match(settings.slice(0, settings.indexOf("\npermission:")), /reasoningEffort: medium/);
-  assert.equal((settings.match(/- id: local-active/g) ?? []).length, 1);
-  assert.match(expanded, /- id: qwen3\.8-27b-abliterated-q6_k/);
+  assert.equal((settings.match(/- id: daytime\n/g) ?? []).length, 1);
+  assert.match(expanded, /- id: nighttime\n/);
+  // Contract §3: canonical IDs change with configuration and are never configured.
+  assert.doesNotMatch(settings, /local-active|qwen3\.8|- id: (?!daytime\n|nighttime\n)/);
 });
 
 test("Daytime 128K and Nighttime 128K selections expose independent request contracts", () => {

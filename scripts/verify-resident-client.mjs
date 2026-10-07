@@ -38,14 +38,7 @@ async function rpc(name, request = {}) {
   assert.equal(result.ok, true, `${name}: ${result.error?.message}`);
   return result.value;
 }
-try {
-  await installVerificationOnboarding(page, base);
-  const expected = await residentClientExpectations(await readSettings(settingsPath), { live });
-  await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
-  const catalog = await rpc('modelCatalog');
-  originalDefault = catalog.default;
-  defaultSnapshot = (await rpc('settings/describe')).namespaces.find(row => row.ns === 'agent-default-model');
-  const available = expected.filter(row => row.available);
+function compareCatalog(expected, catalog) {
   for (const row of expected) {
     const group = catalog.groups.find(group => group.id === row.provider);
     assert.ok(group, `${row.provider} is represented`);
@@ -55,17 +48,51 @@ try {
       [{ id: row.model, name: row.name, available: row.available }]);
     if (row.available) assert.equal(group.models[0].reasoning?.defaultEffort, row.reasoningEffort);
   }
+}
+/** The router may change state while this runs (docs/llm-router-contract.md):
+ * wait until persisted states, the router and the served catalog agree. */
+async function settledExpectations() {
+  const deadline = Date.now() + 120000;
+  const notices = new Set();
+  for (;;) {
+    try {
+      const expected = await residentClientExpectations(await readSettings(settingsPath), { live, log: notice => notices.add(notice) });
+      // Offline fixtures have no router: discovery must still record a state for both models.
+      if (!live) assert.ok(expected.every(row => row.recorded), 'discovery has recorded each resident state');
+      const catalog = await rpc('modelCatalog');
+      compareCatalog(expected, catalog);
+      for (const notice of notices) console.log(notice);
+      return { expected, catalog };
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      notices.clear();
+      await delay(2000);
+    }
+  }
+}
+try {
+  await installVerificationOnboarding(page, base);
+  await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
+  const { expected, catalog } = await settledExpectations();
+  originalDefault = catalog.default;
+  defaultSnapshot = (await rpc('settings/describe')).namespaces.find(row => row.ns === 'agent-default-model');
+  const available = expected.filter(row => row.available);
+  // A switching router accepts selection but makes requests wait; only
+  // available models answer the live inference check.
+  const servable = available.filter(row => row.status === 'available');
+  if (!available.length) console.log(`No resident model is selectable (${expected.map(row => row.name).join(', ')}); selection, effort and inference checks are skipped.`);
+  else if (live && servable.length < available.length) console.log('A switching router is not asked for inference; its requests would wait.');
   fixture = await mkdtemp('/tmp/dsh-resident-verification-');
   const created = await rpc('workspace/create', { path: fixture });
   workspaceId = created.workspace.workspaceId;
   ({ sessionId } = await rpc('create', { workspaceId }));
   const first = available[0];
-  lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: first.provider, model: first.model, reasoningEffort: first.reasoningEffort })).selected;
+  if (first) lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: first.provider, model: first.model, reasoningEffort: first.reasoningEffort })).selected;
   // The sidebar omits empty drafts. Materialize this isolated conversation
   // before opening its session-specific model controls. Offline image tests
   // intentionally have no inference endpoint; only live mode requires replies.
   const opening = 'Text-only verification. Do not use tools or access files. Reply with READY.';
-  if (live) await verificationPrompt({ rpc, sessionId, text: opening });
+  if (live && first?.status === 'available') await verificationPrompt({ rpc, sessionId, text: opening });
   else {
     await rpc('prompt', { sessionId, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text: opening }] });
     await rpc('cancel', { sessionId });
@@ -104,10 +131,12 @@ try {
     assert.equal(await option.isDisabled(), !row.available);
   }
   await clickVerificationTarget(page, trigger);
-  await clickVerificationTarget(page, trigger);
-  await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Effort/ }));
-  assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
-  await clickVerificationTarget(page, trigger);
+  if (first) {
+    await clickVerificationTarget(page, trigger);
+    await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Effort/ }));
+    assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
+    await clickVerificationTarget(page, trigger);
+  }
   console.log(`Live Harness catalog and rendered picker include ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
   // Model selection saves the next-request preference asynchronously. Verify
   // both choices and distinct reasoning settings survive browser reconnection.
@@ -125,7 +154,7 @@ try {
   }
   console.log('Available model selections and separate reasoning preferences survived browser reconnection.');
   if (live) {
-    for (const [index, choice] of available.entries()) {
+    for (const [index, choice] of servable.entries()) {
       lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: choice.provider, model: choice.model, reasoningEffort: 'medium' })).selected;
       const marker = `RESIDENT_${index}_${randomUUID().slice(0, 8)}`;
       await verificationPrompt({ rpc, sessionId, expectedText: marker, text:

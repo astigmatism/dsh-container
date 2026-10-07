@@ -145,3 +145,64 @@ test('unavailable failures never replay, including a saved always-retry policy',
   await recover({ failure: { code: 'UNRELATED_ERROR' } }, () => downstream++);
   assert.equal(downstream, 1, 'other failures retain their normal recovery path');
 });
+
+test('discovery state drives the one picker label and the dispatch message; a switching router never blocks', async () => {
+  const f = adapter();
+  f.profile.residentUnavailable = true;
+  f.profile.residentState = { service: 'night', status: 'offline', label: 'Nighttime — offline (flash-next-solo-128k)',
+    message: 'Nighttime is offline in router configuration "flash-next-solo-128k". Switch this session to Daytime.' };
+  assert.equal((await f.value.listModels('local-everyday'))[0].name, 'Nighttime — offline (flash-next-solo-128k)');
+  assert.throws(() => f.value.prepareCall('local-everyday', 'night'), e => e.code === 'MODEL_UNAVAILABLE' && /Switch this session to Daytime/.test(e.message));
+  await assert.rejects(f.value.stream(request).next(), e => e.code === 'MODEL_UNAVAILABLE');
+  f.profile.residentUnavailable = false;
+  f.profile.residentState = { service: 'night', status: 'switching', label: 'Nighttime — router switching configuration' };
+  const listed = (await f.value.listModels('local-everyday'))[0];
+  assert.equal(listed.available, true);
+  assert.equal(listed.name, 'Nighttime — router switching configuration');
+  assert.equal((await f.value.stream(request).next()).value.text, 'night-only', 'requests are sent and wait on the router');
+  f.profile.residentState = { service: 'night', status: 'available', label: 'Nighttime (96K) · NSFW' };
+  assert.equal((await f.value.listModels('local-everyday'))[0].name, 'Nighttime', 'an available model shows its configured name');
+});
+
+test('old persisted model IDs of a resident route resolve to its service model', async () => {
+  const f = adapter();
+  f.profile.residentState = { service: 'night', status: 'available', label: 'Nighttime' };
+  const resolved = await f.value.resolveModel('local-everyday', 'qwen3.8-27b-abliterated-q6_k');
+  assert.equal(resolved.id, 'qwen3.8-27b-abliterated-q6_k', 'the requested identity is echoed for dsh-llm validation');
+  assert.equal(resolved.name, 'Nighttime');
+  assert.equal((await f.value.stream({ ...request, model: 'qwen3.8-27b-abliterated-q6_k' }).next()).value.text, 'night-only');
+  delete f.profile.residentState;
+  assert.throws(() => f.value.modelOf(f.snapshot, 'local-everyday', 'unrelated'), /no configured model|getModel|undefined/i);
+});
+
+test('a draining router is waited out 2 → 30 s on its own chain without consuming the retry budget', async () => {
+  const scheduled = [];
+  const state = {};
+  const context = {
+    ctx: { sessionProjections: { stateOf: () => state } },
+    retryStateKey: (provider, key) => JSON.stringify([provider, key]),
+    RetryId: id => id, randomUUID: () => 'retry-chain',
+    backoff: async (...args) => { scheduled.push(args); return { kind: 'retry' }; },
+  };
+  const recover = vm.runInNewContext(patchRetry(fixture.retry) + '\nrecover', context);
+  const normal = { mode: 'normal', maxRetries: 2, retryableCodes: ['SERVER'] };
+  for (let attempt = 1; attempt <= 7; attempt += 1) {
+    let downstream = 0;
+    const decision = await recover({ agent: { session: {} }, turn: 1, step: 1, provider: 'local-everyday',
+      failure: { code: 'ROUTER_SWITCHING', message: 'draining' }, retryPolicy: normal, signal: new AbortController().signal }, () => downstream++);
+    assert.deepEqual(clone(decision), { kind: 'retry' });
+    assert.equal(downstream, 0);
+    const [, , , failure, provider, policy, key, retry, retryId, delayMs] = scheduled.at(-1);
+    assert.equal(failure.code, 'ROUTER_SWITCHING');
+    assert.equal(provider, 'local-everyday');
+    assert.equal(policy.mode, 'always', 'switching waits are not bounded by maxRetries');
+    assert.match(key, /router-switching/);
+    assert.equal(retry, attempt);
+    assert.equal(retryId, 'retry-chain');
+    assert.equal(delayMs, Math.min(2000 * 2 ** (attempt - 1), 30000));
+    state[context.retryStateKey(provider, key)] = { retry, retryId };
+  }
+  // Ten minutes of waiting at the 30 s cap is well within the chain.
+  const totalFirstHour = Array.from({ length: 40 }, (_, index) => Math.min(2000 * 2 ** index, 30000)).reduce((a, b) => a + b, 0);
+  assert.ok(totalFirstHour > 600000);
+});

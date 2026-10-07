@@ -36,7 +36,10 @@ const profiles = [
 for (const profile of profiles) {
   const block = providerBlock(profile.provider, profile.next);
   assert.ok(block.includes(`displayName: ${profile.displayName}`), `${profile.provider} has the wrong display name`);
-  assert.ok(block.includes(`- id: ${profile.provider === "local-everyday" ? "qwen3.8-27b-abliterated-q6_k" : "local-active"}`), `${profile.provider} is missing local-active`);
+  // Contract §3: send stable service IDs only; never persist canonical IDs.
+  const service = profile.provider === "local-everyday" ? "nighttime" : "daytime";
+  assert.ok(block.includes(`- id: ${service}\n`), `${profile.provider} must send the router service ID ${service}`);
+  assert.ok(!/- id: (?!daytime\n|nighttime\n)/.test(block), `${profile.provider} configures a non-service model ID`);
   assert.ok(block.includes(`name: ${profile.modelName}`), `${profile.provider} has the wrong model name`);
   assert.ok(block.includes(`contextWindow: ${profile.contextWindow}`), `${profile.provider} has the wrong context window`);
   assert.ok(block.includes(`maxConcurrency: ${profile.maxConcurrency}`), `${profile.provider} has the wrong concurrency`);
@@ -45,4 +48,5 @@ for (const profile of profiles) {
   assert.ok(!/^      timeoutMs:/m.test(block), `${profile.provider} sets a generation deadline`);
 }
 
-console.log("Verified resident coding 128K/1 and everyday 128K/1 model choices with unrestricted output and an explicit DSH medium default.");
+assert.match(settings, /^agent-default-model:\n(?:#.*\n)?  provider: local-ollama\n  model: daytime\n/m, "the seeded default must use the daytime service ID");
+console.log("Verified seeded Daytime and Nighttime placeholders: service IDs only, unrestricted output and an explicit DSH medium default.");

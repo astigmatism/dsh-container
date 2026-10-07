@@ -1,217 +1,248 @@
-/** Synchronize resident model availability from public router metadata.
- * Coding retains local-active for existing agents; everyday uses its real ID.
+/** Resident model discovery under the LLM Router client contract, version 1.
+ *
+ * docs/llm-router-contract.md is authoritative. Harness sends only the stable
+ * service IDs `daytime` and `nighttime`, reads `/v1/router/capabilities` at
+ * startup, follows `/v1/router/events` for its lifetime and polls while the
+ * stream is down. Each service is evaluated on its own; one model's state never
+ * blocks updates to the other. Fallback is deliberately disabled (§5): an
+ * unusable model stays visible, is labelled with exactly one state and fails
+ * fast at dispatch, while a draining router makes requests wait.
  */
+import { hostname } from "node:os";
 
 export const name = "router-model-discovery";
 
+/** Provider routes Harness owns, and the stable router service each one sends. */
+export const RESIDENT_SERVICES = Object.freeze({ "local-ollama": "daytime", "local-everyday": "nighttime" });
+const DEFAULT_PROVIDERS = Object.keys(RESIDENT_SERVICES);
+const SERVICE_LABELS = Object.freeze({ daytime: "Daytime", nighttime: "Nighttime" });
+/** Exactly one of these is shown for each resident model. */
+export const RESIDENT_STATUSES = Object.freeze(["available", "offline", "unavailable", "switching", "incomplete"]);
+/** States in which dispatch fails at once. A switching router makes requests wait instead. */
+const BLOCKING_STATUSES = new Set(["offline", "unavailable", "incomplete"]);
+const STATUS_TEXT = Object.freeze({
+  available: "available",
+  offline: "offline",
+  unavailable: "unavailable",
+  switching: "router switching configuration",
+  incomplete: "incomplete metadata",
+});
+const CAPABILITIES_SCHEMA_VERSION = 1;
+const METADATA_SCHEMA_VERSION = 2;
 const DSH_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const DSH_INPUT_MODALITIES = new Set(["text", "image"]);
-const DEFAULT_PROVIDERS = ["local-ollama", "local-everyday"];
-export const RESIDENT_MODELS = {
-  "local-ollama": "local-active",
-  "local-everyday": "qwen3.8-27b-abliterated-q6_k",
-};
-const PROVIDER_PRESENTATION = new Map([
-  ["local-ollama", {
-    displayName: "Daytime (128K)",
-    modelName: "Daytime (128K)",
-    contextWindow: 131072,
-    maxConcurrency: 1,
-  }],
-  ["local-everyday", {
-    displayName: "Nighttime (128K)",
-    modelName: "Nighttime (128K)",
-    contextWindow: 131072,
-    maxConcurrency: 1,
-  }],
-]);
+const CLIENT_NAME_HEADER = "X-Client-Name";
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const MIN_POLL_INTERVAL_MS = 5_000;
+const STREAM_RETRY_MS = 3_000;
+const STREAM_MAX_RETRY_MS = 30_000;
+const STREAM_DEAD_MS = 60_000;
+const FETCH_TIMEOUT_MS = 10_000;
+/** A request-time contradiction of the document holds this long unless a new revision arrives. */
+const REQUEST_HOLD_MS = 60_000;
+/** BACKEND_UNAVAILABLE failures, after the provider's bounded retries, that mark a model unavailable. */
+const BACKEND_FAILURE_THRESHOLD = 3;
+const BACKEND_FAILURE_WINDOW_MS = 5 * 60_000;
+/** Process-wide channel used by the patched pi-ai adapter to report router error codes. */
+export const ROUTER_CONTRACT_HUB = Symbol.for("dsh-container.router-contract.v1");
+/** A watcher that has not finished its first read: leave that model's state as it is. */
+export const DOCUMENT_PENDING = Symbol("router document pending");
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
-
 function nonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
 }
-
+function ordered(value) {
+  if (Array.isArray(value)) return value.map(ordered);
+  if (!plainObject(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])]));
+}
+/** Settings forms return fields in schema order; compare content, not key order. */
 function sameJson(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return JSON.stringify(ordered(left)) === JSON.stringify(ordered(right));
+}
+function clone(value) {
+  return value === undefined ? undefined : structuredClone(value);
+}
+function errorText(error) {
+  return String(error?.message ?? error);
 }
 
 /**
- * Validate the public router extension before any of it reaches DSH settings.
- * Unknown fields are allowed so schema v2 can grow compatibly.
+ * A per-request signal that follows `parent` and a timeout, with listeners
+ * removed afterwards. A watcher lives for the whole process, so per-request
+ * listeners on its lifetime signal must not accumulate.
  */
-export function routerMetadataOf(entry) {
-  const metadata = entry?.x_ollama_router;
-  if (!plainObject(metadata) || metadata.schema_version !== 2 || metadata.complete !== true) {
-    throw new Error("router discovery metadata is not a complete schema-v2 document");
+function linkedSignal(parent, timeoutMs) {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(parent.reason);
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(new DOMException("router request timed out", "TimeoutError")), timeoutMs);
+  if (parent?.aborted) controller.abort(parent.reason);
+  else parent?.addEventListener("abort", onAbort, { once: true });
+  return { signal: controller.signal, abort: reason => controller.abort(reason), dispose() { clearTimeout(timer); parent?.removeEventListener("abort", onAbort); } };
+}
+
+/** The value sent as `X-Client-Name` on every provider request and discovery fetch. */
+export function routerClientName({ instance, env = globalThis.process?.env ?? {} } = {}) {
+  let raw = nonEmptyString(instance) ? instance : env.HARNESS_CLIENT_INSTANCE;
+  if (!nonEmptyString(raw?.trim?.())) {
+    try { raw = hostname(); } catch { raw = "unknown"; }
   }
-  if (!Array.isArray(metadata.warnings) || metadata.warnings.length) throw new Error("router discovery metadata has warnings");
+  const clean = String(raw).trim().replace(/[^A-Za-z0-9._:@-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+  return `deepseek-harness/${clean || "unknown"}`;
+}
+
+/** Router root (without `/v1`) for a provider's OpenAI-compatible base URL. */
+export function routerBaseOf(baseURL) {
+  let endpoint;
+  try { endpoint = new URL(baseURL); } catch { throw new Error("router provider baseURL is invalid"); }
+  if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw new Error("router provider baseURL must use HTTP(S) without embedded credentials");
+  }
+  return String(baseURL).replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+/** Read the deployment document once, revalidating with `If-None-Match`. */
+export async function fetchCapabilities(baseURL, { etag, clientName = routerClientName(), signal, timeoutMs = FETCH_TIMEOUT_MS, fetchImpl = globalThis.fetch } = {}) {
+  const base = routerBaseOf(baseURL);
+  const headers = { accept: "application/json", [CLIENT_NAME_HEADER]: clientName };
+  if (nonEmptyString(etag)) headers["if-none-match"] = etag;
+  const linked = linkedSignal(signal, timeoutMs);
+  try {
+    const response = await fetchImpl(`${base}/v1/router/capabilities`, { headers, signal: linked.signal });
+    if (response.status === 304) return { status: 304, etag };
+    if (response.status === 404) {
+      // A pre-contract router (the vendored managed-mode router) has no
+      // capabilities endpoint. Describe what its model listing offers instead.
+      await response.body?.cancel?.().catch?.(() => {});
+      const legacy = await fetchImpl(`${base}/v1/models`, { headers: { accept: "application/json", [CLIENT_NAME_HEADER]: clientName },
+        signal: linked.signal });
+      if (!legacy.ok) {
+        const error = new Error(`router capabilities returned HTTP 404 and its model listing HTTP ${legacy.status}`);
+        error.code = "ROUTER_CAPABILITIES_HTTP";
+        throw error;
+      }
+      return { status: 200, document: legacyCapabilities(await legacy.json()) };
+    }
+    if (!response.ok) {
+      await response.body?.cancel?.().catch?.(() => {});
+      const error = new Error(`router capabilities returned HTTP ${response.status}`);
+      error.code = "ROUTER_CAPABILITIES_HTTP";
+      throw error;
+    }
+    return { status: 200, etag: response.headers.get("etag") ?? undefined, document: await response.json() };
+  } finally {
+    linked.dispose();
+  }
+}
+
+/**
+ * Synthesize a capabilities document from a pre-contract `/v1/models` listing.
+ * `local-active` is the legacy alias of `daytime` (§3). The result is marked
+ * `legacy`: such a router publishes no admission state or offline services.
+ */
+export function legacyCapabilities(body) {
+  const rows = Array.isArray(body?.data) ? body.data.filter(row => plainObject(row) && nonEmptyString(row.id)) : [];
+  const canonical = new Set(rows.filter(row => row.x_ollama_router?.alias !== true).map(row => row.id));
+  const models = [];
+  for (const row of rows) {
+    const metadata = plainObject(row.x_ollama_router) ? row.x_ollama_router : {};
+    if (metadata.alias === true && canonical.has(metadata.upstream_model)) continue;
+    const aliases = [...new Set([...(Array.isArray(metadata.aliases) ? metadata.aliases.filter(nonEmptyString) : []), ...(metadata.alias === true ? [row.id] : [])])];
+    const service = [row.id, ...aliases].includes("daytime") || [row.id, ...aliases].includes("local-active") ? "daytime"
+      : [row.id, ...aliases].includes("nighttime") ? "nighttime" : undefined;
+    if (!service) continue;
+    models.push({
+      id: nonEmptyString(metadata.upstream_model) ? metadata.upstream_model : row.id, service, aliases: [...new Set([...aliases, service])],
+      display_name: metadata.display_name, available: metadata.health?.available !== false,
+      slots: metadata.active_request_limit, context_window: metadata.context_window,
+      input_modalities: metadata.input_modalities, capabilities: metadata.capabilities, nsfw: metadata.nsfw ?? null, metadata,
+    });
+  }
+  const document = { object: "router.capabilities", schema_version: CAPABILITIES_SCHEMA_VERSION, legacy: true,
+    router: { accepting_requests: true }, configuration: null, models, offline_services: [] };
+  document.revision = `legacy:${JSON.stringify(ordered(models))}`;
+  return document;
+}
+
+/**
+ * Validate the public router metadata (`models[].metadata`, identical to
+ * `x_ollama_router`) before any of it reaches Harness settings. Unknown fields
+ * are allowed so schema v2 can grow compatibly. Health is not judged here: the
+ * capabilities document's `available` is authoritative for availability.
+ */
+export function validateRouterMetadata(metadata) {
+  if (!plainObject(metadata) || metadata.schema_version !== METADATA_SCHEMA_VERSION) {
+    throw new Error(`router metadata is not schema v${METADATA_SCHEMA_VERSION}`);
+  }
+  if (!Array.isArray(metadata.warnings)) throw new Error("router metadata has no warnings list");
+  if (metadata.warnings.length) throw new Error(`router metadata has warnings: ${metadata.warnings.filter(nonEmptyString).join(", ") || "unspecified"}`);
+  if (metadata.complete !== true) throw new Error("router metadata is incomplete");
   for (const field of ["context_window", "active_request_limit"]) {
-    if (!positiveInteger(metadata[field])) throw new Error(`router discovery metadata has no valid ${field}`);
+    if (!positiveInteger(metadata[field])) throw new Error(`router metadata has no valid ${field}`);
   }
-  if (metadata.health !== undefined && (!plainObject(metadata.health) || metadata.health.available !== true)) {
-    throw new Error("router model backend is unavailable");
+  const reserve = metadata.context_safety_reserve;
+  if (reserve !== undefined && reserve !== null && (!Number.isSafeInteger(reserve) || reserve < 0 || reserve >= metadata.context_window)) {
+    throw new Error("router metadata has an invalid context_safety_reserve");
   }
   for (const field of ["input_modalities", "capabilities"]) {
     if (!Array.isArray(metadata[field]) || !metadata[field].length || metadata[field].some(value => !nonEmptyString(value))) {
-      throw new Error(`router discovery metadata has invalid ${field}`);
+      throw new Error(`router metadata has invalid ${field}`);
     }
   }
   if (!metadata.input_modalities.includes("text") || metadata.input_modalities.includes("image") !== metadata.capabilities.includes("vision")) {
-    throw new Error("router discovery metadata has inconsistent input capabilities");
+    throw new Error("router metadata has inconsistent input capabilities");
   }
   const unrestricted = metadata.output_policy === "unrestricted";
   if (!unrestricted && ![undefined, "legacy", "bounded"].includes(metadata.output_policy)) {
-    throw new Error("router discovery metadata has an unknown output_policy");
+    throw new Error("router metadata has an unknown output_policy");
   }
   if (unrestricted
     ? metadata.max_output_tokens !== null || metadata.default_output_tokens !== null
     : !positiveInteger(metadata.max_output_tokens) || (metadata.default_output_tokens !== undefined &&
       (!positiveInteger(metadata.default_output_tokens) || metadata.default_output_tokens > metadata.max_output_tokens))) {
-    throw new Error("router discovery metadata has invalid output limits");
+    throw new Error("router metadata has invalid output limits");
   }
   const reasoning = metadata.reasoning;
-  if (!plainObject(reasoning) || typeof reasoning.supported !== "boolean") throw new Error("router discovery metadata has no definitive reasoning capability");
-  if (reasoning.supported !== metadata.capabilities.includes("thinking")) throw new Error("router discovery metadata has inconsistent reasoning capability");
+  if (!plainObject(reasoning) || typeof reasoning.supported !== "boolean") throw new Error("router metadata has no definitive reasoning capability");
+  if (reasoning.supported !== metadata.capabilities.includes("thinking")) throw new Error("router metadata has inconsistent reasoning capability");
   if (!plainObject(reasoning.efforts) || !plainObject(reasoning.aliases) || !plainObject(reasoning.per_effort)) {
-    throw new Error("router discovery metadata has incomplete reasoning maps");
+    throw new Error("router metadata has incomplete reasoning maps");
   }
-  if (!['cap', 'reject'].includes(reasoning.output_limit_policy)) throw new Error("router discovery metadata has an invalid output_limit_policy");
+  if (!["cap", "reject"].includes(reasoning.output_limit_policy)) throw new Error("router metadata has an invalid output_limit_policy");
   if (unrestricted ? reasoning.absolute_max_output_tokens !== null : !positiveInteger(reasoning.absolute_max_output_tokens)) {
-    throw new Error("router discovery metadata has no valid absolute reasoning output limit");
+    throw new Error("router metadata has no valid absolute reasoning output limit");
   }
-  if (reasoning.absolute_max_output_tokens !== metadata.max_output_tokens) throw new Error("router discovery metadata has inconsistent output limits");
+  if (reasoning.absolute_max_output_tokens !== metadata.max_output_tokens) throw new Error("router metadata has inconsistent output limits");
   for (const [level, wire] of Object.entries(reasoning.efforts)) {
     if (!nonEmptyString(level) || !nonEmptyString(wire) || !plainObject(reasoning.per_effort[level])) {
-      throw new Error(`router discovery metadata has an invalid reasoning effort "${level}"`);
+      throw new Error(`router metadata has an invalid reasoning effort "${level}"`);
     }
     const limits = reasoning.per_effort[level];
     if (typeof limits.enabled !== "boolean" || (unrestricted
       ? limits.default_output_tokens !== null || limits.max_output_tokens !== null
       : !positiveInteger(limits.default_output_tokens) || !positiveInteger(limits.max_output_tokens) ||
         limits.default_output_tokens > limits.max_output_tokens || limits.max_output_tokens > reasoning.absolute_max_output_tokens)) {
-      throw new Error(`router discovery metadata has invalid limits for reasoning effort "${level}"`);
+      throw new Error(`router metadata has invalid limits for reasoning effort "${level}"`);
     }
   }
   for (const [alias, target] of Object.entries(reasoning.aliases)) {
     if (!nonEmptyString(alias) || !nonEmptyString(target) || !Object.hasOwn(reasoning.efforts, target)) {
-      throw new Error(`router discovery metadata has an invalid reasoning alias "${alias}"`);
+      throw new Error(`router metadata has an invalid reasoning alias "${alias}"`);
     }
   }
   if (reasoning.supported === true) {
     const target = reasoning.aliases[reasoning.default] ?? reasoning.default;
     if (!nonEmptyString(reasoning.default) || !Object.hasOwn(reasoning.efforts, target)) {
-      throw new Error("router discovery metadata reasoning default is not supported");
+      throw new Error("router metadata reasoning default is not supported");
     }
   }
   return metadata;
-}
-
-function ordered(value) {
-  if (Array.isArray(value)) return value.map(ordered);
-  if (!plainObject(value)) return value;
-  return Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])]));
-}
-
-/** Absence is meaningful only in a structurally valid, nonempty catalog. */
-export function validateRouterCatalog(body) {
-  if (!Array.isArray(body?.data) || !body.data.length) throw new Error("router discovery has no model catalog");
-  const ids = new Set();
-  for (const row of body.data) {
-    if (!plainObject(row) || !nonEmptyString(row.id)) throw new Error("router discovery has an invalid model row");
-    if (ids.has(row.id)) throw new Error(`ambiguous router model identity: ${row.id}`);
-    ids.add(row.id);
-    const aliases = row.x_ollama_router?.aliases;
-    if (aliases !== undefined && (!Array.isArray(aliases) || aliases.some(id => !nonEmptyString(id)))) {
-      throw new Error("router discovery has invalid aliases");
-    }
-  }
-}
-
-/** Only a missing optional identity is availability, never a metadata failure. */
-export function residentMetadata(body, provider) {
-  let entry;
-  try { entry = resolveRouterEntry(body, RESIDENT_MODELS[provider]); }
-  catch (error) {
-    if (provider === "local-everyday" && error.code === "ROUTER_MODEL_NOT_FOUND") return null;
-    throw error;
-  }
-  return routerMetadataOf(entry);
-}
-
-/** Stored transport-outage fallback; unrelated providers/defaults are not owned here. */
-export function currentResidentSettings(settings, selected) {
-  const providers = settings?.providers;
-  return Object.entries(RESIDENT_MODELS).every(([name, id]) => {
-    const p = providers?.[name], m = p?.models?.[0];
-    if (!p || p.api !== "openai-responses" || !nonEmptyString(p.baseURL) ||
-        p.models?.length !== 1 || m.id !== id) return false;
-    if (p.residentUnavailable === true) return name === "local-everyday";
-    return positiveInteger(m.contextWindow) && (m.maxTokens === null || positiveInteger(m.maxTokens)) &&
-      positiveInteger(p.maxConcurrency) && Array.isArray(m.input) && m.input.includes("text") &&
-      (m.reasoningEfforts === false || plainObject(m.reasoningEfforts));
-  }) && (!selected || !Object.hasOwn(RESIDENT_MODELS, selected.provider) ||
-    (RESIDENT_MODELS[selected.provider] === selected.model &&
-      (providers[selected.provider].residentUnavailable === true || selected.reasoningEffort === undefined ||
-       Object.hasOwn(providers[selected.provider].models[0].reasoningEfforts || {}, selected.reasoningEffort)))) &&
-    selected?.provider !== "local-ollama-256k";
-}
-
-/** Resolve singleton aliases, canonical-only catalogs and explicit alias rows. */
-export function resolveRouterEntry(body, modelId) {
-  validateRouterCatalog(body);
-  const exact = body.data.filter(entry => entry?.id === modelId);
-  const targets = body.data.filter(entry => entry?.id !== modelId && entry?.x_ollama_router?.alias !== true && entry?.x_ollama_router?.aliases?.includes(modelId));
-  if (exact.length > 1 || targets.length > 1) throw new Error(`ambiguous router model identity: ${modelId}`);
-  const entry = exact[0] ?? targets[0];
-  if (!entry) {
-    const error = new Error(`router model is not advertised: ${modelId}`);
-    error.code = "ROUTER_MODEL_NOT_FOUND";
-    throw error;
-  }
-  if (exact[0]) {
-    const meta = entry.x_ollama_router;
-    const target = targets[0] ?? (meta?.alias === true ? body.data.find(row => row.id === meta.upstream_model && row.id !== modelId) : undefined);
-    if (target) {
-      const { alias: _alias, ...aliasMetadata } = meta;
-      const { alias: _canonical, ...canonicalMetadata } = target.x_ollama_router;
-      if (meta?.alias !== true || meta.upstream_model !== target.id || !sameJson(ordered(aliasMetadata), ordered(canonicalMetadata))) {
-        throw new Error(`router alias metadata disagrees with its target: ${modelId}`);
-      }
-    }
-  }
-  return entry;
-}
-
-export async function fetchRouterCatalog(baseURL, signal = AbortSignal.timeout(10_000)) {
-  let endpoint;
-  try { endpoint = new URL(baseURL); } catch { throw new Error("router provider baseURL is invalid"); }
-  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
-    throw new Error("router provider baseURL must use HTTP(S) without embedded credentials");
-  }
-  const response = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { headers: { accept: "application/json" }, signal });
-  if (!response.ok) throw new Error(`router discovery returned HTTP ${response.status}`);
-  return response.json();
-}
-
-export function requireRouterCapabilities(metadata, { browser = false, effort } = {}) {
-  if (browser) {
-    for (const capability of ["vision", "tools"]) {
-      if (!metadata.capabilities.includes(capability)) throw new Error(`selected browser route is missing ${capability} capability`);
-    }
-  }
-  if (effort !== undefined) {
-    const mapped = dshReasoningEfforts(metadata.reasoning);
-    if (!mapped || !Object.hasOwn(mapped, effort)) throw new Error(`selected route does not support configured reasoning effort: ${effort}`);
-  }
 }
 
 /** Translate the router vocabulary into dsh-llm-pi-ai's fixed selector levels. */
@@ -236,244 +267,239 @@ export function dshReasoningEfforts(reasoning) {
   return mapped;
 }
 
-/** Seed a newly introduced repository profile from the working local route. */
-export function provisionProviderOps(settings, providerName, modelId, storedSettings = settings) {
-  const providers = settings?.providers;
-  if (!plainObject(providers) || providers[providerName] !== undefined) return [];
-  const presentation = PROVIDER_PRESENTATION.get(providerName);
-  if (presentation === undefined || providerName === "local-ollama") return [];
-  const resolvedSource = providers["local-ollama"];
-  const storedSource = storedSettings?.providers?.["local-ollama"];
-  const source = plainObject(storedSource) && Array.isArray(storedSource.models)
-    ? storedSource
-    : resolvedSource;
-  if (!plainObject(source) || !Array.isArray(source.models)) {
-    throw new Error(`cannot provision DSH provider "${providerName}" without local-ollama`);
+/** Feature checks (§5): vision/tools for browser routes and the configured effort. */
+export function requireRouterCapabilities(metadata, { browser = false, effort } = {}) {
+  if (browser) {
+    for (const capability of ["vision", "tools"]) {
+      if (!metadata.capabilities.includes(capability)) throw new Error(`selected browser route is missing ${capability} capability`);
+    }
   }
-  const modelIndex = source.models.findIndex((model) => model?.id === "local-active" || model?.id === "qwen3.8-27b-q8_0");
-  if (modelIndex < 0) {
-    throw new Error(`cannot provision DSH provider "${providerName}" without model "${modelId}"`);
+  if (effort !== undefined) {
+    const mapped = dshReasoningEfforts(metadata.reasoning);
+    if (!mapped || !Object.hasOwn(mapped, effort)) throw new Error(`selected route does not support configured reasoning effort: ${effort}`);
   }
-  const models = [{
-    ...source.models[modelIndex],
-    id: modelId,
-    name: presentation.modelName,
-    contextWindow: presentation.contextWindow,
-  }];
-  return [{
-    op: "set",
-    path: ["providers", providerName],
-    value: {
-      ...source,
-      displayName: presentation.displayName,
-      maxConcurrency: presentation.maxConcurrency,
-      models,
-    },
-  }];
 }
 
-/** Converge one configured route on its profile and the shared router contract. */
-export function capabilityOps(settings, providerName, modelId, metadata, storedSettings = settings) {
-  const provider = settings?.providers?.[providerName];
-  const models = provider?.models;
-  if (!Array.isArray(models)) throw new Error(`DSH provider "${providerName}" has no configured models`);
-  const modelIndex = models.findIndex((model) => model?.id === modelId);
-  if (modelIndex < 0) throw new Error(`DSH provider "${providerName}" has no model "${modelId}"`);
-
-  const model = models[modelIndex];
-  const input = metadata.input_modalities.filter((value) => DSH_INPUT_MODALITIES.has(value));
-  if (input.length === 0) throw new Error("router advertises no input modality DSH can represent");
-  const reasoningEfforts = dshReasoningEfforts(metadata.reasoning);
-  const presentation = nonEmptyString(metadata.display_name)
-    ? { displayName: metadata.display_name, modelName: metadata.display_name }
-    : PROVIDER_PRESENTATION.get(providerName);
-  const contextWindow = metadata.context_window;
-  const maxConcurrency = metadata.active_request_limit;
-  const operations = [];
-  if (presentation !== undefined && provider.displayName !== presentation.displayName) {
-    operations.push({
-      op: "set",
-      path: ["providers", providerName, "displayName"],
-      value: presentation.displayName,
-    });
+/** Problems that make a whole capabilities document unusable. */
+export function documentProblem(document) {
+  if (!plainObject(document)) return "router capabilities document is not an object";
+  if (!Array.isArray(document.models)) return "router capabilities document has no models list";
+  if (!plainObject(document.router) || typeof document.router.accepting_requests !== "boolean") {
+    return "router capabilities document has no admission state";
   }
-  if (provider.maxConcurrency !== maxConcurrency) {
-    operations.push({
-      op: "set",
-      path: ["providers", providerName, "maxConcurrency"],
-      value: maxConcurrency,
-    });
+  if (document.offline_services !== undefined && !Array.isArray(document.offline_services)) {
+    return "router capabilities document has invalid offline_services";
   }
-  // Keep explicit client policy separate from the router's raw default.
-  if (provider.reasoning === undefined && reasoningEfforts?.medium) {
-    operations.push({ op: "set", path: ["providers", providerName, "reasoning"], value: "medium" });
-  }
-
-  const modelCurrent =
-    (presentation === undefined || model.name === presentation.modelName) &&
-    model.contextWindow === contextWindow &&
-    model.maxTokens === metadata.max_output_tokens &&
-    sameJson(model.input, input) &&
-    sameJson(model.reasoningEfforts, reasoningEfforts);
-  if (modelCurrent) return operations;
-
-  // SettingsPathOp descends through plain objects, not arrays. Replace the
-  // stored provider models array atomically. Prefer the raw user-layer rows so
-  // schema defaults from the resolved view are not materialized incidentally.
-  const storedModels = storedSettings?.providers?.[providerName]?.models;
-  const sourceModels = Array.isArray(storedModels) && storedModels.some((candidate) => candidate?.id === modelId)
-    ? storedModels
-    : models;
-  const sourceIndex = sourceModels.findIndex((candidate) => candidate?.id === modelId);
-  const nextModels = sourceModels.map((candidate, index) =>
-    index === sourceIndex
-      ? {
-          ...candidate,
-          ...(presentation === undefined ? {} : { name: presentation.modelName }),
-          contextWindow,
-          maxTokens: metadata.max_output_tokens,
-          input,
-          reasoningEfforts,
-        }
-      : candidate,
-  );
-  operations.push({
-    op: "set",
-    path: ["providers", providerName, "models"],
-    value: nextModels,
-  });
-  return operations;
+  return undefined;
 }
 
-/** The same synchronization is used by startup and the optional offline migration. */
-function readSettings(service, namespace) {
+function serviceMatches(row, service) {
+  return plainObject(row) && (row.service === service || row.id === service ||
+    (Array.isArray(row.aliases) && row.aliases.includes(service)));
+}
+
+/**
+ * Evaluate one service from the current document, independently of every other
+ * service. `document === null` means the router is unreachable. The result
+ * carries the canonical model only as information; it is never persisted.
+ */
+export function residentStatus(document, service) {
+  const unavailable = (reason) => ({ service, status: "unavailable", reason, configuration: null, nsfw: null });
+  if (document === null || document === undefined) return unavailable("router unreachable");
+  const problem = documentProblem(document);
+  if (problem) return { service, status: "incomplete", reason: problem, configuration: null, nsfw: null };
+  const configuration = nonEmptyString(document.configuration?.id) ? document.configuration.id : null;
+  const base = { service, configuration, nsfw: null };
+  const matches = document.models.filter(row => serviceMatches(row, service));
+  const model = matches.length === 1 ? matches[0] : undefined;
+  const served = nonEmptyString(model?.id) ? model.id : null;
+  // A draining or maintained router accepts nothing. Wait, never switch (§5, §7).
+  if (document.router.accepting_requests !== true) {
+    const reason = document.router.maintenance === true ? "maintenance" : "draining";
+    return { ...base, status: "switching", reason, served, nsfw: model?.nsfw ?? null };
+  }
+  if (matches.length > 1) return { ...base, status: "incomplete", reason: `ambiguous router service "${service}"` };
+  if (!model) {
+    const offline = (document.offline_services ?? []).find(row => plainObject(row) &&
+      (row.model === service || (Array.isArray(row.aliases) && row.aliases.includes(service))));
+    if (offline) {
+      return { ...base, status: "offline", reason: nonEmptyString(offline.reason) ? offline.reason : "offline_service" };
+    }
+    // A disappeared ID with no offline entry is a configuration change.
+    return { ...base, status: "unavailable", reason: "not offered by the router" };
+  }
+  const nsfw = model.nsfw === true ? true : model.nsfw === false ? false : null;
+  if (model.available !== true) {
+    return { ...base, status: "unavailable", reason: "backend unavailable", served, nsfw };
+  }
+  let metadata;
+  let capabilities;
+  try {
+    if (!positiveInteger(model.slots)) throw new Error("router model has no valid slots");
+    if (!positiveInteger(model.context_window)) throw new Error("router model has no valid context_window");
+    metadata = validateRouterMetadata(model.metadata);
+    if (metadata.context_window !== model.context_window) throw new Error("router model context_window disagrees with its metadata");
+    if (metadata.active_request_limit !== model.slots) throw new Error("router model slots disagree with its metadata");
+    capabilities = residentCapabilities({ model, metadata });
+  } catch (error) {
+    // A pre-contract router publishes no complete metadata; its route stays
+    // usable with the stored limits, as before discovery existed.
+    if (document.legacy === true) return { ...base, status: "available", reason: "legacy router without published limits", served, nsfw, legacy: true };
+    return { ...base, status: "incomplete", reason: errorText(error), served, nsfw };
+  }
+  return { ...base, status: "available", reason: null, served, nsfw, model, metadata, capabilities };
+}
+
+/** Limits and features of the model that will actually serve the service. */
+export function residentCapabilities({ model, metadata }) {
+  const input = metadata.input_modalities.filter(value => DSH_INPUT_MODALITIES.has(value));
+  if (!input.includes("text")) throw new Error("router advertises no input modality Harness can represent");
+  const reserve = metadata.context_safety_reserve ?? 0;
+  const displayName = nonEmptyString(metadata.display_name) ? metadata.display_name
+    : nonEmptyString(model.display_name) ? model.display_name : undefined;
+  return {
+    displayName,
+    // Admission requires input + output + reserve <= context_window (§8), so
+    // the Harness budget and compaction thresholds use the remainder.
+    contextWindow: model.context_window - reserve,
+    contextSafetyReserve: reserve,
+    maxConcurrency: model.slots,
+    maxTokens: metadata.max_output_tokens,
+    input,
+    reasoningEfforts: dshReasoningEfforts(metadata.reasoning),
+  };
+}
+
+/** The single picker label for a resident in its current state. */
+export function residentLabel(state, capabilities = state?.capabilities) {
+  const label = SERVICE_LABELS[state?.service] ?? state?.service ?? "Model";
+  if (state?.status === "available") {
+    const name = capabilities?.displayName ?? label;
+    return state.nsfw === true ? `${name} · NSFW` : name;
+  }
+  if (state?.status === "offline") return state.configuration ? `${label} — offline (${state.configuration})` : `${label} — offline`;
+  return `${label} — ${STATUS_TEXT[state?.status] ?? STATUS_TEXT.unavailable}`;
+}
+
+/** The dispatch failure shown when a blocked resident is asked to serve. */
+export function residentMessage(state) {
+  const label = SERVICE_LABELS[state.service] ?? state.service;
+  const advice = state.service === "nighttime"
+    ? "Switch this session to Daytime; Nighttime becomes selectable again automatically when it returns."
+    : `Select another model, or retry when ${label} returns; Harness reconnects automatically.`;
+  switch (state.status) {
+    case "offline":
+      return `${label} is offline in router configuration ${state.configuration ? `"${state.configuration}"` : "(unknown)"}${state.reason ? ` (${state.reason})` : ""}. ${advice}`;
+    case "incomplete":
+      return `${label} is unavailable: the router published incomplete metadata for it (${state.reason}). ${advice}`;
+    case "switching":
+      return `The router is switching configuration (${state.reason}); requests to ${label} wait and retry without changing models.`;
+    case "unavailable":
+      return state.reason === "router unreachable"
+        ? `${label} is unavailable: the router is unreachable. ${advice}`
+        : `${label} is unavailable: ${state.reason}. ${advice}`;
+    default:
+      return `${label} is available.`;
+  }
+}
+
+/** Persisted, canonical-ID-free summary that the adapter and picker read. */
+export function residentStateRecord(state, storedName) {
+  const published = state.status === "available" && state.capabilities !== undefined;
+  return {
+    service: state.service,
+    status: state.status,
+    label: state.status === "available" && !published && nonEmptyString(storedName) ? storedName : residentLabel(state),
+    ...(state.status === "available" ? {} : { message: residentMessage(state) }),
+    configuration: state.configuration ?? null,
+    reason: state.reason ?? null,
+    limits: published ? "current" : state.status === "available" ? "stored" : "stale",
+    nsfw: state.nsfw ?? null,
+  };
+}
+
+export function isBlockingStatus(status) {
+  return BLOCKING_STATUSES.has(status);
+}
+
+/** Text for transition logs, e.g. `offline (flash-next-solo-128k)`. */
+export function describeStatus(state) {
+  const text = STATUS_TEXT[state?.status] ?? String(state?.status ?? "unknown");
+  const detail = state?.status === "offline" ? state.configuration : state?.reason;
+  return detail ? `${text} (${detail})` : text;
+}
+
+/** Route old persisted IDs of Harness-owned providers to their service IDs. */
+export function migrateResidentRoute(config, providers = DEFAULT_PROVIDERS) {
+  if (!plainObject(config) || !providers.includes(config.provider)) return config;
+  const service = RESIDENT_SERVICES[config.provider];
+  if (!nonEmptyString(service) || !nonEmptyString(config.model) || config.model === service) return config;
+  return { ...config, model: service };
+}
+
+function withClientName(headers, clientName) {
+  const next = Object.fromEntries(Object.entries(plainObject(headers) ? headers : {})
+    .filter(([header]) => header.toLowerCase() !== CLIENT_NAME_HEADER.toLowerCase()));
+  next[CLIENT_NAME_HEADER] = clientName;
+  return next;
+}
+
+/**
+ * Converge one Harness-owned provider on its service ID, client identity and
+ * current state. Explicit preferences, credentials references and unrelated
+ * fields survive. Limits change only while the model is available; otherwise
+ * the last limits are kept and marked stale.
+ */
+export function planResidentProvider({ name: provider, state, stored, resolved, daytime, clientName }) {
+  const service = RESIDENT_SERVICES[provider];
+  let source = plainObject(stored) ? stored : plainObject(resolved) ? resolved : undefined;
+  if (!source) {
+    // Provision a missing Nighttime route from the working Daytime route,
+    // without inheriting Daytime's limits.
+    if (!plainObject(daytime)) throw new Error(`cannot provision "${provider}" without local-ollama`);
+    source = Object.fromEntries(["apiKeyEnv", "headers", "streamIdleTimeoutMs", "cacheRetention", "retryPolicy", "reasoning", "baseURL"]
+      .filter(key => daytime[key] !== undefined).map(key => [key, clone(daytime[key])]));
+    source.displayName = SERVICE_LABELS[service];
+    source.models = [{ id: service, name: SERVICE_LABELS[service] }];
+  }
+  const rows = Array.isArray(source.models) ? source.models : [];
+  const row = rows.find(candidate => candidate?.id === service) ?? rows[0] ?? { name: SERVICE_LABELS[service] };
+  const next = {
+    ...clone(source),
+    api: "openai-responses",
+    baseURL: source.baseURL ?? resolved?.baseURL ?? daytime?.baseURL,
+    headers: withClientName(source.headers, clientName),
+    models: [{ ...clone(row), id: service }],
+  };
+  if (state.status === "available" && state.capabilities) {
+    const capabilities = state.capabilities;
+    const label = residentLabel(state, capabilities);
+    if (capabilities.displayName) next.displayName = capabilities.displayName;
+    next.maxConcurrency = capabilities.maxConcurrency;
+    // Keep explicit client policy separate from the router's raw default.
+    if (next.reasoning === undefined && capabilities.reasoningEfforts?.medium) next.reasoning = "medium";
+    Object.assign(next.models[0], {
+      name: label,
+      contextWindow: capabilities.contextWindow,
+      maxTokens: capabilities.maxTokens,
+      input: capabilities.input,
+      reasoningEfforts: capabilities.reasoningEfforts,
+    });
+  } else if (!nonEmptyString(next.models[0].name)) {
+    next.models[0].name = SERVICE_LABELS[service];
+  }
+  next.residentUnavailable = BLOCKING_STATUSES.has(state.status);
+  next.residentState = residentStateRecord(state, next.models[0].name);
+  return next;
+}
+
+function readNamespace(service, namespace) {
   // 0.1.7 exposes live entry Config through descriptors rather than get().
   return typeof service.get === "function" ? service.get(namespace)
     : service.describe().find(entry => entry.ns === namespace)?.value;
 }
-
-export async function synchronizeRouterSettings(settingsService, providers = DEFAULT_PROVIDERS) {
-  if (providers.length === DEFAULT_PROVIDERS.length && DEFAULT_PROVIDERS.every(name => providers.includes(name))) {
-    return synchronizeResidentSettings(settingsService);
-  }
-  const initial = readSettings(settingsService, "llm-pi-ai");
-  if (!plainObject(initial)) throw new Error('DSH settings namespace "llm-pi-ai" is not registered yet');
-  const catalogs = new Map();
-  const plans = [];
-  // Fetch and validate every selected contract before provisioning any provider.
-  for (const providerName of providers) {
-    const provider = initial.providers?.[providerName];
-    const baseURL = provider?.baseURL ?? initial.providers?.["local-ollama"]?.baseURL;
-    if (!nonEmptyString(baseURL)) throw new Error(`provider ${providerName} has no baseURL`);
-    if (!catalogs.has(baseURL)) catalogs.set(baseURL, await fetchRouterCatalog(baseURL));
-    const modelIds = provider?.models?.map(model => model.id) ?? ["qwen3.8-27b-abliterated-q6_k"];
-    for (const modelId of modelIds) {
-      let entry;
-      try { entry = resolveRouterEntry(catalogs.get(baseURL), modelId); }
-      catch (error) {
-        if (!provider && error.code === "ROUTER_MODEL_NOT_FOUND") continue;
-        throw error;
-      }
-      const metadata = routerMetadataOf(entry);
-      requireRouterCapabilities(metadata, { effort: (provider ?? initial.providers?.["local-ollama"])?.reasoning });
-      plans.push({ providerName, modelId, metadata });
-    }
-  }
-  for (const { providerName, modelId, metadata } of plans) {
-    let settings = readSettings(settingsService, "llm-pi-ai");
-    let stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user;
-    const provision = provisionProviderOps(settings, providerName, modelId, stored);
-    if (provision.length) {
-      // Provision with the target's capabilities in the same atomic operation.
-      const proposed = { providers: { [providerName]: provision[0].value } };
-      for (const op of capabilityOps(proposed, providerName, modelId, metadata)) applyOperation(proposed, op);
-      provision[0].value = proposed.providers[providerName];
-      await settingsService.mutate("llm-pi-ai", provision);
-      settings = readSettings(settingsService, "llm-pi-ai");
-      stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user;
-    }
-    const ops = capabilityOps(settings, providerName, modelId, metadata, stored);
-    if (ops.length) await settingsService.mutate("llm-pi-ai", ops);
-  }
-  const primary = plans.find(plan => plan.providerName === "local-ollama");
-  if (primary) {
-    const settings = readSettings(settingsService, "llm-pi-ai");
-    const retired = settings.providers?.["local-ollama-256k"];
-    const ownedRetired = retired?.baseURL === settings.providers?.["local-ollama"]?.baseURL &&
-      retired?.models?.length === 1 && retired.models[0].id === "local-active";
-    const selected = readSettings(settingsService, "agent-default-model");
-    if (ownedRetired && selected?.provider === "local-ollama-256k") {
-      await settingsService.mutate("agent-default-model", [
-        { op: "set", path: ["provider"], value: "local-ollama" },
-        { op: "set", path: ["model"], value: primary.modelId }
-      ]);
-    }
-    if (ownedRetired) await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", "local-ollama-256k"] }]);
-  }
-}
-
-/** Validate all advertised residents before updating only managed providers.
- * Credential storage and all settings outside model/provider selection remain
- * untouched. Stable local-active IDs keep existing Daytime sessions routable.
- */
-async function synchronizeResidentSettings(settingsService) {
-  const initial = readSettings(settingsService, "llm-pi-ai");
-  if (!plainObject(initial?.providers?.["local-ollama"])) throw new Error("Missing local-ollama provider");
-  const stored = settingsService.describe().find(entry => entry.ns === "llm-pi-ai")?.user ?? initial;
-  const managedNames = [...Object.keys(RESIDENT_MODELS), "local-ollama-256k"];
-  const before = managedNames.map(name => JSON.stringify(initial.providers[name]));
-  const next = {};
-  const catalogs = new Map();
-  for (const [name, modelId] of Object.entries(RESIDENT_MODELS)) {
-    const resolved = initial.providers[name] ?? initial.providers["local-ollama"];
-    const source = stored.providers?.[name] ?? stored.providers?.["local-ollama"] ?? resolved;
-    const baseURL = resolved.baseURL;
-    if (!nonEmptyString(baseURL)) throw new Error(`provider ${name} has no baseURL`);
-    if (!catalogs.has(baseURL)) catalogs.set(baseURL, await fetchRouterCatalog(baseURL));
-    const metadata = residentMetadata(catalogs.get(baseURL), name);
-    if (metadata === null) {
-      const existing = stored.providers?.[name] ?? initial.providers[name];
-      next[name] = existing ? { ...existing, residentUnavailable: true } : {
-        ...Object.fromEntries(["apiKeyEnv", "headers", "streamIdleTimeoutMs"].filter(key => source[key] !== undefined).map(key => [key, source[key]])),
-        api: "openai-responses", baseURL, displayName: "Nighttime", residentUnavailable: true,
-        models: [{ id: modelId, name: "Nighttime" }],
-      };
-      continue;
-    }
-    requireRouterCapabilities(metadata, { effort: resolved.reasoning });
-    const previousModel = source.models?.find(model => model.id === modelId) ?? source.models?.[0] ?? {};
-    const proposed = { providers: { [name]: {
-      ...source, api: "openai-responses", baseURL, residentUnavailable: false,
-      models: [{ ...previousModel, id: modelId }],
-    } } };
-    for (const operation of capabilityOps(proposed, name, modelId, metadata)) applyOperation(proposed, operation);
-    next[name] = proposed.providers[name];
-  }
-  const latest = readSettings(settingsService, "llm-pi-ai");
-  if (managedNames.some((name, index) => JSON.stringify(latest.providers?.[name]) !== before[index])) {
-    throw new Error("resident settings changed during discovery; retrying on the next refresh");
-  }
-  const selected = readSettings(settingsService, "agent-default-model");
-  const retired = initial.providers["local-ollama-256k"];
-  const ownedRetired = retired?.baseURL === initial.providers["local-ollama"].baseURL &&
-    retired.models?.length === 1 && retired.models[0].id === "local-active";
-  let nextSelection;
-  if (ownedRetired && selected?.provider === "local-ollama-256k") {
-    nextSelection = { ...selected, provider: "local-ollama", model: "local-active" };
-  } else if (selected?.provider === "local-ollama" &&
-      ["qwen3.8-27b-q8_0", "daytime", "daytime-swift"].includes(selected.model)) {
-    nextSelection = { ...selected, model: "local-active" };
-  }
-  // A path operation avoids replacing external providers or materializing their defaults.
-  const operations = Object.entries(next).filter(([name, value]) => !sameJson(stored.providers?.[name], value))
-    .map(([name, value]) => ({ op: "set", path: ["providers", name], value }));
-  if (ownedRetired) operations.push({ op: "unset", path: ["providers", "local-ollama-256k"] });
-  if (operations.length) await settingsService.mutate("llm-pi-ai", operations);
-  if (nextSelection) {
-    await settingsService.mutate("agent-default-model", Object.entries(nextSelection)
-      .filter(([key, value]) => !sameJson(selected[key], value))
-      .map(([key, value]) => ({ op: "set", path: [key], value })));
-  }
+function storedNamespace(service, namespace) {
+  return service.describe().find(entry => entry.ns === namespace)?.user;
 }
 
 export function applyOperation(settings, operation) {
@@ -482,53 +508,473 @@ export function applyOperation(settings, operation) {
   else parent[operation.path.at(-1)] = structuredClone(operation.value);
 }
 
+function effectiveState(state, hold, revision, now) {
+  if (!hold || state.status !== "available") return state;
+  if (hold.until <= now || (hold.revision !== undefined && hold.revision !== revision)) return state;
+  return { ...state, status: hold.status, reason: hold.reason, configuration: hold.configuration ?? state.configuration,
+    capabilities: undefined, metadata: undefined };
+}
+
+/**
+ * Bring the Harness-owned providers in line with the router, one provider at a
+ * time. `document` maps a provider base URL to its current document, `null`
+ * when unreachable, or `undefined` to fetch it now (startup migration and
+ * verification). Only invalid local settings throw.
+ */
+export async function synchronizeRouterSettings(settingsService, {
+  providers = DEFAULT_PROVIDERS, document, clientName = routerClientName(), holds = new Map(),
+  now = Date.now(), fetchOptions = {}, onFetchError,
+} = {}) {
+  const initial = readNamespace(settingsService, "llm-pi-ai");
+  if (!plainObject(initial)) throw new Error('Harness settings namespace "llm-pi-ai" is not registered yet');
+  const daytimeResolved = initial.providers?.["local-ollama"];
+  if (!plainObject(daytimeResolved)) throw new Error("Missing local-ollama provider");
+  const managed = providers.filter(provider => Object.hasOwn(RESIDENT_SERVICES, provider));
+  const fetched = new Map();
+  const documentFor = async (baseURL) => {
+    if (typeof document === "function") return document(baseURL);
+    if (document !== undefined) return document;
+    if (!fetched.has(baseURL)) {
+      fetched.set(baseURL, fetchCapabilities(baseURL, { clientName, ...fetchOptions })
+        .then(result => result.document ?? null)
+        .catch(error => { onFetchError?.(baseURL, error); return null; }));
+    }
+    return fetched.get(baseURL);
+  };
+  const results = new Map();
+  const errors = [];
+  for (const provider of managed) {
+    try {
+      const before = readNamespace(settingsService, "llm-pi-ai");
+      const stored = storedNamespace(settingsService, "llm-pi-ai") ?? before;
+      const resolved = before.providers?.[provider];
+      const daytime = stored.providers?.["local-ollama"] ?? before.providers?.["local-ollama"];
+      const baseURL = resolved?.baseURL ?? stored.providers?.[provider]?.baseURL ?? daytime?.baseURL;
+      if (!nonEmptyString(baseURL)) throw new Error(`provider ${provider} has no baseURL`);
+      routerBaseOf(baseURL);
+      const current = await documentFor(baseURL);
+      if (current === DOCUMENT_PENDING) continue;
+      const state = effectiveState(residentStatus(current, RESIDENT_SERVICES[provider]), holds.get(provider),
+        current?.revision, now);
+      const next = planResidentProvider({ name: provider, state, stored: stored.providers?.[provider], resolved, daytime, clientName });
+      const latest = readNamespace(settingsService, "llm-pi-ai");
+      if (!sameJson(latest.providers?.[provider], resolved)) {
+        throw new Error("resident settings changed during discovery; retrying on the next refresh");
+      }
+      results.set(provider, { state, next, recorded: plainObject(resolved?.residentState) ? resolved.residentState : undefined });
+      const previous = storedNamespace(settingsService, "llm-pi-ai")?.providers?.[provider];
+      if (!sameJson(previous, next)) {
+        await settingsService.mutate("llm-pi-ai", [{ op: "set", path: ["providers", provider], value: next }]);
+        results.get(provider).changed = true;
+      }
+    } catch (error) {
+      errors.push({ provider, error });
+    }
+  }
+  try {
+    await migrateDefaultSelection(settingsService, managed);
+  } catch (error) {
+    errors.push({ provider: "agent-default-model", error });
+  }
+  return { results, errors };
+}
+
+/** Retire the old 256K Daytime route and move saved defaults to service IDs. */
+async function migrateDefaultSelection(settingsService, managed) {
+  const settings = readNamespace(settingsService, "llm-pi-ai");
+  const retired = settings.providers?.["local-ollama-256k"];
+  const ownedRetired = plainObject(retired) && retired.baseURL === settings.providers?.["local-ollama"]?.baseURL &&
+    retired.models?.length === 1 && ["local-active", "daytime"].includes(retired.models[0]?.id);
+  const selected = readNamespace(settingsService, "agent-default-model");
+  let nextSelection;
+  if (ownedRetired && selected?.provider === "local-ollama-256k") {
+    nextSelection = { ...selected, provider: "local-ollama", model: RESIDENT_SERVICES["local-ollama"] };
+  } else if (plainObject(selected)) {
+    const migrated = migrateResidentRoute(selected, managed);
+    if (migrated !== selected) nextSelection = migrated;
+  }
+  if (ownedRetired) await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", "local-ollama-256k"] }]);
+  if (nextSelection) {
+    const ops = Object.entries(nextSelection).filter(([key, value]) => !sameJson(selected[key], value))
+      .map(([key, value]) => ({ op: "set", path: [key], value }));
+    if (ops.length) await settingsService.mutate("agent-default-model", ops);
+  }
+}
+
+/**
+ * Follow one router: read the document, subscribe to `/v1/router/events`,
+ * replace the copy whenever `revision` changes, and poll with `If-None-Match`
+ * while disconnected. Adapted from the reference client `watchRouter`
+ * (llm-router docs/clients/router-watch.mjs at d5edba8).
+ */
+export class RouterWatch {
+  constructor(baseURL, {
+    clientName = routerClientName(), onDocument = () => {}, onReachability = () => {}, logger,
+    pollMs = DEFAULT_POLL_INTERVAL_MS, retryMs = STREAM_RETRY_MS, maxRetryMs = STREAM_MAX_RETRY_MS,
+    deadMs = STREAM_DEAD_MS, fetchTimeoutMs = FETCH_TIMEOUT_MS, fetchImpl = globalThis.fetch,
+  } = {}) {
+    this.base = routerBaseOf(baseURL);
+    Object.assign(this, { clientName, onDocument, onReachability, logger, pollMs, retryMs, maxRetryMs, deadMs, fetchTimeoutMs, fetchImpl });
+    this.current = undefined;
+    this.etag = undefined;
+    this.reachable = undefined;
+    this.connected = false;
+    this.stopped = false;
+    this.lifetime = new AbortController();
+  }
+
+  start() {
+    this.ready = this.refresh().catch(() => undefined);
+    this.following = this.follow();
+    return this;
+  }
+
+  stop() {
+    this.stopped = true;
+    this.lifetime.abort(new Error("router watch stopped"));
+  }
+
+  accept(document) {
+    if (this.current !== undefined && this.current?.revision !== undefined && this.current.revision === document?.revision && this.reachable) return;
+    this.current = document;
+    this.setReachable(true);
+    this.onDocument(document);
+  }
+
+  setReachable(reachable, error) {
+    if (this.reachable === reachable) return;
+    this.reachable = reachable;
+    this.onReachability(reachable, error);
+  }
+
+  /** Poll once. A failure marks the router unreachable until a later success. */
+  async refresh() {
+    try {
+      const result = await fetchCapabilities(this.base, { etag: this.current ? this.etag : undefined, clientName: this.clientName,
+        signal: this.lifetime.signal, timeoutMs: this.fetchTimeoutMs, fetchImpl: this.fetchImpl });
+      if (this.stopped) return this.current;
+      if (result.status === 304) {
+        this.setReachable(true);
+        return this.current;
+      }
+      this.etag = result.etag;
+      this.accept(result.document);
+      return this.current;
+    } catch (error) {
+      if (!this.stopped) this.setReachable(false, error);
+      throw error;
+    }
+  }
+
+  async follow() {
+    let delay = this.retryMs;
+    let failures = 0;
+    while (!this.stopped) {
+      const connection = linkedSignal(this.lifetime.signal);
+      let deadTimer;
+      const alive = () => {
+        clearTimeout(deadTimer);
+        deadTimer = setTimeout(() => connection.abort(new Error(`router event stream silent for ${this.deadMs} ms`)), this.deadMs);
+      };
+      try {
+        alive();
+        const response = await this.fetchImpl(`${this.base}/v1/router/events`, {
+          headers: { accept: "text/event-stream", [CLIENT_NAME_HEADER]: this.clientName }, signal: connection.signal,
+        });
+        if (!response.ok) {
+          // TOO_MANY_SUBSCRIBERS and other refusals: poll instead (§10).
+          await response.body?.cancel?.().catch?.(() => {});
+          throw new Error(`router events returned HTTP ${response.status}`);
+        }
+        this.connected = true;
+        failures = 0;
+        delay = this.retryMs;
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for await (const chunk of response.body) {
+          alive();
+          buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n?/g, "\n");
+          let end;
+          while ((end = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            let event = "message";
+            const data = [];
+            for (const line of frame.split("\n")) {
+              if (line.startsWith(":")) continue;
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+              else if (line.startsWith("retry:")) {
+                const retry = Number(line.slice(6).trim());
+                if (Number.isFinite(retry) && retry > 0) this.retryMs = delay = Math.min(retry, this.maxRetryMs);
+              }
+            }
+            if (event === "capabilities" && data.length) {
+              let parsed;
+              try { parsed = JSON.parse(data.join("\n")); }
+              catch { this.logger?.warn?.("router-model-discovery: ignored an unparsable capabilities event"); continue; }
+              // The revision is the document's plain ETag, so later polls can revalidate.
+              if (nonEmptyString(parsed?.revision)) this.etag = `"${parsed.revision}"`;
+              this.accept(parsed);
+            }
+          }
+        }
+        throw new Error("router event stream ended");
+      } catch (error) {
+        if (this.stopped) return;
+        if (this.connected) this.logger?.info?.(`router-model-discovery: event stream disconnected (${errorText(error)}); polling every ${Math.round(this.pollMs / 1000)} s`);
+        this.connected = false;
+        failures += 1;
+      } finally {
+        clearTimeout(deadTimer);
+        connection.abort();
+        connection.dispose();
+      }
+      // While disconnected, poll (If-None-Match) and reconnect with backoff
+      // from the stream's retry value up to 30 s.
+      await this.refresh().catch(() => undefined);
+      const wait = Math.min(delay * 2 ** Math.max(0, failures - 1), this.maxRetryMs, this.pollMs);
+      await new Promise(resolve => {
+        if (this.stopped) return resolve();
+        const done = () => { clearTimeout(timer); this.lifetime.signal.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, wait);
+        this.lifetime.signal.addEventListener("abort", done, { once: true });
+      });
+    }
+  }
+}
+
+/** In-process discovery service: one watcher per router, settings convergence and logging. */
+export class ResidentDiscovery {
+  constructor({ settings, logger, providers = DEFAULT_PROVIDERS, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    clientName = routerClientName(), watchOptions = {}, now = () => Date.now(), echo = true }) {
+    // Harness keeps plugin logs in its in-process buffer; transitions are also
+    // echoed to the container log so operators see them in `docker logs`.
+    const sink = logger;
+    const write = (level, message) => {
+      try { sink?.[level]?.(message); } catch {}
+      if (echo) (level === "warn" ? console.warn : console.log)(`[${new Date().toISOString()}] ${message}`);
+    };
+    logger = { info: message => write("info", message), warn: message => write("warn", message) };
+    Object.assign(this, { settings, logger, providers, pollIntervalMs, clientName, watchOptions, now });
+    this.watches = new Map();
+    this.holds = new Map();
+    this.failures = new Map();
+    this.previous = new Map();
+    this.lastErrors = new Map();
+    this.running = undefined;
+    this.dirty = false;
+    this.stopped = false;
+  }
+
+  start() {
+    this.loadPersistedStates();
+    this.ensureWatches();
+    // Settings can register after this plugin; follow the router as soon as
+    // the resident routes are readable rather than at the first reconcile.
+    if (this.watches.size === 0) {
+      this.startup = setInterval(() => {
+        this.ensureWatches();
+        if (this.watches.size > 0 || this.stopped) { clearInterval(this.startup); this.loadPersistedStates(); }
+      }, 1000);
+    }
+    this.timer = setInterval(() => { this.ensureWatches(); void this.synchronize("reconcile"); }, this.pollIntervalMs);
+    globalThis[ROUTER_CONTRACT_HUB] = this.hub = {
+      report: (provider, event) => this.report(provider, event),
+      success: (provider) => this.failures.delete(provider),
+      state: (provider) => this.previous.get(provider),
+    };
+    return this;
+  }
+
+  stop() {
+    this.stopped = true;
+    clearInterval(this.timer);
+    clearInterval(this.startup);
+    for (const watch of this.watches.values()) watch.stop();
+    this.watches.clear();
+    if (globalThis[ROUTER_CONTRACT_HUB] === this.hub) delete globalThis[ROUTER_CONTRACT_HUB];
+  }
+
+  loadPersistedStates() {
+    let providers = {};
+    try { providers = readNamespace(this.settings, "llm-pi-ai")?.providers ?? {}; } catch { return; }
+    for (const provider of this.providers) {
+      const record = providers[provider]?.residentState;
+      if (!this.previous.has(provider) && plainObject(record) && RESIDENT_STATUSES.includes(record.status)) {
+        this.previous.set(provider, { service: RESIDENT_SERVICES[provider], status: record.status,
+          configuration: record.configuration ?? null, reason: record.reason ?? null });
+      }
+    }
+  }
+
+  baseFor(provider) {
+    let providers = {};
+    try { providers = readNamespace(this.settings, "llm-pi-ai")?.providers ?? {}; } catch { return undefined; }
+    const baseURL = providers[provider]?.baseURL ?? providers["local-ollama"]?.baseURL;
+    try { return nonEmptyString(baseURL) ? routerBaseOf(baseURL) : undefined; } catch { return undefined; }
+  }
+
+  ensureWatches() {
+    if (this.stopped) return;
+    const wanted = new Set(this.providers.map(provider => this.baseFor(provider)).filter(Boolean));
+    for (const [base, watch] of this.watches) {
+      if (!wanted.has(base)) { watch.stop(); this.watches.delete(base); }
+    }
+    for (const base of wanted) {
+      if (this.watches.has(base)) continue;
+      const watch = new RouterWatch(base, {
+        clientName: this.clientName, logger: this.logger, pollMs: this.pollIntervalMs, ...this.watchOptions,
+        onDocument: (document) => {
+          if (document?.schema_version !== CAPABILITIES_SCHEMA_VERSION) {
+            this.warnOnce(`schema:${base}:${document?.schema_version}`, `router-model-discovery: capabilities schema_version ${document?.schema_version} is not the version ${CAPABILITIES_SCHEMA_VERSION} this Harness was written for`);
+          }
+          void this.synchronize("revision");
+        },
+        onReachability: (reachable, error) => {
+          this.logger?.[reachable ? "info" : "warn"]?.(`router-model-discovery: router ${reachable ? "reachable" : `unreachable (${errorText(error)})`}`);
+          void this.synchronize(reachable ? "reachable" : "unreachable");
+        },
+      });
+      this.watches.set(base, watch);
+      watch.start();
+    }
+  }
+
+  documentFor(baseURL) {
+    let base;
+    try { base = routerBaseOf(baseURL); } catch { return null; }
+    const watch = this.watches.get(base);
+    if (!watch || watch.reachable === undefined) return DOCUMENT_PENDING;
+    if (watch.reachable !== true) return null;
+    return watch.current ?? null;
+  }
+
+  warnOnce(key, message) {
+    if (this.lastErrors.get(key) === message) return;
+    this.lastErrors.set(key, message);
+    this.logger?.warn?.(message);
+  }
+
+  /** Serialized convergence; a request during a run schedules exactly one more. */
+  synchronize(reason) {
+    if (this.stopped) return Promise.resolve();
+    if (this.running) { this.dirty = true; return this.running; }
+    this.running = (async () => {
+      try {
+        do {
+          this.dirty = false;
+          await this.synchronizeOnce(reason);
+        } while (this.dirty && !this.stopped);
+      } finally {
+        this.running = undefined;
+      }
+    })();
+    return this.running;
+  }
+
+  async synchronizeOnce(reason) {
+    const now = this.now();
+    for (const [provider, hold] of this.holds) if (hold.until <= now) this.holds.delete(provider);
+    let outcome;
+    try {
+      outcome = await synchronizeRouterSettings(this.settings, {
+        providers: this.providers, document: (baseURL) => this.documentFor(baseURL),
+        clientName: this.clientName, holds: this.holds, now,
+      });
+    } catch (error) {
+      this.warnOnce("sync", `router-model-discovery: ${errorText(error)}`);
+      return;
+    }
+    // Flush settings/document-updated so open pickers refresh without reload.
+    try { this.settings.describe(); } catch { /* best effort */ }
+    for (const { provider, error } of outcome.errors) this.warnOnce(`provider:${provider}`, `router-model-discovery: ${provider}: ${errorText(error)}`);
+    for (const [provider, { state, recorded }] of outcome.results) {
+      this.lastErrors.delete(`provider:${provider}`);
+      const hold = this.holds.get(provider);
+      if (hold && hold.revision !== undefined && state.status !== hold.status) this.holds.delete(provider);
+      if (!this.previous.has(provider) && recorded && RESIDENT_STATUSES.includes(recorded.status)) {
+        this.previous.set(provider, { service: RESIDENT_SERVICES[provider], status: recorded.status,
+          configuration: recorded.configuration ?? null, reason: recorded.reason ?? null });
+      }
+      this.logTransition(provider, state, reason);
+    }
+  }
+
+  logTransition(provider, state, reason) {
+    const service = RESIDENT_SERVICES[provider];
+    const before = this.previous.get(provider);
+    const signature = (value) => value && JSON.stringify([value.status, value.status === "offline" ? value.configuration : value.reason]);
+    if (signature(before) !== signature(state)) {
+      this.logger?.info?.(`router-model-discovery: ${service}: ${before ? describeStatus(before) : "unknown"} → ${describeStatus(state)}`);
+    }
+    if (state.served && before?.served && before.served !== state.served) {
+      // Canonical IDs are information only; they are never stored or compared for routing.
+      this.logger?.info?.(`router-model-discovery: ${service}: served model changed from ${before.served} to ${state.served} (${reason})`);
+    }
+    const limits = state.capabilities;
+    const previousLimits = before?.capabilities;
+    if (limits && previousLimits && (limits.contextWindow !== previousLimits.contextWindow || limits.maxConcurrency !== previousLimits.maxConcurrency)) {
+      this.logger?.info?.(`router-model-discovery: ${service}: limits recomputed: context budget ${previousLimits.contextWindow} → ${limits.contextWindow}, slots ${previousLimits.maxConcurrency} → ${limits.maxConcurrency}`);
+    }
+    this.previous.set(provider, { service, status: state.status, configuration: state.configuration, reason: state.reason,
+      served: state.served ?? before?.served, capabilities: limits ?? previousLimits });
+  }
+
+  /** Request-time evidence from the adapter (§10); the document stays authoritative. */
+  report(provider, event = {}) {
+    if (this.stopped || !this.providers.includes(provider)) return;
+    const code = event.code;
+    const base = this.baseFor(provider);
+    const watch = base ? this.watches.get(base) : undefined;
+    const revision = watch?.current?.revision;
+    const now = this.now();
+    const service = RESIDENT_SERVICES[provider];
+    if (code === "SERVICE_OFFLINE" || code === "MODEL_NOT_FOUND") {
+      const configuration = /configuration "([^"]+)"/.exec(event.message ?? "")?.[1] ?? watch?.current?.configuration?.id ?? null;
+      this.holds.set(provider, code === "SERVICE_OFFLINE"
+        ? { status: "offline", reason: "SERVICE_OFFLINE", configuration, revision, until: now + REQUEST_HOLD_MS }
+        : { status: "unavailable", reason: "not offered by the router (MODEL_NOT_FOUND)", revision, until: now + REQUEST_HOLD_MS });
+      if (code === "MODEL_NOT_FOUND") this.logger?.warn?.(`router-model-discovery: ${service}: router answered MODEL_NOT_FOUND; the service ID may be stale`);
+    } else if (code === "BACKEND_UNAVAILABLE") {
+      const entry = this.failures.get(provider);
+      const failures = entry && now - entry.first < BACKEND_FAILURE_WINDOW_MS ? { first: entry.first, count: entry.count + 1 } : { first: now, count: 1 };
+      this.failures.set(provider, failures);
+      if (failures.count >= BACKEND_FAILURE_THRESHOLD) {
+        this.holds.set(provider, { status: "unavailable", reason: "backend unavailable (BACKEND_UNAVAILABLE)", revision, until: now + REQUEST_HOLD_MS });
+        this.failures.delete(provider);
+      }
+    } else if (code !== "BACKEND_DRAINING" && code !== "MAINTENANCE_MODE") {
+      return;
+    }
+    // The document can lag a request; re-read it now, then converge.
+    void (watch ? watch.refresh().catch(() => undefined) : Promise.resolve()).then(() => this.synchronize(`request ${code}`));
+  }
+}
+
 /** Cordis plugin entry point. */
 export function apply(ctx, config = {}) {
-  const configuredProviders = Array.isArray(config.providers) ? config.providers.filter(nonEmptyString) : [];
-  const providers = configuredProviders.length > 0 ? configuredProviders.filter((p) => p !== "local-ollama-256k") : DEFAULT_PROVIDERS;
-
+  const configured = Array.isArray(config.providers) ? config.providers.filter(nonEmptyString) : [];
+  const providers = configured.length ? configured.filter(provider => Object.hasOwn(RESIDENT_SERVICES, provider)) : DEFAULT_PROVIDERS;
   const configuredInterval = Number(config.pollIntervalMs);
   const pollIntervalMs = Number.isFinite(configuredInterval)
     ? Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(configuredInterval))
     : DEFAULT_POLL_INTERVAL_MS;
+  const clientName = routerClientName({ instance: config.clientInstance });
+  // Existing sessions recorded their route with old IDs. Rewrite each outgoing
+  // request to the service ID so its durable request header migrates too.
+  if (typeof ctx.on === "function") {
+    ctx.on("agent/request", async (_payload, next) => migrateResidentRoute(await next(), providers), { prepend: true });
+  }
   // Follow DSH's canonical optional-settings pattern. The plugin itself loads
   // regardless of service ordering; this scoped callback activates whenever
   // the settings provider is available and owns all timer cleanup.
   ctx.inject(["settings"], (sctx) => {
-    const settingsService = sctx.settings;
-    let stopped = false;
-    let timer;
-    let running = false;
-    const lastFailure = new Map();
-
-    const reportFailure = (provider, error) => {
-      const message = String(error?.message ?? error);
-      if (lastFailure.get(provider) === message) return;
-      lastFailure.set(provider, message);
-      sctx.logger.warn(`router-model-discovery: ${provider}: ${message}`);
-    };
-
-    const synchronize = async () => {
-      if (running || stopped) return;
-      running = true;
-      try {
-        await synchronizeRouterSettings(settingsService, providers);
-        lastFailure.clear();
-      } catch (error) {
-        reportFailure("llm-pi-ai", error);
-      } finally {
-        running = false;
-      }
-    };
-
-    void synchronize();
-    timer = setInterval(() => void synchronize(), pollIntervalMs);
-    sctx.effect(
-      () => () => {
-        stopped = true;
-        clearInterval(timer);
-      },
-      "router model discovery synchronization",
-    );
+    const discovery = new ResidentDiscovery({ settings: sctx.settings, logger: sctx.logger, providers, pollIntervalMs,
+      clientName, watchOptions: plainObject(config.watch) ? config.watch : {} });
+    sctx.effect(() => {
+      discovery.start();
+      return () => discovery.stop();
+    }, "router model discovery synchronization");
   });
 }

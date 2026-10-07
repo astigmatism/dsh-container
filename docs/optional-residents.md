@@ -213,7 +213,8 @@ reviewed compatible release through the authorized deployment workflow.
 Host: `./scripts/check.sh --host` runs the router contract tests
 (`tests/router-model-discovery.test.mjs`, `tests/router-provider-remote.test.mjs`,
 `tests/dsh-resident-availability.test.mjs`, `tests/dsh-llm-pi-ai-patch.test.mjs`,
-`tests/llm-router-contract.test.mjs`) against synthetic paired, solo, unhealthy,
+`tests/llm-router-contract.test.mjs`, and `tests/router-client-wire.test.mjs` when a
+patched runtime is available) against synthetic paired, solo, unhealthy,
 incomplete, draining, unreachable and changing documents, plus a fake event
 stream. Set `DSH_RUNTIME_ROOT` to a host-compatible pinned Harness runtime to
 run YAML migration tests; they are mandatory in the packaged CI runtime

@@ -40,7 +40,8 @@ case "${1:-}" in
       "$project_dir/tests/dsh-resident-availability.test.mjs" \
       "$project_dir/tests/dsh-llm-pi-ai-patch.test.mjs" \
       "$project_dir/tests/local-inference-contract.test.mjs" \
-      "$project_dir/tests/dsh-context-compaction-policy.test.mjs"
+      "$project_dir/tests/dsh-context-compaction-policy.test.mjs" \
+      "$project_dir/tests/router-client-wire.test.mjs"
     exit 0
     ;;
   -h|--help)
@@ -247,7 +248,7 @@ if [ "$build" -eq 1 ]; then
     --test /src/tests/sidebar-settings.test.mjs /src/tests/profile-settings-migration.test.mjs \
       /src/tests/resident-settings-migration.test.mjs /src/tests/profile-02-migration.test.mjs \
       /src/tests/optional-bundle-composition.test.mjs /src/tests/verification-onboarding.test.mjs \
-      /src/tests/verification-inference.test.mjs
+      /src/tests/verification-inference.test.mjs /src/tests/router-client-wire.test.mjs
 
   # Verify the image with a UID unrelated to the base image's `node` user.
   # rc2 locks package.json even for inventory reads. The immutable seed belongs

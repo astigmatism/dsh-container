@@ -538,6 +538,36 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(command.call_count, 1)
 
 
+class BootLoopTests(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('maintenance_entrypoint', Path(__file__).resolve().parents[1] / 'maintenance/main.py')
+        self.entry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.entry)
+
+    def test_boot_verification_failure_stops_the_restart_loop(self):
+        # A verifier failure after healthy services started must not make
+        # systemd force-recreate them every few seconds (RestartPreventExitStatus=78).
+        unit = (Path(__file__).resolve().parents[1] / 'deploy/deepseek-harness-after-network.service').read_text()
+        self.assertIn(f'RestartPreventExitStatus={self.entry.BOOT_VERIFICATION_EXIT}', unit)
+        with patch.object(self.entry, 'probe_release', side_effect=Failure('Application verification: verify-resident-client.mjs')), \
+                patch('sys.stderr'), self.assertRaises(SystemExit) as caught:
+            self.entry.verify_booted({}, {}, Path('/nonexistent'))
+        self.assertEqual(caught.exception.code, 78)
+        with patch.object(self.entry, 'probe_release') as probe:
+            self.entry.verify_booted({'mode': 'remote'}, {}, Path('/nonexistent'))
+            probe.assert_called_once()
+
+    def test_dispatcher_preserves_only_the_boot_no_restart_status(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.entry.finish_worker('boot', 78)
+        self.assertEqual(caught.exception.code, 78)
+        for action, code in (('update', 78), ('boot', 1), ('verify', 78)):
+            with self.subTest(action=action, code=code), self.assertRaises(Failure):
+                self.entry.finish_worker(action, code)
+        self.entry.finish_worker('boot', 0)
+
+
 class TransactionTests(Fixture):
     def test_host_dispatch_uses_engine_socket_group_and_rejects_invalid_probe(self):
         # Desktop host/VM groups differ. The fake engine returns its own group;

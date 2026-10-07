@@ -101,6 +101,13 @@ to the operational bundle. Existing enablement is preserved. Run
 invoke the installed `start-after-network.sh`; no host-specific maintenance
 framework is installed.
 
+At boot the unit recreates the services and waits for health, then runs the
+application verifiers. A verification failure after healthy services started
+exits 78 (`RestartPreventExitStatus`). The unit then fails once instead of
+recreating healthy containers every few seconds and holding the maintenance
+lock that Portal updates need. Repair the cause, then run an update or
+`update-and-restart.sh --verify`.
+
 ## Normal updates and recovery
 
 Use the Portal button, or the installed `scripts/update-and-restart.sh`.

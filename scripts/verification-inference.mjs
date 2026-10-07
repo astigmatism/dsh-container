@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
+/** The context meter's compact count (dsh-client-ui-conversation formatTokens):
+ * decimal K, whole from 100K and one decimal below, so 162816 is 163K and
+ * 97280 is 97.3K. Router context windows change with each configuration.
+ */
+export function meterTokens(value) {
+  const scaled = candidate => candidate >= 100 ? String(Math.round(candidate)) : String(Math.round(candidate * 10) / 10);
+  if (value < 1e3) return String(value);
+  return value < 1e6 ? `${scaled(value / 1e3)}K` : `${scaled(value / 1e6)}M`;
+}
+
 function draining(reason) {
   if (reason?.kind !== 'error') return false;
   // The patched adapter classifies BACKEND_DRAINING/MAINTENANCE_MODE as

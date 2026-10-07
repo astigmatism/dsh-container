@@ -112,6 +112,13 @@ Git. Do not infer Compose service names from container names.
 | `/opt/dsh-build/verify-router-contract.mjs` | `scripts/verify-router-contract.mjs` |
 | `/opt/dsh-build/verify-resident-client.mjs` | `scripts/verify-resident-client.mjs` |
 
+A deployment that also exposes operator-configured providers (such as Claude
+via Bedrock) can have the resident client gate check them too, without
+overriding any image file: set `DSH_VERIFY_EXTRA_PROVIDERS=1` in the Harness
+environment. Each persisted non-resident provider must then be routable, with
+its picker group listing exactly its configured models in order; no inference
+is sent to it.
+
 Review custom Bedrock changes before transferring ownership. The shared release
 preserves external providers and never rewrites their default selection, but
 additional local features must first be incorporated into reviewed source.

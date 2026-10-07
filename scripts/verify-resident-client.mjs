@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { readSettings, residentClientExpectations } from './verify-router-contract.mjs';
 import { launchVerificationBrowser, verificationSessionRow } from './verification-browser.mjs';
 import { installVerificationOnboarding, clickVerificationTarget } from './verification-onboarding.mjs';
-import { verificationPrompt } from './verification-inference.mjs';
+import { verificationPrompt, meterTokens } from './verification-inference.mjs';
 
 const base = process.env.DSH_VERIFY_URL ?? 'http://127.0.0.1:3080';
 const profile = process.env.DSH_PROFILE_ROOT ?? '/data/dsh/profiles/web';
@@ -38,6 +38,29 @@ async function rpc(name, request = {}) {
   assert.equal(result.ok, true, `${name}: ${result.error?.message}`);
   return result.value;
 }
+// Deployments that also expose operator-configured providers (for example
+// Claude via Bedrock) opt in with DSH_VERIFY_EXTRA_PROVIDERS=1. Each persisted
+// non-resident provider must then be routable, and its picker group must list
+// exactly its configured models in order. No paid inference is sent to them.
+const verifyExtras = process.env.DSH_VERIFY_EXTRA_PROVIDERS === '1';
+function extraProviders(settings, expected) {
+  if (!verifyExtras) return [];
+  return Object.entries(settings?.['llm-pi-ai']?.providers ?? {})
+    .filter(([provider]) => !expected.some(row => row.provider === provider))
+    .map(([provider, source]) => ({ provider, models: (source?.models ?? []).map(row => ({ id: row.id, name: row.name })) }));
+}
+function compareExtras(extras, catalog) {
+  for (const extra of extras) {
+    assert.ok(extra.models.length > 0, `${extra.provider} declares at least one model`);
+    assert.ok(catalog.routableProviders.includes(extra.provider), `${extra.provider} is routable`);
+    const group = catalog.groups.find(candidate => candidate.id === extra.provider);
+    assert.deepEqual(group?.models.map(model => model.id), extra.models.map(model => model.id), `${extra.provider} picker models match the profile`);
+    for (const [index, model] of extra.models.entries()) {
+      if (typeof model.name === 'string') assert.equal(group.models[index].name, model.name, `${extra.provider}/${model.id} display name`);
+    }
+  }
+  if (verifyExtras) assert.equal(catalog.groups.length, 2 + extras.length, 'no unconfigured provider groups');
+}
 function compareCatalog(expected, catalog) {
   for (const row of expected) {
     const group = catalog.groups.find(group => group.id === row.provider);
@@ -56,13 +79,16 @@ async function settledExpectations() {
   const notices = new Set();
   for (;;) {
     try {
-      const expected = await residentClientExpectations(await readSettings(settingsPath), { live, log: notice => notices.add(notice) });
+      const settings = await readSettings(settingsPath);
+      const expected = await residentClientExpectations(settings, { live, log: notice => notices.add(notice) });
       // Offline fixtures have no router: discovery must still record a state for both models.
       if (!live) assert.ok(expected.every(row => row.recorded), 'discovery has recorded each resident state');
       const catalog = await rpc('modelCatalog');
       compareCatalog(expected, catalog);
+      const extras = extraProviders(settings, expected);
+      compareExtras(extras, catalog);
       for (const notice of notices) console.log(notice);
-      return { expected, catalog };
+      return { expected, catalog, extras };
     } catch (error) {
       if (Date.now() >= deadline) throw error;
       notices.clear();
@@ -73,7 +99,7 @@ async function settledExpectations() {
 try {
   await installVerificationOnboarding(page, base);
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
-  const { expected, catalog } = await settledExpectations();
+  const { expected, catalog, extras } = await settledExpectations();
   originalDefault = catalog.default;
   defaultSnapshot = (await rpc('settings/describe')).namespaces.find(row => row.ns === 'agent-default-model');
   const available = expected.filter(row => row.available);
@@ -130,6 +156,11 @@ try {
     await option.waitFor();
     assert.equal(await option.isDisabled(), !row.available);
   }
+  const extraNames = extras.flatMap(extra => catalog.groups.find(group => group.id === extra.provider).models.map(model => model.name));
+  if (extraNames.length) {
+    const pickerNames = await page.getByRole('menuitemradio').allTextContents();
+    assert.deepEqual(pickerNames.filter(name => !expected.some(row => row.name === name)), extraNames, 'configured extra models in the rendered picker');
+  }
   await clickVerificationTarget(page, trigger);
   if (first) {
     await clickVerificationTarget(page, trigger);
@@ -137,7 +168,7 @@ try {
     assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Xhigh', 'Max']);
     await clickVerificationTarget(page, trigger);
   }
-  console.log(`Live Harness catalog and rendered picker include ${expected.map(row => row.name).join(' and ')}, with a separate effort control.`);
+  console.log(`Live Harness catalog and rendered picker include ${expected.map(row => row.name).join(' and ')}${extraNames.length ? ` plus ${extraNames.length} configured ${extras.map(row => row.provider).join(', ')} models` : ''}, with a separate effort control.`);
   // Model selection saves the next-request preference asynchronously. Verify
   // both choices and distinct reasoning settings survive browser reconnection.
   for (const [index, choice] of available.entries()) {
@@ -161,8 +192,8 @@ try {
         `Text-only model acceptance check. Do not use tools or access files. Reply with exactly ${marker} and no other text.` });
       const meter = page.getByRole('button', { name: /% of context used/ });
       await clickVerificationTarget(page, meter);
-      const capacity = `${Math.round(choice.contextWindow / 1000)}K`; // Upstream meter uses decimal K.
-      await page.getByRole('dialog').filter({ hasText: new RegExp(`/ ${capacity}`) }).waitFor();
+      const capacity = meterTokens(choice.contextWindow);
+      await page.getByRole('dialog').filter({ hasText: `/ ${capacity}` }).waitFor();
       await page.keyboard.press('Escape');
       console.log(`${choice.name}: live application inference and durable session continuation passed.`);
     }

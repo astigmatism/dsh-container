@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verificationPrompt } from '../scripts/verification-inference.mjs';
+import { verificationPrompt, meterTokens } from '../scripts/verification-inference.mjs';
 
 const error = (status, code) => ({ kind: 'error', error: { code: 'SERVER',
   message: `local-ollama API error (${status}): ${JSON.stringify({ code })}` } });
@@ -78,4 +78,15 @@ test('an unfinished request is bounded and never duplicated', async () => {
   await assert.rejects(f.run(), /deadline/);
   assert.equal(f.sent.length, 1);
   assert.equal(f.elapsed(), 15000);
+});
+
+test('context meter capacity follows the Harness compact token format for every router window', () => {
+  // Nighttime at 96K (98304 less the 1024 reserve) renders 97.3K, not 97K.
+  assert.equal(meterTokens(98304 - 1024), '97.3K');
+  assert.equal(meterTokens(98304), '98.3K');
+  assert.equal(meterTokens(163840 - 1024), '163K');
+  assert.equal(meterTokens(131072), '131K');
+  assert.equal(meterTokens(65536), '65.5K');
+  assert.equal(meterTokens(32000), '32K');
+  assert.equal(meterTokens(999), '999');
 });

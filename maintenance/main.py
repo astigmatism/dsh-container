@@ -25,6 +25,28 @@ from maintenance.contract import require, validate_config, validate_manifest, va
 from maintenance.engine import Updater, probe_release, validate_engine
 
 
+# deploy/deepseek-harness-after-network.service: RestartPreventExitStatus=78.
+BOOT_VERIFICATION_EXIT = 78
+
+
+def verify_booted(manifest, model, root):
+    """Verify a boot-started generation without making systemd loop on it.
+
+    `compose up --wait` has already started healthy services. A verification
+    failure after that (for example, a model-router state the verifier does not
+    accept) must not trigger Restart=on-failure, which would force-recreate the
+    healthy containers every few seconds and hold the maintenance lock that
+    Portal updates need.
+    """
+    try:
+        probe_release(manifest, model, root)
+    except Failure as error:
+        print('Maintenance failed: boot started healthy services, but verification failed: '
+              f'{error}. Not retrying, so the services are not recreated in a loop; '
+              'repair the cause, then run update-and-restart.sh --verify or update.', file=sys.stderr)
+        sys.exit(BOOT_VERIFICATION_EXIT)
+
+
 def launch(root, dry_run=False, action='update'):
     interrupted = (root / 'transaction.json').exists()
     transaction = read_json(root / 'transaction.json') if interrupted else None
@@ -67,7 +89,13 @@ def launch(root, dry_run=False, action='update'):
         subprocess.run(['docker', 'stop', '--time', '60', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, stop)
-    code = process.wait()
+    finish_worker(action, process.wait())
+
+
+def finish_worker(action, code):
+    # Preserve the boot unit's no-restart status through the host dispatcher.
+    if action == 'boot' and code == BOOT_VERIFICATION_EXIT:
+        sys.exit(BOOT_VERIFICATION_EXIT)
     require(code == 0, f'Maintenance worker failed (exit {code}); inspect the private maintenance status')
 
 
@@ -162,7 +190,9 @@ def main():
             require(not (root / 'transaction.json').exists(), 'Interrupted update requires recovery before boot or verification')
             if args.action == 'boot':
                 run([*compose_command(root), 'up', '-d', '--force-recreate', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '900'])
-            probe_release(manifest, updater.model, root)
+                verify_booted(manifest, updater.model, root)
+            else:
+                probe_release(manifest, updater.model, root)
             print('Deployment and mandatory Portal capability verified')
 
 

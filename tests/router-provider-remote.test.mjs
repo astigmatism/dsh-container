@@ -75,10 +75,21 @@ test('startup migration moves legacy routes to service IDs, takes limits from ea
   assert.equal(day.headers['X-Client-Name'], CLIENT);
   assert.equal(night.headers['X-Client-Name'], CLIENT);
   assert.equal(results.get('local-everyday').state.status, 'available');
-  assert.deepEqual(Object.keys(providers(state)).sort(), ['custom', 'local-everyday', 'local-ollama']);
+  assert.deepEqual(Object.keys(providers(state)).sort(), ['custom', 'local-everyday', 'local-ollama', 'local-trial']);
+  // The opt-in route is provisioned on the way, held because this router does
+  // not offer it, and it never takes Daytime's modality or limits.
+  const trial = providers(state)['local-trial'];
+  assert.deepEqual(trial.models.map(row => row.id), ['trial']);
+  assert.equal(trial.models[0].input, undefined);
+  assert.equal(trial.models[0].contextWindow, undefined);
+  assert.equal(trial.residentUnavailable, true);
+  assert.equal(trial.residentState.status, 'unavailable');
+  assert.equal(trial.residentState.service, 'trial');
+  assert.equal(trial.headers['X-Client-Name'], CLIENT);
+  assert.match(trial.residentState.message, /opt-in model/);
   assert.deepEqual(state['agent-default-model'], { provider: 'local-ollama', model: 'daytime', reasoningEffort: 'off', custom: 'retain' });
   assert.deepEqual(state['custom-setting'], { preserved: true });
-  assert.doesNotMatch(JSON.stringify(state['llm-pi-ai'].providers['local-ollama']) + JSON.stringify(night), canonical,
+  assert.doesNotMatch(JSON.stringify(state['llm-pi-ai'].providers['local-ollama']) + JSON.stringify(night) + JSON.stringify(trial), canonical,
     'nothing persisted refers to a canonical model ID');
   assert.ok(router.state.clientNames.every(name => name === CLIENT), 'every discovery fetch sends X-Client-Name');
   const count = mutations.length;
@@ -109,13 +120,17 @@ test('solo configuration: Nighttime offline with the configuration ID never bloc
   assert.deepEqual(state['agent-default-model'], { provider: 'amazon-bedrock', model: 'external-model', reasoningEffort: 'high' });
   const notices = [];
   const rows = await verifyConfiguredRoutes(state, { log: notice => notices.push(notice) });
-  assert.deepEqual(rows.map(row => row.status), ['available', 'offline']);
+  assert.deepEqual(rows.map(row => row.status), ['available', 'offline', 'unavailable']);
+  assert.equal(rows[2].optIn, true, 'the third row is the opt-in route');
   assert.match(notices.join('\n'), /nighttime: offline \(flash-next-solo-128k\); skipped/);
+  assert.match(notices.join('\n'), /trial: unavailable \(not offered by the router\); skipped \(opt-in route, never selected automatically\)/);
   const output = await remote(state);
   assert.match(output.stdout, /nighttime: offline \(flash-next-solo-128k\); skipped/);
+  assert.match(output.stdout, /trial: unavailable \(not offered by the router\); skipped \(opt-in route/);
   assert.match(output.stdout, /Verified/);
   const expected = await residentClientExpectations(state);
-  assert.deepEqual(expected.map(row => [row.name, row.available]), [['Qwen3.8 Flash-Next (128K)', true], ['Nighttime — offline (flash-next-solo-128k)', false]]);
+  assert.deepEqual(expected.map(row => [row.name, row.available]), [['Qwen3.8 Flash-Next (128K)', true], ['Nighttime — offline (flash-next-solo-128k)', false], ['Trial — unavailable', false]]);
+  assert.deepEqual(expected.map(row => row.optIn ?? false), [false, false, true]);
 });
 
 for (const [label, document, status] of [
@@ -144,21 +159,21 @@ for (const [label, document, status] of [
   });
 }
 
-test('router draining: both models wait (not blocked), limits stay stale, verification passes', async t => {
+test('router draining: every model waits (not blocked), limits stay stale, verification passes', async t => {
   const router = await fakeRouter(t, paired());
   const state = legacySettings(router.baseURL);
   await synchronizeRouterSettings(service(state));
   router.publish(draining());
   await synchronizeRouterSettings(service(state));
-  for (const name of ['local-ollama', 'local-everyday']) {
+  for (const name of ['local-ollama', 'local-everyday', 'local-trial']) {
     assert.equal(providers(state)[name].residentState.status, 'switching');
     assert.equal(providers(state)[name].residentUnavailable, false);
     assert.match(providers(state)[name].residentState.label, /— router switching configuration$/);
   }
-  assert.deepEqual((await verifyConfiguredRoutes(state)).map(row => row.status), ['switching', 'switching']);
+  assert.deepEqual((await verifyConfiguredRoutes(state)).map(row => row.status), ['switching', 'switching', 'switching']);
 });
 
-test('router unreachable at startup: stored settings are kept, both models are unavailable, discovery recovers', async t => {
+test('router unreachable at startup: stored settings are kept, every resident model is unavailable, discovery recovers', async t => {
   const router = await fakeRouter(t, paired());
   const state = legacySettings(router.baseURL);
   const stored = structuredClone(providers(state)['local-ollama'].models[0]);
@@ -167,7 +182,7 @@ test('router unreachable at startup: stored settings are kept, both models are u
   const { errors, results } = await synchronizeRouterSettings(service(state), { onFetchError: (_base, error) => failures.push(error) });
   assert.deepEqual(errors, [], 'an unreachable router is not a startup failure');
   assert.equal(failures.length, 1);
-  for (const name of ['local-ollama', 'local-everyday']) {
+  for (const name of ['local-ollama', 'local-everyday', 'local-trial']) {
     assert.equal(results.get(name).state.reason, 'router unreachable');
     assert.equal(providers(state)[name].residentUnavailable, true);
   }
@@ -221,8 +236,13 @@ test('rollback verification accepts settings from releases that predate service 
   delete providers(state)['local-ollama-256k'];
   providers(state)['local-everyday'].residentUnavailable = true;
   await assert.rejects(verifyConfiguredRoutes(state), /service ID/);
-  const rows = await verifyConfiguredRoutes(state, { allowLegacyIds: true, primaryBrowser: true });
-  assert.deepEqual(rows.map(row => row.status), ['available', 'offline']);
+  const notices = [];
+  const rows = await verifyConfiguredRoutes(state, { allowLegacyIds: true, primaryBrowser: true, log: notice => notices.push(notice) });
+  assert.deepEqual(rows.map(row => row.status), ['available', 'offline', 'unavailable']);
+  // A settings tree from before the opt-in route existed has no local-trial row:
+  // it is reported and skipped, never a failed update.
+  assert.equal(rows[2].configured, false);
+  assert.match(notices.join('\n'), /trial: not offered by the router and no local-trial route is configured; skipped/);
 });
 
 test('a concurrent edit to a resident route is never overwritten; the other model still converges', async t => {
@@ -349,6 +369,10 @@ test('a pre-contract router without /v1/router/capabilities keeps Daytime usable
   assert.deepEqual(day.models.map(row => row.id), ['daytime']);
   assert.equal(providers(state)['local-everyday'].residentState.status, 'unavailable');
   assert.ok(seen.some(([url, name]) => url === '/v1/models' && name === CLIENT));
-  const rows = await verifyConfiguredRoutes(state, { log() {} });
-  assert.deepEqual(rows.map(row => row.status), ['available', 'unavailable']);
+  const notices = [];
+  const rows = await verifyConfiguredRoutes(state, { log: notice => notices.push(notice) });
+  // A pre-contract listing carries no trial row, so the opt-in route is reported
+  // and skipped rather than failing verification.
+  assert.deepEqual(rows.map(row => row.status), ['available', 'unavailable', 'unavailable']);
+  assert.match(notices.join('\n'), /trial:.*skipped \(opt-in route, never selected automatically\)/);
 });

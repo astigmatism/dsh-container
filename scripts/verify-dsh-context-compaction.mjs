@@ -31,6 +31,7 @@ function config(thresholdRatio = 0.70) {
     modelPolicies: [
       { provider: "local-ollama", model: "daytime", thresholdRatio },
       { provider: "local-everyday", model: "nighttime", thresholdRatio },
+      { provider: "local-trial", model: "trial", thresholdRatio },
     ],
     auto: true,
   };
@@ -285,6 +286,7 @@ if (mode === "--effective-config") {
     assert.deepEqual(config.modelPolicies, [
       { provider: 'local-ollama', model: 'daytime', thresholdRatio: 0.7 },
       { provider: 'local-everyday', model: 'nighttime', thresholdRatio: 0.7 },
+      { provider: 'local-trial', model: 'trial', thresholdRatio: 0.7 },
     ]);
     for (const row of stack) assert.equal(row.disabled, false);
     assert.deepEqual(stack.find(row => row.id === 'tool-result-pruner').config,

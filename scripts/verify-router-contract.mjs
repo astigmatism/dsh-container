@@ -26,11 +26,13 @@ export async function loadRouterContract() {
  * Compare configured resident routes with the current capabilities document.
  * `allowLegacyIds` accepts settings written by releases that predate service
  * IDs (rollback verification); it checks identity and availability only.
+ * An opt-in route (the trial) whose router offers nothing is reported and
+ * skipped: the owner's current configuration is never a Harness failure.
  * @returns one row per resident: provider, service, status and notice.
  */
 export async function verifyConfiguredRoutes(settings, { browser = false, primaryBrowser = false, allowLegacyIds = false, log = () => {} } = {}) {
   const { RESIDENT_SERVICES, residentStatus, fetchCapabilities, routerClientName, residentLabel, residentStateRecord,
-    requireRouterCapabilities, isBlockingStatus, describeStatus, routerBaseOf } = await loadRouterContract();
+    requireRouterCapabilities, isBlockingStatus, describeStatus, routerBaseOf, isOptInService } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
   assert.ok(providers?.['local-ollama'], 'missing local-ollama provider');
   const selected = settings['agent-default-model'];
@@ -40,6 +42,22 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
   const rows = [];
   for (const [name, service] of Object.entries(RESIDENT_SERVICES)) {
     const provider = providers[name];
+    // An opt-in route may not exist yet on a settings tree that discovery has
+    // not written. Its own base URL, else the shared router, still decides.
+    const optional = isOptInService(service);
+    const label = `${name}/${service}`;
+    if (!provider && optional) {
+      const base = routerBaseOf(providers['local-ollama'].baseURL);
+      if (!documents.has(base)) documents.set(base, (await fetchCapabilities(base, { clientName })).document);
+      const state = residentStatus(documents.get(base), service);
+      if (state.status !== 'available') {
+        const notice = `${service}: not offered by the router and no ${name} route is configured; skipped (an opt-in route is created by discovery, not required here).`;
+        log(notice);
+        rows.push({ provider: name, service, status: state.status, notice, configured: false, optIn: true });
+        continue;
+      }
+      assert.fail(`${label}: the router offers it but no ${name} route is configured; discovery has not provisioned it`);
+    }
     assert.ok(provider && Array.isArray(provider.models) && provider.models.length === 1, `provider ${name} must configure exactly one model`);
     assert.equal(provider.api, 'openai-responses', `provider ${name} is not using Responses`);
     const configured = provider.models[0].id;
@@ -51,7 +69,6 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
     if (!documents.has(base)) documents.set(base, (await fetchCapabilities(base, { clientName })).document);
     const document = documents.get(base);
     const state = residentStatus(document, service);
-    const label = `${name}/${service}`;
     if (configured !== service) {
       // Pre-service-ID releases: the stored ID must still reach the same model.
       assert.ok(state.status !== 'available' || document.ids?.[configured] === document.ids?.[service],
@@ -64,9 +81,9 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
       assert.equal(provider.residentState?.label, residentStateRecord(state, provider.models[0].name).label, `${label} picker label is not synchronized`);
     }
     if (state.status !== 'available') {
-      const notice = `${service}: ${describeStatus(state)}; skipped (the router's current configuration is not a Harness failure).`;
+      const notice = `${service}: ${describeStatus(state)}; skipped${optional ? ' (opt-in route, never selected automatically)' : ''} — the router's current configuration is not a Harness failure.`;
       log(notice);
-      rows.push({ provider: name, service, status: state.status, notice });
+      rows.push({ provider: name, service, status: state.status, notice, ...(optional ? { optIn: true } : {}) });
       continue;
     }
     if (!state.capabilities) {
@@ -111,27 +128,38 @@ export async function readSettings(file) {
 }
 
 /** Independent expected UI contract: validate live settings against discovery
- * before using them, or use the persisted states during an offline image build. */
+ * before using them, or use the persisted states during an offline image build.
+ * A row is marked `optIn` when only a human may select that route; verification
+ * shows it in the catalog and picker but never selects it or sends inference. */
 export async function residentClientExpectations(settings, { live = true, log } = {}) {
   if (live) await verifyConfiguredRoutes(settings, { primaryBrowser: true, log });
-  const { RESIDENT_SERVICES } = await loadRouterContract();
+  const { RESIDENT_SERVICES, serviceLabel, isOptInService } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
   assert.ok(providers);
-  return Object.entries(RESIDENT_SERVICES).map(([provider, model]) => {
+  const rows = [];
+  for (const [provider, model] of Object.entries(RESIDENT_SERVICES)) {
+    const optIn = isOptInService(model);
     const source = providers[provider];
+    if (!source) {
+      if (!optIn) assert.fail(`provider ${provider} is missing`);
+      log?.(`${model}: no ${provider} route is configured; skipped (an opt-in route appears only once discovery provisions it).`);
+      continue;
+    }
     assert.deepEqual(source.models?.map(row => row.id), [model]);
     const configured = source.models[0];
     assert.ok(typeof configured.name === 'string' && configured.name.length > 0);
     const state = source.residentState;
     if (source.residentUnavailable === true) {
-      return { provider, model, name: state?.label ?? `${model === 'nighttime' ? 'Nighttime' : 'Daytime'} — unavailable`, available: false,
-        status: state?.status ?? 'unavailable', recorded: state !== undefined };
+      rows.push({ provider, model, name: state?.label ?? `${serviceLabel(model)} — unavailable`, available: false,
+        status: state?.status ?? 'unavailable', recorded: state !== undefined, ...(optIn ? { optIn: true } : {}) });
+      continue;
     }
     assert.ok(Number.isSafeInteger(configured.contextWindow) && configured.contextWindow > 0);
     const name = state?.status && state.status !== 'available' ? state.label : configured.name;
-    return { provider, model, available: true, status: state?.status ?? 'available', name, contextWindow: configured.contextWindow,
-      reasoningEffort: source.reasoning, recorded: state !== undefined };
-  });
+    rows.push({ provider, model, available: true, status: state?.status ?? 'available', name, contextWindow: configured.contextWindow,
+      reasoningEffort: source.reasoning, ...(optIn ? { optIn: true } : {}) });
+  }
+  return rows;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -69,6 +69,9 @@
       - provider: local-everyday
         model: nighttime
         thresholdRatio: 0.70
+      - provider: local-trial
+        model: trial
+        thresholdRatio: 0.70
 
 - id: command-compact
   disabled: true
@@ -126,11 +129,13 @@
 # If-None-Match while the stream is down. Requests identify themselves as
 # deepseek-harness/<HARNESS_CLIENT_INSTANCE or hostname>; set clientInstance
 # here to override the instance name.
+# local-trial is the opt-in third resident: it is discovered and shown in the
+# picker, but never selected, defaulted to or fallen back onto automatically.
 - insert:
     - id: router-model-discovery
       name: '../../../../.dsh-plugins/dsh-router-model-discovery.js'
       config:
-        providers: [ local-ollama, local-everyday ]
+        providers: [ local-ollama, local-everyday, local-trial ]
         pollIntervalMs: 30000
 
 # Suggested follow-up prompts beneath the latest completed answer. The live

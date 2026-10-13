@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fakeRouter, paired, solo } from './fixtures/router-contract.mjs';
+import { fakeRouter, paired, solo, trio } from './fixtures/router-contract.mjs';
 
 const runtime = process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh';
 let YAML;
@@ -15,7 +15,7 @@ try { YAML = createRequire(`${runtime}/package.json`)('yaml'); } catch (error) {
 }
 const exec = promisify(execFile);
 const script = new URL('../scripts/migrate-resident-models.mjs', import.meta.url).pathname;
-const legacy = { 'local-ollama': 'local-active', 'local-everyday': 'qwen3.8-27b-abliterated-q6_k' };
+const legacy = { 'local-ollama': 'local-active', 'local-everyday': 'qwen3.8-27b-abliterated-q6_k', 'local-trial': 'qwen3.8-flash-next-trial' };
 
 /** A profile patch as written by releases before service IDs. */
 async function fixture(t, baseURL = 'http://127.0.0.1:1/v1') {
@@ -30,6 +30,7 @@ async function fixture(t, baseURL = 'http://127.0.0.1:1/v1') {
   settings['compaction-basic'] = { modelPolicies: [
     { provider: 'local-ollama', model: 'local-active', thresholdRatio: 0.7 },
     { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k', thresholdRatio: 0.7 },
+    { provider: 'local-trial', model: 'qwen3.8-flash-next-trial', thresholdRatio: 0.7 },
     { provider: 'amazon-bedrock', model: 'external', thresholdRatio: 0.8 },
   ] };
   const file = path.join(home, 'profiles/web/cordis.patch.yml');
@@ -43,15 +44,16 @@ const launch = (home, env = {}) => exec(process.execPath, [script, '--startup', 
 const rows = async file => YAML.parse(await fs.readFile(file, 'utf8'), { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }] });
 const config = (parsed, id) => parsed.find(row => row.id === id)?.config;
 
-test('router unreachable at startup: exit 0, stored limits kept, both models unavailable, IDs migrated', { skip: !YAML }, async t => {
+test('router unreachable at startup: exit 0, stored limits kept, every model unavailable, IDs migrated', { skip: !YAML }, async t => {
   const { home, file } = await fixture(t);
   const before = await rows(file);
   const result = await launch(home);
   assert.match(result.stdout, /Router discovery is unavailable at startup/);
   assert.match(result.stdout, /daytime: unavailable \(router unreachable\)/);
+  assert.match(result.stdout, /trial: unavailable \(router unreachable\) \[opt-in route; never selected automatically\]/);
   const migrated = await rows(file);
   const providers = config(migrated, 'llm-pi-ai').providers;
-  for (const name of ['local-ollama', 'local-everyday']) {
+  for (const name of ['local-ollama', 'local-everyday', 'local-trial']) {
     assert.equal(providers[name].residentUnavailable, true);
     assert.equal(providers[name].residentState.reason, 'router unreachable');
     assert.equal(providers[name].models[0].contextWindow, config(before, 'llm-pi-ai').providers[name].models[0].contextWindow);
@@ -59,8 +61,9 @@ test('router unreachable at startup: exit 0, stored limits kept, both models una
   }
   assert.deepEqual(providers['local-ollama'].models.map(row => row.id), ['daytime']);
   assert.deepEqual(providers['local-everyday'].models.map(row => row.id), ['nighttime']);
+  assert.deepEqual(providers['local-trial'].models.map(row => row.id), ['trial']);
   assert.equal(config(migrated, 'agent-default-model').model, 'daytime');
-  assert.deepEqual(config(migrated, 'compaction-basic').modelPolicies.map(row => row.model), ['daytime', 'nighttime', 'external']);
+  assert.deepEqual(config(migrated, 'compaction-basic').modelPolicies.map(row => row.model), ['daytime', 'nighttime', 'trial', 'external']);
   assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
   assert.doesNotMatch(await fs.readFile(file, 'utf8'), /local-active|qwen3\.8/, 'nothing persisted refers to a canonical model ID');
 });
@@ -104,6 +107,9 @@ for (const selection of ['amazon-bedrock', 'local-everyday']) {
     await fs.writeFile(session, 'unchanged session history');
     const result = await launch(home);
     assert.match(result.stdout, /nighttime: offline \(flash-next-solo-128k\)/);
+    // The trial is not offered by this configuration: recorded and announced, and
+    // the update still exits 0.
+    assert.match(result.stdout, /trial: unavailable \(not offered by the router\) \[opt-in route; never selected automatically\]/);
     const text = await fs.readFile(file, 'utf8');
     assert.match(text, /!!js process.env.PRIVATE_FIXTURE # retain expression and comment/);
     assert.match(text, /Authorization: !!js process.env.PRIVATE_FIXTURE # retain provider expression/);
@@ -114,6 +120,13 @@ for (const selection of ['amazon-bedrock', 'local-everyday']) {
     assert.deepEqual(next['amazon-bedrock'], external);
     assert.equal(next['local-everyday'].residentState.label, 'Nighttime — offline (flash-next-solo-128k)');
     assert.equal(next['local-ollama'].models[0].contextWindow, 131072 - 1024);
+    // The opt-in route exists and is held, never a default and never selectable.
+    assert.deepEqual(next['local-trial'].models.map(row => row.id), ['trial']);
+    assert.equal(next['local-trial'].residentUnavailable, true);
+    assert.equal(next['local-trial'].residentState.status, 'unavailable');
+    assert.equal(next['local-trial'].residentState.service, 'trial');
+    assert.notEqual(config(migrated, 'agent-default-model').provider, 'local-trial');
+    assert.notEqual(config(migrated, 'agent-default-model').model, 'trial');
     const after = await fs.stat(file);
     assert.equal(after.mode, stat.mode); assert.equal(after.uid, stat.uid); assert.equal(after.gid, stat.gid);
     assert.equal(await fs.readFile(session, 'utf8'), 'unchanged session history');
@@ -126,9 +139,50 @@ for (const selection of ['amazon-bedrock', 'local-everyday']) {
     assert.equal(restored.residentUnavailable, false);
     assert.equal(restored.residentState.status, 'available');
     assert.equal(restored.models[0].contextWindow, 98304 - 1024);
+    // Nighttime returned; the trial is still not offered and stays held. Only a
+    // human selection can put a session on it.
+    const trial = config(await rows(file), 'llm-pi-ai').providers['local-trial'];
+    assert.equal(trial.residentUnavailable, true);
+    assert.equal(trial.residentState.status, 'unavailable');
     assert.doesNotMatch(await fs.readFile(file, 'utf8'), /qwen3\.8|fixture-(?:day|night)time|local-active/);
   });
 }
+
+// A router that offers the opt-in service: the route becomes real, but the
+// selection stays exactly where the human left it.
+test('the opt-in trial becomes available from its own metadata and disappears without a failed update', { skip: !YAML }, async t => {
+  const router = await fakeRouter(t, trio());
+  const { home, file } = await fixture(t, router.baseURL);
+  const result = await launch(home);
+  assert.match(result.stdout, /trial: available/);
+  assert.doesNotMatch(result.stdout, /never selected automatically/);
+  const providers = config(await rows(file), 'llm-pi-ai').providers;
+  const trial = providers['local-trial'];
+  assert.deepEqual(trial.models.map(row => row.id), ['trial']);
+  assert.equal(trial.residentUnavailable, false);
+  assert.equal(trial.residentState.status, 'available');
+  // Its own serving metadata, and text-only: never Daytime's limits or modality.
+  assert.equal(trial.models[0].contextWindow, 163840 - 1024);
+  assert.deepEqual(trial.models[0].input, ['text']);
+  assert.equal(trial.models[0].name, 'Qwen3.8 Flash-Next (Strata trial) (160K)');
+  assert.equal(trial.displayName, 'Qwen3.8 Flash-Next (Strata trial) (160K)');
+  const selection = config(await rows(file), 'agent-default-model');
+  assert.equal(selection.provider, 'local-ollama');
+  assert.equal(selection.model, 'daytime');
+  assert.doesNotMatch(await fs.readFile(file, 'utf8'), /fixture-|local-active|qwen3\.8-flash-next/);
+  // The service is withdrawn: held with its reason, announced, and the update
+  // still succeeds — a missing opt-in service is never a failed update.
+  router.publish(paired());
+  const second = await launch(home);
+  assert.match(second.stdout, /trial: unavailable \(not offered by the router\) \[opt-in route; never selected automatically\]/);
+  const held = config(await rows(file), 'llm-pi-ai').providers['local-trial'];
+  assert.deepEqual(held.models.map(row => row.id), ['trial']);
+  assert.equal(held.residentUnavailable, true);
+  assert.equal(held.residentState.label, 'Trial — unavailable');
+  assert.equal(config(await rows(file), 'agent-default-model').provider, 'local-ollama');
+  assert.equal(config(await rows(file), 'llm-pi-ai').providers['local-ollama'].residentState.status, 'available');
+  assert.equal(config(await rows(file), 'llm-pi-ai').providers['local-everyday'].residentState.status, 'available');
+});
 
 // A host runtime installed by an earlier image carries an older availability
 // patch; the packaged CI runtime (DSH_TEST_HARNESS=1) always carries this one.

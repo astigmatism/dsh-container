@@ -4,7 +4,9 @@
  * Router state never stops startup (docs/llm-router-contract.md §4): an
  * unreachable router or an offline, unhealthy or incomplete model is recorded
  * per model and the plugin recovers automatically after launch. Only invalid
- * local settings exit non-zero.
+ * local settings exit non-zero. A router configuration that does not offer the
+ * opt-in `trial` service is therefore a recorded state and a notice, never a
+ * failed update.
  */
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -56,7 +58,7 @@ async function main() {
     state[namespace] ??= {};
     applyOperation(state[namespace], operation);
   };
-  const { synchronizeRouterSettings, applyOperation, RESIDENT_SERVICES, routerClientName, describeStatus } = await loadRouterContract();
+  const { synchronizeRouterSettings, applyOperation, RESIDENT_SERVICES, routerClientName, describeStatus, isOptInService } = await loadRouterContract();
   const discovery = state['router-model-discovery'];
   const outcome = await synchronizeRouterSettings({
     get: namespace => state[namespace],
@@ -65,11 +67,14 @@ async function main() {
   }, {
     clientName: routerClientName({ instance: object(discovery) ? discovery.clientInstance : undefined }),
     fetchOptions: { timeoutMs: 10_000 },
-    onFetchError: (_base, error) => console.log(`Router discovery is unavailable at startup (${error.name === 'TimeoutError' ? 'timeout' : error.message}); starting with stored settings and both models marked unavailable. Discovery recovers automatically.`),
+    onFetchError: (_base, error) => console.log(`Router discovery is unavailable at startup (${error.name === 'TimeoutError' ? 'timeout' : error.message}); starting with stored settings and every resident model marked unavailable. Discovery recovers automatically.`),
   });
   if (outcome.errors.length) throw new Error(outcome.errors.map(({ provider, error }) => `${provider}: ${error.message}`).join('; '));
   for (const [provider, { state: resident }] of outcome.results) {
-    console.log(`${RESIDENT_SERVICES[provider]}: ${describeStatus(resident)}`);
+    const service = RESIDENT_SERVICES[provider];
+    // An absent opt-in service is the owner's configuration choice, not a fault.
+    const note = isOptInService(service) && resident.status !== "available" ? " [opt-in route; never selected automatically]" : "";
+    console.log(`${service}: ${describeStatus(resident)}${note}`);
   }
   for (const { namespace, operation } of routeMigrations(state, RESIDENT_SERVICES)) record(namespace, operation);
   if (JSON.stringify(state) === initialState) {

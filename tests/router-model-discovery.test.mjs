@@ -1,22 +1,36 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { capabilitiesDocument, residentModel, paired, solo, draining, DAYTIME_ID, NIGHTTIME_ID, NIGHTTIME_MTP3_ID } from "./fixtures/router-contract.mjs";
+import { capabilitiesDocument, residentModel, paired, trio, strata, solo, draining, offlineRow, legacySettings,
+  settingsService, DAYTIME_ID, NIGHTTIME_ID, NIGHTTIME_MTP3_ID, TRIAL_ID, UNADDRESSED_ID } from "./fixtures/router-contract.mjs";
 
 const pluginSource = await readFile(new URL("../seed/plugins/dsh-router-model-discovery.js", import.meta.url), "utf8");
 const plugin = await import(`data:text/javascript;base64,${Buffer.from(pluginSource).toString("base64")}`);
 const {
-  RESIDENT_SERVICES, residentStatus, residentLabel, residentMessage, residentStateRecord, planResidentProvider,
+  RESIDENT_SERVICES, OPT_IN_SERVICES, OPT_IN_PROVIDERS, isOptInService, serviceLabel, resolveProviderList,
+  synchronizeRouterSettings, applyOperation,
+  residentStatus, residentLabel, residentMessage, residentStateRecord, planResidentProvider,
   dshReasoningEfforts, validateRouterMetadata, routerClientName, routerBaseOf, migrateResidentRoute,
   isBlockingStatus, describeStatus,
 } = plugin;
 
 test("resident routes send the stable service IDs only", () => {
-  assert.deepEqual(RESIDENT_SERVICES, { "local-ollama": "daytime", "local-everyday": "nighttime" });
+  assert.deepEqual(RESIDENT_SERVICES, { "local-ollama": "daytime", "local-everyday": "nighttime", "local-trial": "trial" });
   assert.doesNotMatch(pluginSource, /qwen3\.8|abliterated|mtp3/i, "the plugin hard-codes no canonical model ID");
 });
 
-test("paired: both services are available with the serving model's limits", () => {
+test("the trial is the opt-in route and is labelled for humans", () => {
+  assert.deepEqual(OPT_IN_SERVICES, ["trial"]);
+  assert.deepEqual(OPT_IN_PROVIDERS, ["local-trial"]);
+  assert.equal(isOptInService("trial"), true);
+  assert.equal(isOptInService("daytime"), false);
+  assert.equal(isOptInService(undefined), false);
+  assert.equal(serviceLabel("trial"), "Trial");
+  assert.equal(serviceLabel("nighttime"), "Nighttime");
+  assert.equal(serviceLabel("unheard-of"), "unheard-of");
+});
+
+test("paired: Daytime and Nighttime are available with the serving model's limits", () => {
   const document = paired();
   const day = residentStatus(document, "daytime");
   const night = residentStatus(document, "nighttime");
@@ -45,6 +59,84 @@ test("solo: Nighttime is offline with the configuration ID; Daytime is unaffecte
   assert.equal(isBlockingStatus(night.status), true);
   assert.equal(residentStatus(document, "daytime").status, "available");
   assert.equal(residentStatus(document, "daytime").capabilities.contextWindow, 131072 - 1024);
+});
+
+test("trio: the opt-in trial is available from its own metadata and text-only", () => {
+  const document = trio();
+  const trial = residentStatus(document, "trial");
+  assert.equal(trial.status, "available");
+  assert.equal(trial.served, TRIAL_ID);
+  assert.equal(trial.capabilities.contextWindow, 163840 - 1024);
+  assert.equal(trial.capabilities.maxConcurrency, 1);
+  assert.deepEqual(trial.capabilities.input, ["text"]);
+  // The picker label is the router's own display name, never a canonical ID.
+  assert.equal(residentLabel(trial), "Qwen3.8 Flash-Next (Strata trial) (160K)");
+  assert.equal(residentStateRecord(trial).label, "Qwen3.8 Flash-Next (Strata trial) (160K)");
+  assert.equal(isBlockingStatus(trial.status), false);
+  // A third service being served changes nothing about the permanent residents.
+  assert.equal(residentStatus(document, "daytime").status, "available");
+  assert.equal(residentStatus(document, "nighttime").status, "available");
+});
+
+test("an absent trial service is recorded as its own unavailable state", () => {
+  const document = paired();
+  const trial = residentStatus(document, "trial");
+  assert.equal(trial.status, "unavailable");
+  assert.equal(trial.reason, "not offered by the router");
+  assert.equal(residentLabel(trial), "Trial — unavailable");
+  assert.equal(isBlockingStatus(trial.status), true);
+  assert.match(residentMessage(trial), /opt-in model/);
+  assert.match(residentMessage(trial), /never selects it and never moves a session off it/);
+  assert.match(residentMessage(trial), /does not offer it/);
+  // The permanent residents keep their own states and advice.
+  assert.equal(residentStatus(document, "daytime").status, "available");
+  assert.equal(residentStatus(document, "nighttime").status, "available");
+  assert.equal(residentMessage(residentStatus(document, "nighttime")), "Nighttime is available.");
+});
+
+test("a trial stopped by the active configuration is offline with that configuration ID", () => {
+  const document = capabilitiesDocument({
+    models: [residentModel()],
+    offline: [offlineRow("nighttime"), offlineRow("trial")],
+    configuration: { id: "flash-next-solo-160k", exclusive: true },
+  });
+  const trial = residentStatus(document, "trial");
+  assert.equal(trial.status, "offline");
+  assert.equal(trial.configuration, "flash-next-solo-160k");
+  assert.equal(residentLabel(trial), "Trial — offline (flash-next-solo-160k)");
+  assert.equal(describeStatus(trial), "offline (flash-next-solo-160k)");
+  assert.equal(residentStatus(document, "daytime").status, "available");
+  assert.equal(residentStatus(document, "nighttime").status, "offline");
+});
+
+test("a served row that does not name the trial service is never addressed through it", () => {
+  const document = capabilitiesDocument({
+    models: [residentModel(), residentModel({ service: "unaddressed-experiment", id: UNADDRESSED_ID, aliases: [],
+      displayName: "Uncatalogued experiment" })],
+  });
+  const state = residentStatus(document, "trial");
+  assert.equal(state.status, "unavailable");
+  assert.equal(state.served, undefined);
+  assert.equal(state.reason, "not offered by the router");
+  // Planning must not point the route at the unaddressed canonical model, and
+  // must not borrow Daytime's limits or image modality for the opt-in route.
+  const escape = pattern => pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const route = planResidentProvider({ name: "local-trial", state, stored: null, resolved: null,
+    daytime: { apiKeyEnv: "FIXTURE_KEY", baseURL: "http://router.invalid/v1", maxConcurrency: 3,
+      models: [{ id: "daytime", name: "Daytime (128K)", contextWindow: 130048, input: ["text", "image"] }] } });
+  assert.deepEqual(route.models.map(model => model.id), ["trial"]);
+  assert.equal(route.models[0].contextWindow, undefined);
+  assert.equal(route.models[0].input, undefined);
+  assert.equal(route.residentUnavailable, true);
+  assert.doesNotMatch(JSON.stringify(route), new RegExp(escape(UNADDRESSED_ID)));
+});
+
+test("a configuration serving only the trial leaves the permanent residents unusable, never silently switched", () => {
+  const document = strata();
+  assert.equal(residentStatus(document, "trial").status, "available");
+  assert.equal(residentStatus(document, "daytime").status, "unavailable");
+  assert.equal(residentStatus(document, "daytime").reason, "not offered by the router");
+  assert.equal(residentStatus(document, "nighttime").status, "offline");
 });
 
 test("Nighttime unhealthy or incomplete is recorded on its own and never blocks Daytime", () => {
@@ -79,7 +171,7 @@ test("Nighttime unhealthy or incomplete is recorded on its own and never blocks 
 
 test("draining or maintenance: every model waits, none is blocked, nothing falls back", () => {
   for (const document of [draining(), capabilitiesDocument({ accepting: false, draining: false, maintenance: true }), draining(solo())]) {
-    for (const service of ["daytime", "nighttime"]) {
+    for (const service of ["daytime", "nighttime", "trial"]) {
       const state = residentStatus(document, service);
       assert.equal(state.status, "switching", service);
       assert.equal(isBlockingStatus(state.status), false);
@@ -89,13 +181,27 @@ test("draining or maintenance: every model waits, none is blocked, nothing falls
   assert.equal(residentStatus(capabilitiesDocument({ accepting: false, draining: false, maintenance: true }), "daytime").reason, "maintenance");
 });
 
-test("router unreachable: both models are unavailable with a recoverable message", () => {
-  for (const service of ["daytime", "nighttime"]) {
+test("router unreachable: every resident model is unavailable with a recoverable message", () => {
+  for (const service of ["daytime", "nighttime", "trial"]) {
     const state = residentStatus(null, service);
     assert.equal(state.status, "unavailable");
     assert.equal(state.reason, "router unreachable");
     assert.match(residentMessage(state), /router is unreachable/);
   }
+});
+
+test("an existing deployment gains the opt-in route without a settings edit", () => {
+  assert.deepEqual(resolveProviderList(undefined), ["local-ollama", "local-everyday", "local-trial"]);
+  assert.deepEqual(resolveProviderList([]), ["local-ollama", "local-everyday", "local-trial"]);
+  // The pre-trial list is upgraded in memory; the deployment keeps working as-is.
+  assert.deepEqual(resolveProviderList(["local-ollama", "local-everyday"]), ["local-ollama", "local-everyday", "local-trial"]);
+  // A deliberate subset, or a list that already names the trial, is obeyed exactly.
+  assert.deepEqual(resolveProviderList(["local-ollama"]), ["local-ollama"]);
+  assert.deepEqual(resolveProviderList(["local-trial"]), ["local-trial"]);
+  assert.deepEqual(resolveProviderList(["local-ollama", "local-trial"]), ["local-ollama", "local-trial"]);
+  assert.deepEqual(resolveProviderList(["local-ollama", "local-everyday", "local-trial"]), ["local-ollama", "local-everyday", "local-trial"]);
+  // An unrelated provider is never managed, and nothing selects the trial by itself.
+  assert.deepEqual(resolveProviderList(["local-ollama", "custom"]), ["local-ollama"]);
 });
 
 test("a disappeared ID without an offline entry, an invalid document, and an ambiguous service", () => {
@@ -172,6 +278,41 @@ test("old session and default routes migrate to service IDs", () => {
   assert.equal(migrateResidentRoute(external), external);
   const current = { provider: "local-ollama", model: "daytime" };
   assert.equal(migrateResidentRoute(current), current);
+});
+
+test("no migration case ever makes the opt-in route the default", async () => {
+  const resident = (id, name, input) => ({ api: "openai-responses", apiKeyEnv: "KEEP", baseURL: "http://router.invalid/v1",
+    reasoning: "medium", models: [{ id, name, contextWindow: 130048, maxTokens: null, input }] });
+  const settings = selection => ({
+    "agent-default-model": selection,
+    "llm-pi-ai": { providers: {
+      "local-ollama": resident("daytime", "Daytime (128K)", ["text", "image"]),
+      "local-everyday": resident("nighttime", "Nighttime (128K)", ["text"]),
+      "local-trial": resident("trial", "Trial (128K)", ["text"]),
+    } },
+  });
+  const cases = [
+    { label: "fresh install", state: settings({ provider: "local-ollama", model: "daytime", reasoningEffort: "medium" }), document: trio() },
+    { label: "the router does not offer the trial", state: settings({ provider: "local-ollama", model: "daytime" }), document: paired() },
+    { label: "only the trial serves, and the default sits on Daytime", state: settings({ provider: "local-ollama", model: "daytime" }), document: strata() },
+    { label: "the default sits on a stopped Nighttime", state: settings({ provider: "local-everyday", model: "nighttime" }), document: solo() },
+    { label: "the router is unreachable", state: settings({ provider: "local-everyday", model: "nighttime" }), document: null },
+    { label: "settings written before service IDs existed", state: legacySettings("http://router.invalid/v1"), document: trio() },
+  ];
+  for (const testCase of cases) {
+    const state = structuredClone(testCase.state);
+    const { errors } = await synchronizeRouterSettings(settingsService(state, [], applyOperation), { document: testCase.document });
+    assert.deepEqual(errors.map(error => [error.provider, error.error.message]), [], testCase.label);
+    const selection = state["agent-default-model"];
+    assert.notEqual(selection.provider, "local-trial", `${testCase.label}: the default moved onto the opt-in route`);
+    assert.notEqual(selection.model, "trial", `${testCase.label}: the default moved onto the opt-in model`);
+    // The route still exists and states why it cannot serve — held, never unknown.
+    const trial = state["llm-pi-ai"].providers["local-trial"];
+    assert.equal(trial.models[0].id, "trial", testCase.label);
+    assert.equal(["available", "offline", "unavailable", "incomplete"].includes(trial.residentState.status), true, testCase.label);
+    assert.equal(trial.residentUnavailable, trial.residentState.status !== "available", testCase.label);
+    assert.equal(trial.residentState.service, "trial", testCase.label);
+  }
 });
 
 test("X-Client-Name: deepseek-harness/<instance> from setting, environment, then hostname", () => {

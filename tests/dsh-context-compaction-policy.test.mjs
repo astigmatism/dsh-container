@@ -35,15 +35,17 @@ test("Host keeps preset policy templates without mounting duplicate compaction s
   assert.match(pruner, /thresholdChars: 8192/);
 });
 
-test("both selectable context profiles use the 70 percent request budget policy", () => {
+test("every resident route uses the 70 percent request budget policy", () => {
   const compact = block("compaction-basic", "command-compact");
-  for (const [provider, model] of [["local-ollama", "daytime"], ["local-everyday", "nighttime"]]) {
+  // The opt-in trial is included: a session a human selects there compacts on
+  // the same budget as the other residents, and no other policy is seeded.
+  for (const [provider, model] of [["local-ollama", "daytime"], ["local-everyday", "nighttime"], ["local-trial", "trial"]]) {
     assert.match(
       compact,
       new RegExp(`provider: ${provider.replaceAll("-", "\\-")}\\n\\s+model: ${model}\\n\\s+thresholdRatio: 0\\.70`),
     );
   }
-  assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 2);
+  assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 3);
 });
 
 test("Nighttime compaction follows its 128K working context without a summary quota", () => {

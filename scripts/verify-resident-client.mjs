@@ -49,7 +49,7 @@ function extraProviders(settings, expected) {
     .filter(([provider]) => !expected.some(row => row.provider === provider))
     .map(([provider, source]) => ({ provider, models: (source?.models ?? []).map(row => ({ id: row.id, name: row.name })) }));
 }
-function compareExtras(extras, catalog) {
+function compareExtras(extras, catalog, expected) {
   for (const extra of extras) {
     assert.ok(extra.models.length > 0, `${extra.provider} declares at least one model`);
     assert.ok(catalog.routableProviders.includes(extra.provider), `${extra.provider} is routable`);
@@ -59,7 +59,7 @@ function compareExtras(extras, catalog) {
       if (typeof model.name === 'string') assert.equal(group.models[index].name, model.name, `${extra.provider}/${model.id} display name`);
     }
   }
-  if (verifyExtras) assert.equal(catalog.groups.length, 2 + extras.length, 'no unconfigured provider groups');
+  if (verifyExtras) assert.equal(catalog.groups.length, expected.length + extras.length, 'no unconfigured provider groups');
 }
 function compareCatalog(expected, catalog) {
   for (const row of expected) {
@@ -86,7 +86,7 @@ async function settledExpectations() {
       const catalog = await rpc('modelCatalog');
       compareCatalog(expected, catalog);
       const extras = extraProviders(settings, expected);
-      compareExtras(extras, catalog);
+      compareExtras(extras, catalog, expected);
       for (const notice of notices) console.log(notice);
       return { expected, catalog, extras };
     } catch (error) {
@@ -103,16 +103,23 @@ try {
   originalDefault = catalog.default;
   defaultSnapshot = (await rpc('settings/describe')).namespaces.find(row => row.ns === 'agent-default-model');
   const available = expected.filter(row => row.available);
+  // An opt-in route (the trial) is listed in the catalog and picker and its
+  // recorded state is checked, but verification never selects it: selecting a
+  // model saves the next-request default, and only a human may put a session on
+  // an opt-in route. It is never a default and never a fallback target.
+  const selectable = available.filter(row => !row.optIn);
+  const optInRows = available.filter(row => row.optIn);
   // A switching router accepts selection but makes requests wait; only
   // available models answer the live inference check.
-  const servable = available.filter(row => row.status === 'available');
-  if (!available.length) console.log(`No resident model is selectable (${expected.map(row => row.name).join(', ')}); selection, effort and inference checks are skipped.`);
-  else if (live && servable.length < available.length) console.log('A switching router is not asked for inference; its requests would wait.');
+  const servable = selectable.filter(row => row.status === 'available');
+  if (optInRows.length) console.log(`${optInRows.map(row => `${row.model} (${row.name})`).join(', ')}: opt-in route is listed and state-checked above; verification never selects it or sends inference through it.`);
+  if (!selectable.length) console.log(`No resident model is available for verification to select (${expected.map(row => row.name).join(', ')}); selection, effort and inference checks are skipped.`);
+  else if (live && servable.length < selectable.length) console.log('A switching router is not asked for inference; its requests would wait.');
   fixture = await mkdtemp('/tmp/dsh-resident-verification-');
   const created = await rpc('workspace/create', { path: fixture });
   workspaceId = created.workspace.workspaceId;
   ({ sessionId } = await rpc('create', { workspaceId }));
-  const first = available[0];
+  const first = selectable[0];
   if (first) lastVerificationDefault = (await rpc('selectModel', { sessionId, provider: first.provider, model: first.model, reasoningEffort: first.reasoningEffort })).selected;
   // The sidebar omits empty drafts. Materialize this isolated conversation
   // before opening its session-specific model controls. Offline image tests
@@ -171,7 +178,7 @@ try {
   console.log(`Live Harness catalog and rendered picker include ${expected.map(row => row.name).join(' and ')}${extraNames.length ? ` plus ${extraNames.length} configured ${extras.map(row => row.provider).join(', ')} models` : ''}, with a separate effort control.`);
   // Model selection saves the next-request preference asynchronously. Verify
   // both choices and distinct reasoning settings survive browser reconnection.
-  for (const [index, choice] of available.entries()) {
+  for (const [index, choice] of selectable.entries()) {
     const selection = { provider: choice.provider, model: choice.model, reasoningEffort: index ? 'high' : 'off' };
     assert.deepEqual((await rpc('selectModel', { sessionId, ...selection })).selected, selection);
     lastVerificationDefault = selection;

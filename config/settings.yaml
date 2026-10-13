@@ -1,5 +1,7 @@
-# Resident routes send the LLM Router's stable service IDs (daytime, nighttime),
-# never canonical model IDs. See docs/llm-router-contract.md.
+# Resident routes send the LLM Router's stable service IDs (daytime, nighttime,
+# trial), never canonical model IDs. See docs/llm-router-contract.md.
+# `trial` is opt-in: it is never the default and never a fallback target, and a
+# session reaches it only when a human selects it in the picker.
 agent-default-model:
   provider: local-ollama
   model: daytime
@@ -74,6 +76,41 @@ llm-pi-ai:
       models:
         - id: nighttime
           name: Nighttime (128K)
+          contextWindow: 131072
+          maxTokens: null
+          input: [text]
+          reasoningEfforts:
+            off: none
+            minimal: low
+            low: low
+            medium: medium
+            high: xhigh
+            xhigh: xhigh
+            max: xhigh
+    # Opt-in route: listed in the picker, selectable only after a human chooses
+    # it, and never the default or a fallback target. It is text-only because
+    # the Strata trial profile offloads no multimodal projector; discovery
+    # replaces these placeholders with the serving model's own metadata.
+    local-trial:
+      displayName: Trial (128K)
+      apiKeyEnv: OLLAMA_DSH_API_KEY
+      api: openai-responses
+      baseURL: http://ai-router:11434/v1
+      streamIdleTimeoutMs: 900000
+      maxConcurrency: 1
+      reasoning: medium
+      # Medium is a DSH choice; the router raw default remains template-defined.
+      # The production router uses volatile slot-prefix caching but does not
+      # accept OpenAI's explicit prompt_cache_key request field.
+      cacheRetention: none
+      retryPolicy:
+        mode: normal
+        maxRetries: 2
+        retryableCodes: [EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT]
+      # Placeholder limits until the first successful router discovery.
+      models:
+        - id: trial
+          name: Trial (128K)
           contextWindow: 131072
           maxTokens: null
           input: [text]

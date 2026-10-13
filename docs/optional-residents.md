@@ -1,23 +1,33 @@
-# Optional Nighttime and deployment-local code overrides
+# Resident routes: optional Nighttime, the opt-in Trial, and deployment-local code overrides
 
 Resident routing follows the [LLM Router client contract](llm-router-contract.md)
 (version 1). Its conformance map records how each requirement is met. Daytime
 is provider `local-ollama` with model `daytime`; Nighttime is provider
-`local-everyday` with model `nighttime`. These are the router's stable service
-IDs. The canonical model behind a service (for example an MTP3 variant of
-Nighttime) can change with any AI Runtime configuration and is never configured
-or stored.
+`local-everyday` with model `nighttime`; the Trial is provider `local-trial`
+with model `trial`. These are the router's stable service IDs. The canonical
+model behind a service (for example an MTP3 variant of Nighttime) can change
+with any AI Runtime configuration and is never configured or stored.
+
+Daytime and Nighttime are permanent: a default selection always resolves to one
+of them, or to an external provider a human chose. **The Trial is opt-in** (the
+owner's rule, 2026-10-13). Harness never selects it, never makes it a default,
+never moves a session onto it or off it automatically, and never falls back to
+it. It appears in the picker as a route with a state, and only a human selection
+puts a session on it. Its serving profile is text-only, so it never inherits
+Daytime's image modality or context: its limits come from its own router
+metadata.
 
 ## What the router can do to a resident, and what Harness shows
 
 AI Runtime switches configurations by hand and without notice. Paired
 configurations run Daytime and Nighttime together; solo configurations stop
-Nighttime and give Daytime every GPU. Within either kind, a service's context
+Nighttime and give Daytime every GPU. A configuration may also serve only the
+trial, or stop offering it again. Within any configuration, a service's context
 window and canonical model can change. Discovery reads
 `/v1/router/capabilities` at startup and follows `/v1/router/events`. Each new
 `revision` re-synchronizes at once, and the picker updates without reload.
 Each model is evaluated on its own, so one model's state never blocks updates
-to the other. The picker shows exactly one state per resident:
+to another. The picker shows exactly one state per resident:
 
 | State | Picker label | Selecting | Requests |
 | --- | --- | --- | --- |
@@ -27,11 +37,22 @@ to the other. The picker shows exactly one state per resident:
 | router switching configuration (draining or maintenance) | `Nighttime — router switching configuration` | allowed | wait 2 → 30 s and retry the same model |
 | incomplete metadata (warnings, `complete: false`, invalid fields) | `Nighttime — incomplete metadata` | blocked | fail at once; no retries |
 
+The same states apply to the trial, with `Trial` in place of `Nighttime`, for
+example `Trial — unavailable` or `Trial — offline (flash-next-strata-160k)`.
+When it is available its label is the router's own display name, such as
+`Qwen3.8 Flash-Next (Strata trial) (160K)`, and it is listed text-only. A trial
+the router's current configuration does not offer is **held, never unknown**:
+the route still exists, its `residentState` says `unavailable` with reason
+`not offered by the router`, and its message states that it is an opt-in model
+Harness never selects and never moves a session off. A session a human put on
+the trial fails with that message instead of being moved to another model.
+
 **Fallback is deliberately disabled** (contract §5). A Harness session is a long
 conversation. Switching models silently would change its context window,
 compaction and refusal behavior. A blocked request says what happened and asks
 the user to switch the session to Daytime. When Nighttime returns, it becomes
-selectable again with no action, and failed prompts are never replayed.
+selectable again with no action, and failed prompts are never replayed. Nothing
+moves a session onto the trial either: it is entered and left only by a human.
 
 The state is recorded in each resident provider's settings
 (`residentUnavailable` and `residentState`: status, label, message,
@@ -61,23 +82,32 @@ router queue longer than `streamIdleTimeoutMs` is therefore never abandoned.
 
 Startup never fails because of router state. Only invalid local settings stop
 `scripts/migrate-resident-models.mjs --startup`. If the router is unreachable,
-Harness starts with its stored settings, marks both models unavailable and
-recovers automatically. The migration also converts old model IDs to service
+Harness starts with its stored settings, marks every resident unavailable and
+recovers automatically. A router whose current configuration offers no `trial`
+service is recorded state and a notice, never a failed update: the migration
+provisions or holds the route, prints
+`trial: unavailable (not offered by the router) [opt-in route; never selected
+automatically]` and exits 0. The migration also converts old model IDs to service
 IDs. It covers the provider map, the saved default, compaction `modelPolicies`
-and any other `provider`/`model` pair of a resident route. Existing sessions
+and any other `provider`/`model` pair of a resident route. No migration case ever
+makes the opt-in route the saved default. Existing sessions
 recorded their route with the old ID. Each one is rewritten to the service ID
 on its next request, and the adapter accepts old IDs for side calls such as
 compaction summaries.
 
-Discovery owns the two resident entries and the recognized retired Daytime
+Discovery owns the three resident entries and the recognized retired Daytime
 profile only. External providers (including Amazon Bedrock), credentials,
 external default selections, unrelated settings and session history survive.
-Every router request and discovery fetch sends
+A deployment whose `router-model-discovery` `providers` list still names only
+`local-ollama` and `local-everyday` gains the opt-in route without a settings
+edit; a list that is a deliberate subset, or that already names the trial, is
+obeyed exactly. Every router request and discovery fetch sends
 `X-Client-Name: deepseek-harness/<instance>`. The instance comes from
 `HARNESS_CLIENT_INSTANCE`, else `HARNESS_TLS_IP`, else the container hostname.
 The `router-model-discovery` setting `clientInstance` overrides it. Transitions
 are logged to the Harness log and the container log, for example
-`router-model-discovery: nighttime: available → offline (flash-next-solo-128k)`.
+`router-model-discovery: nighttime: available → offline (flash-next-solo-128k)`
+or `router-model-discovery: trial: unavailable → available`.
 
 A pre-contract router without `/v1/router/capabilities`, such as the vendored
 managed-mode router, is read from its `/v1/models` listing. `local-active`
@@ -219,11 +249,17 @@ reviewed compatible release through the authorized deployment workflow.
 
 Host: `./scripts/check.sh --host` runs the router contract tests
 (`tests/router-model-discovery.test.mjs`, `tests/router-provider-remote.test.mjs`,
+`tests/resident-settings-migration.test.mjs`, `tests/local-inference-contract.test.mjs`,
 `tests/dsh-resident-availability.test.mjs`, `tests/dsh-llm-pi-ai-patch.test.mjs`,
 `tests/llm-router-contract.test.mjs`, and `tests/router-client-wire.test.mjs` when a
 patched runtime is available) against synthetic paired, solo, unhealthy,
-incomplete, draining, unreachable and changing documents, plus a fake event
-stream. Set `DSH_RUNTIME_ROOT` to a host-compatible pinned Harness runtime to
+incomplete, draining, unreachable and changing documents, plus three-service
+documents in which the opt-in trial is offered, absent, or stopped by the active
+configuration, and a fake event stream. They assert that an absent or stopped
+trial is held with its own state, that its limits and text-only modality come
+from its own metadata, that no migration case makes it the default, and that
+verifiers list and state-check it without ever selecting it or sending inference
+through it. Set `DSH_RUNTIME_ROOT` to a host-compatible pinned Harness runtime to
 run YAML migration tests; they are mandatory in the packaged CI runtime
 (`DSH_TEST_HARNESS=1`) and must not silently skip there.
 

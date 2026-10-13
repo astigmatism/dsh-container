@@ -12,6 +12,17 @@ Discovery reads `/v1/router/capabilities` and `/v1/router/events` instead of
 startup or verification. The IDs and the all-or-nothing validation described
 below are no longer current.
 
+**A third resident route was added on 2026-10-13**: provider `local-trial`,
+service `trial`. It is opt-in — never a default, never a fallback target, never
+selected by a migration or a verifier, and never left automatically — it is
+text-only with limits from its own router metadata, and a human selection is the
+only way onto it. Discovery and the startup migration provision and hold the
+route, pickers and deployment verification list and state-check it, and no
+request is ever sent through it by an automated check. A router configuration
+that does not offer it leaves the route held with its reason recorded; the
+update still succeeds. [optional residents](optional-residents.md) is the
+current reference for all three residents.
+
 This Harness change replaces historical router-profile assertions with shared,
 validated discovery and preserves explicit DSH reasoning choices. It supports
 legacy alias-only catalogs, canonical model IDs with alias metadata, and the

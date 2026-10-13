@@ -1,21 +1,60 @@
 /** Resident model discovery under the LLM Router client contract, version 1.
  *
  * docs/llm-router-contract.md is authoritative. Harness sends only the stable
- * service IDs `daytime` and `nighttime`, reads `/v1/router/capabilities` at
- * startup, follows `/v1/router/events` for its lifetime and polls while the
+ * service IDs `daytime`, `nighttime` and `trial`, reads `/v1/router/capabilities`
+ * at startup, follows `/v1/router/events` for its lifetime and polls while the
  * stream is down. Each service is evaluated on its own; one model's state never
  * blocks updates to the other. Fallback is deliberately disabled (§5): an
  * unusable model stays visible, is labelled with exactly one state and fails
  * fast at dispatch, while a draining router makes requests wait.
+ *
+ * `trial` is opt-in (OPT_IN_SERVICES): the owner added it on 2026-10-13 for a
+ * temporary AI Runtime configuration. It is never a default, never inherited
+ * when another resident is offline, and never a fallback target. A session
+ * reaches it only when a human selects it, and then stays there or fails.
  */
 import { hostname } from "node:os";
 
 export const name = "router-model-discovery";
 
 /** Provider routes Harness owns, and the stable router service each one sends. */
-export const RESIDENT_SERVICES = Object.freeze({ "local-ollama": "daytime", "local-everyday": "nighttime" });
+export const RESIDENT_SERVICES = Object.freeze({ "local-ollama": "daytime", "local-everyday": "nighttime", "local-trial": "trial" });
 const DEFAULT_PROVIDERS = Object.keys(RESIDENT_SERVICES);
-const SERVICE_LABELS = Object.freeze({ daytime: "Daytime", nighttime: "Nighttime" });
+export const SERVICE_LABELS = Object.freeze({ daytime: "Daytime", nighttime: "Nighttime", trial: "Trial" });
+/**
+ * Services no automated path may select (the owner's rule, 2026-10-13). They
+ * are never a default, never inherit another resident's state, never a fallback
+ * target, and never picked by migration or verification. A human selects them,
+ * or they stay unused.
+ */
+export const OPT_IN_SERVICES = Object.freeze(["trial"]);
+/** Providers whose service is opt-in, in RESIDENT_SERVICES order. */
+export const OPT_IN_PROVIDERS = Object.freeze(DEFAULT_PROVIDERS.filter(provider => OPT_IN_SERVICES.includes(RESIDENT_SERVICES[provider])));
+/** The opt-in route, named here so its special cases read clearly. */
+const TRIAL_PROVIDER = "local-trial";
+/** The residents every release since service IDs managed, before the trial existed. */
+const LEGACY_RESIDENT_PROVIDERS = Object.freeze(["local-ollama", "local-everyday"]);
+/** Whether only a human selection may put a session on this service. */
+export function isOptInService(service) { return OPT_IN_SERVICES.includes(service); }
+/** The picker's fixed name for a service, used when the router publishes none. */
+export function serviceLabel(service) { return SERVICE_LABELS[service] ?? service; }
+/**
+ * The providers this release manages, given the plugin's `providers` config.
+ * A list written before the opt-in route existed names exactly the two residents
+ * that release shipped; such a deployment gains the route without a settings
+ * edit, which is the point of the release. A genuine subset, or a list that
+ * already names the trial, is obeyed exactly. Managing a route only discovers
+ * and labels it: an opt-in service stays unreachable until a human selects it.
+ */
+export function resolveProviderList(configuredProviders) {
+  const configured = Array.isArray(configuredProviders) ? configuredProviders.filter(nonEmptyString) : [];
+  let providers = configured.length ? configured.filter(provider => Object.hasOwn(RESIDENT_SERVICES, provider)) : DEFAULT_PROVIDERS;
+  if (configured.length && providers.length === LEGACY_RESIDENT_PROVIDERS.length &&
+      providers.every(provider => LEGACY_RESIDENT_PROVIDERS.includes(provider)) && !providers.includes(TRIAL_PROVIDER)) {
+    providers = [...providers, TRIAL_PROVIDER];
+  }
+  return providers;
+}
 /** Exactly one of these is shown for each resident model. */
 export const RESIDENT_STATUSES = Object.freeze(["available", "offline", "unavailable", "switching", "incomplete"]);
 /** States in which dispatch fails at once. A switching router makes requests wait instead. */
@@ -154,6 +193,10 @@ export function legacyCapabilities(body) {
     const metadata = plainObject(row.x_ollama_router) ? row.x_ollama_router : {};
     if (metadata.alias === true && canonical.has(metadata.upstream_model)) continue;
     const aliases = [...new Set([...(Array.isArray(metadata.aliases) ? metadata.aliases.filter(nonEmptyString) : []), ...(metadata.alias === true ? [row.id] : [])])];
+    // A pre-contract listing names only the two services that existed before
+    // the contract. Any other row, including a `trial` row, stays unaddressable
+    // and is dropped: a route is never created for a service the router does
+    // not offer, and the opt-in trial is never reached through legacy aliasing.
     const service = [row.id, ...aliases].includes("daytime") || [row.id, ...aliases].includes("local-active") ? "daytime"
       : [row.id, ...aliases].includes("nighttime") ? "nighttime" : undefined;
     if (!service) continue;
@@ -372,7 +415,7 @@ export function residentCapabilities({ model, metadata }) {
 
 /** The single picker label for a resident in its current state. */
 export function residentLabel(state, capabilities = state?.capabilities) {
-  const label = SERVICE_LABELS[state?.service] ?? state?.service ?? "Model";
+  const label = serviceLabel(state?.service) ?? "Model";
   if (state?.status === "available") {
     const name = capabilities?.displayName ?? label;
     return state.nsfw === true ? `${name} · NSFW` : name;
@@ -383,10 +426,15 @@ export function residentLabel(state, capabilities = state?.capabilities) {
 
 /** The dispatch failure shown when a blocked resident is asked to serve. */
 export function residentMessage(state) {
-  const label = SERVICE_LABELS[state.service] ?? state.service;
-  const advice = state.service === "nighttime"
-    ? "Switch this session to Daytime; Nighttime becomes selectable again automatically when it returns."
-    : `Select another model, or retry when ${label} returns; Harness reconnects automatically.`;
+  const label = serviceLabel(state.service);
+  // The opt-in trial is chosen deliberately, so its advice never suggests
+  // moving to another resident: the session stays on it or fails, and only a
+  // human may move it off. §5 deviation: nothing falls back in either direction.
+  const advice = isOptInService(state.service)
+    ? `${label} is an opt-in model: Harness never selects it and never moves a session off it. Select another model yourself, or retry when it returns.`
+    : state.service === "nighttime"
+      ? "Switch this session to Daytime; Nighttime becomes selectable again automatically when it returns."
+      : `Select another model, or retry when ${label} returns; Harness reconnects automatically.`;
   switch (state.status) {
     case "offline":
       return `${label} is offline in router configuration ${state.configuration ? `"${state.configuration}"` : "(unknown)"}${state.reason ? ` (${state.reason})` : ""}. ${advice}`;
@@ -395,6 +443,9 @@ export function residentMessage(state) {
     case "switching":
       return `The router is switching configuration (${state.reason}); requests to ${label} wait and retry without changing models.`;
     case "unavailable":
+      if (state.reason === "not offered by the router" && isOptInService(state.service)) {
+        return `${label} is unavailable: the router's current configuration does not offer it. ${advice}`;
+      }
       return state.reason === "router unreachable"
         ? `${label} is unavailable: the router is unreachable. ${advice}`
         : `${label} is unavailable: ${state.reason}. ${advice}`;
@@ -454,8 +505,12 @@ export function planResidentProvider({ name: provider, state, stored, resolved, 
   const service = RESIDENT_SERVICES[provider];
   let source = plainObject(stored) ? stored : plainObject(resolved) ? resolved : undefined;
   if (!source) {
-    // Provision a missing Nighttime route from the working Daytime route,
-    // without inheriting Daytime's limits.
+    // Provision a missing route from the working Daytime route: the client
+    // policy (credential reference, headers, timeouts, cache, retry, effort and
+    // base URL) only. No limits and no input modalities are inherited, so a new
+    // opt-in trial route never borrows Daytime's image modality or context; the
+    // trial's own serving profile is text-only. The serving model's metadata
+    // sets them on the first available revision; until then the route is blocked.
     if (!plainObject(daytime)) throw new Error(`cannot provision "${provider}" without local-ollama`);
     source = Object.fromEntries(["apiKeyEnv", "headers", "streamIdleTimeoutMs", "cacheRetention", "retryPolicy", "reasoning", "baseURL"]
       .filter(key => daytime[key] !== undefined).map(key => [key, clone(daytime[key])]));
@@ -592,6 +647,13 @@ async function migrateDefaultSelection(settingsService, managed) {
   } else if (plainObject(selected)) {
     const migrated = migrateResidentRoute(selected, managed);
     if (migrated !== selected) nextSelection = migrated;
+  }
+  // A migration only ever rewrites the model of the stored provider, or retires
+  // a route onto Daytime. It must never introduce an opt-in route: a session
+  // reaches the trial only when a human selects it, and no fresh install,
+  // settings restore or offline-Daytime state may select it here.
+  if (nextSelection && isOptInService(RESIDENT_SERVICES[nextSelection.provider]) && nextSelection.provider !== selected?.provider) {
+    throw new Error(`refusing to move the default selection onto opt-in provider ${nextSelection.provider}`);
   }
   if (ownedRetired) await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", "local-ollama-256k"] }]);
   if (nextSelection) {
@@ -954,8 +1016,7 @@ export class ResidentDiscovery {
 
 /** Cordis plugin entry point. */
 export function apply(ctx, config = {}) {
-  const configured = Array.isArray(config.providers) ? config.providers.filter(nonEmptyString) : [];
-  const providers = configured.length ? configured.filter(provider => Object.hasOwn(RESIDENT_SERVICES, provider)) : DEFAULT_PROVIDERS;
+  const providers = resolveProviderList(config.providers);
   const configuredInterval = Number(config.pollIntervalMs);
   const pollIntervalMs = Number.isFinite(configuredInterval)
     ? Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(configuredInterval))

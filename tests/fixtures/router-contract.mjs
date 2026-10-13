@@ -9,6 +9,10 @@ import http from 'node:http';
 export const DAYTIME_ID = 'fixture-daytime-27b-q6_k_xl';
 export const NIGHTTIME_ID = 'fixture-nighttime-27b-abliterated-q6_k';
 export const NIGHTTIME_MTP3_ID = 'fixture-nighttime-27b-abliterated-q6_k-mtp3';
+/** The canonical model behind the opt-in `trial` service in one AI Runtime configuration. */
+export const TRIAL_ID = 'fixture-qwen3.8-flash-next-strata';
+/** A served model that offers neither the `trial` service nor its alias. */
+export const UNADDRESSED_ID = 'fixture-strata-experiment-uncatalogued';
 
 export function reasoning({ unrestricted = true } = {}) {
   const max = unrestricted ? null : 8192;
@@ -25,16 +29,18 @@ export function reasoning({ unrestricted = true } = {}) {
 }
 
 /** One `models[]` entry; `metadata` mirrors x_ollama_router schema v2. */
-export function residentModel({ service = 'daytime', id = service === 'daytime' ? DAYTIME_ID : NIGHTTIME_ID,
-  contextWindow = service === 'daytime' ? 163840 : 98304, slots = 1, vision = service === 'daytime',
-  displayName = service === 'daytime' ? 'Qwen3.8 27B Q6_K (160K)' : 'Qwen3.8 27B Abliterated Q6_K (96K)',
+export function residentModel({ service = 'daytime', aliases = service === 'daytime' ? ['local-active', 'daytime'] : [service],
+  id = service === 'daytime' ? DAYTIME_ID : service === 'trial' ? TRIAL_ID : NIGHTTIME_ID,
+  contextWindow = service === 'daytime' || service === 'trial' ? 163840 : 98304, slots = 1, vision = service === 'daytime',
+  displayName = service === 'daytime' ? 'Qwen3.8 27B Q6_K (160K)'
+    : service === 'trial' ? 'Qwen3.8 Flash-Next (Strata trial) (160K)' : 'Qwen3.8 27B Abliterated Q6_K (96K)',
   nsfw = service === 'nighttime', available = true, reserve = 1024, unrestricted = true } = {}) {
-  const aliases = service === 'daytime' ? ['local-active', 'daytime'] : ['nighttime'];
   const input = vision ? ['text', 'image'] : ['text'];
   const capabilities = vision ? ['completion', 'thinking', 'tools', 'vision'] : ['completion', 'thinking', 'tools'];
+  const capabilityScore = service === 'daytime' ? 68.3 : service === 'trial' ? 61.4 : 64.9;
   return {
     id, service, display_name: displayName, aliases, available, slots, context_window: contextWindow,
-    input_modalities: input, capabilities, nsfw, capability_score: service === 'daytime' ? 68.3 : 64.9,
+    input_modalities: input, capabilities, nsfw, capability_score: capabilityScore,
     metadata: {
       schema_version: 2, alias: false, backend_kind: 'llama_cpp', upstream_model: id, display_name: displayName,
       context_window: contextWindow, total_context_window: contextWindow * slots, context_safety_reserve: reserve,
@@ -43,7 +49,7 @@ export function residentModel({ service = 'daytime', id = service === 'daytime' 
       max_output_tokens: unrestricted ? null : 8192, default_output_tokens: unrestricted ? null : 1024,
       health: { available, status: available ? 200 : 503 }, aliases, nsfw,
       input_modalities: input, capabilities, reasoning: reasoning({ unrestricted }),
-      capability_score: { value: 68.3, version: 1, basis: 'computed' },
+      capability_score: { value: capabilityScore, version: 1, basis: 'computed' },
       live: available ? { slots, slot_context_window: contextWindow, vision } : null,
       complete: true, warnings: [],
     },
@@ -67,6 +73,23 @@ export function capabilitiesDocument({ models = [residentModel(), residentModel(
 }
 
 export const paired = (overrides = {}) => capabilitiesDocument(overrides);
+/** A document for all three resident services: two permanent residents and the opt-in trial. */
+export const trio = (overrides = {}) => capabilitiesDocument({
+  models: [residentModel(), residentModel({ service: 'nighttime' }), residentModel({ service: 'trial' })], ...overrides,
+});
+/** One `offline_services` row: the router names the stopped model and why it stopped. */
+export function offlineRow(service, { id = service === 'trial' ? TRIAL_ID : service === 'daytime' ? DAYTIME_ID : NIGHTTIME_ID,
+  displayName = service === 'trial' ? 'Qwen3.8 Flash-Next (Strata trial) (160K)'
+    : service === 'daytime' ? 'Qwen3.8 27B Q6_K (160K)' : 'Qwen3.8 27B Abliterated Q6_K (96K)',
+  reason = 'exclusive_configuration' } = {}) {
+  return { model: id, aliases: [service], display_name: displayName, role: service, reason };
+}
+/** The AI Runtime configuration the trial exists for: only the trial serves, and
+ * the permanent residents are simply absent from the catalog (not offline rows). */
+export const strata = (overrides = {}) => capabilitiesDocument({
+  models: [residentModel({ service: 'trial' })], offline: [offlineRow('nighttime')],
+  configuration: { id: 'flash-next-strata-160k', exclusive: true }, ...overrides,
+});
 export const solo = (overrides = {}) => capabilitiesDocument({
   models: [residentModel({ contextWindow: 131072, displayName: 'Qwen3.8 Flash-Next (128K)' })],
   offline: [{ model: NIGHTTIME_ID, aliases: ['nighttime'], display_name: 'Qwen3.8 27B Abliterated Q6_K (96K)', role: 'everyday', reason: 'exclusive_configuration' }],

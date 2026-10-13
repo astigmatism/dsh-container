@@ -43,17 +43,36 @@ const residents = [primaryId, secondaryId].map((id, index) => {
     context_window: 131072, input_modalities: metadata.input_modalities, capabilities: metadata.capabilities,
     nsfw: index === 1, capability_score: index ? 60 : 70, metadata };
 });
+// The third resident is the opt-in trial: text-only, and only ever selected by
+// a human. In the daytime-only qualification the router stops offering it, which
+// must leave the route held and the update successful.
+const trialId = 'fixture-trial-q4';
+const trialMetadata = {
+  schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: trialId,
+  aliases: ['trial'], display_name: 'Trial fixture', context_window: 131072, context_safety_reserve: 1024,
+  active_request_limit: 1, output_policy: 'unrestricted', max_output_tokens: null, default_output_tokens: null,
+  input_modalities: ['text'], capabilities: ['completion', 'thinking'],
+  health: { available: true, status: 200 }, nsfw: false, reasoning,
+};
+const allResidents = [...residents, { id: trialId, service: 'trial', display_name: trialMetadata.display_name,
+  aliases: trialMetadata.aliases, available: true, slots: 1, context_window: 131072,
+  input_modalities: trialMetadata.input_modalities, capabilities: trialMetadata.capabilities, nsfw: false,
+  capability_score: 55, metadata: trialMetadata }];
 let nightOnline = !daytimeOnly;
+let trialOnline = !daytimeOnly;
 let revision = 0;
 const subscribers = new Set();
 function capabilities() {
-  const models = nightOnline ? residents : residents.slice(0, 1);
+  const models = allResidents.filter((model, index) => index === 0 || (index === 1 ? nightOnline : trialOnline));
+  const offline = [];
+  if (!nightOnline) offline.push({ model: secondaryId, aliases: ['nighttime'], display_name: 'Secondary fixture', role: 'everyday', reason: 'exclusive_configuration' });
+  if (!trialOnline) offline.push({ model: trialId, aliases: ['trial'], display_name: 'Trial fixture', role: 'trial', reason: 'exclusive_configuration' });
   return {
     object: 'router.capabilities', schema_version: 1, revision: `fixture-${revision}`, complete: true, warnings: [],
     router: { name: 'fixture-router', version: '0', accepting_requests: true, draining: false, drain_reason: null, maintenance: false },
     configuration: { id: nightOnline ? 'fixture-paired' : 'fixture-solo', exclusive: !nightOnline },
     default_model: primaryId, models,
-    offline_services: nightOnline ? [] : [{ model: secondaryId, aliases: ['nighttime'], display_name: 'Secondary fixture', role: 'everyday', reason: 'exclusive_configuration' }],
+    offline_services: offline,
     ids: Object.fromEntries(models.flatMap(model => [[model.id, model.id], ...model.aliases.map(alias => [alias, model.id])])),
   };
 }
@@ -195,7 +214,7 @@ try {
       assert.ok(current['llm-pi-ai'].providers['local-everyday']);
       assert.equal(current['llm-pi-ai'].providers['local-ollama-256k'], undefined);
       assert.deepEqual(current['agent-default-model'], expectedDefault);
-      assert.deepEqual(Object.keys(current['llm-pi-ai'].providers).sort(), [...(daytimeOnly ? ['amazon-bedrock'] : []), 'local-everyday', 'local-ollama', 'unrelated-fixture']);
+      assert.deepEqual(Object.keys(current['llm-pi-ai'].providers).sort(), [...(daytimeOnly ? ['amazon-bedrock'] : []), 'local-everyday', 'local-ollama', 'local-trial', 'unrelated-fixture']);
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].apiKeyEnv, 'STARTUP_FIXTURE_KEY');
       assert.equal(current['llm-pi-ai'].providers['local-ollama'].reasoning, 'medium');
       if (!daytimeOnly) assert.equal(current['llm-pi-ai'].providers['local-everyday'].reasoning, 'medium');
@@ -203,9 +222,27 @@ try {
         assert.equal(current['llm-pi-ai'].providers['local-everyday'].residentUnavailable, true);
         assert.equal(current['llm-pi-ai'].providers['local-everyday'].residentState.label, 'Nighttime — offline (fixture-solo)');
       }
+      // The opt-in route is provisioned by the same migration, text-only, and
+      // never becomes the default. When the router stops offering it the route is
+      // held with a stated reason, which is not a failed update.
+      const trial = current['llm-pi-ai'].providers['local-trial'];
+      assert.deepEqual(trial.models.map(row => row.id), ['trial']);
+      assert.equal(current['agent-default-model'].provider === 'local-trial', false);
+      assert.equal(current['agent-default-model'].model === 'trial', false);
+      if (!daytimeOnly) {
+        assert.equal(trial.residentUnavailable, false);
+        assert.equal(trial.residentState.status, 'available');
+        assert.deepEqual(trial.models[0].input, ['text'], 'the opt-in route never inherits Daytime modalities');
+        assert.equal(trial.models[0].contextWindow, 131072 - 1024);
+      } else {
+        assert.equal(trial.residentUnavailable, true);
+        assert.equal(trial.residentState.status, 'offline');
+        assert.equal(trial.residentState.label, 'Trial — offline (fixture-solo)');
+        assert.equal(trial.models[0].input, undefined, 'a held opt-in route keeps no borrowed limits');
+      }
       // Contract §3: resident routes persist service IDs only, never canonical IDs.
-      const residents = JSON.stringify([current['agent-default-model'], current['llm-pi-ai'].providers['local-ollama'], current['llm-pi-ai'].providers['local-everyday']]);
-      assert.doesNotMatch(residents, /fixture-(?:daytime|nighttime)-q|local-active/);
+      const residents = JSON.stringify([current['agent-default-model'], current['llm-pi-ai'].providers['local-ollama'], current['llm-pi-ai'].providers['local-everyday'], trial]);
+      assert.doesNotMatch(residents, /fixture-(?:daytime|nighttime|trial)-q|local-active/);
       assert.deepEqual(current['llm-pi-ai'].providers['local-ollama'].models.map(row => row.id), ['daytime']);
       assert.deepEqual(current['llm-pi-ai'].providers['local-everyday'].models.map(row => row.id), ['nighttime']);
       const migratedPath = path.join(runtime, 'profiles/web/cordis.patch.yml');
@@ -259,6 +296,10 @@ try {
     assert.equal(tokenIndexAfter.ino, tokenIndexBefore.ino, 'disabled Token index was not replaced');
   }
   console.log('Settings saved through the rc2 API, model choice, plugin preferences and credential references survived two complete entrypoint restarts; Token stayed unloaded and its index stayed unchanged.');
+  // No automated path may select the opt-in route, and a router that serves
+  // Daytime never leaves a "not offered" line behind for it.
+  assert.equal(inferenceRequests.includes('trial'), false, 'an opt-in route was selected without a human');
+  assert.doesNotMatch(bootLog, /daytime: .*not offered by the router/, 'Daytime is offered by this fixture configuration');
 
 } catch (error) {
   // This isolated home contains synthetic settings only; strip launch URLs.

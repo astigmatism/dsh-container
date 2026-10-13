@@ -108,7 +108,7 @@ export function routerFailureOf(message, text) {
   if (error === undefined) return undefined;
   try { globalThis[ROUTER_CONTRACT_HUB]?.report?.(message?.provider, { code: error.code, status: error.status, message: error.detail }); } catch {}
   const service = typeof message?.model === "string" ? message.model : "model";
-  const label = { daytime: "Daytime", nighttime: "Nighttime" }[service] ?? JSON.stringify(service);
+  const label = { daytime: "Daytime", nighttime: "Nighttime", trial: "Trial" }[service] ?? JSON.stringify(service);
   const status = error.status === undefined ? {} : { status: error.status };
   const detail = typeof error.detail === "string" && error.detail.length > 0 && error.detail !== text ? ` Router: ${error.detail}` : "";
   switch (error.code) {

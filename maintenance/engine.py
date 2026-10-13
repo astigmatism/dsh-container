@@ -70,7 +70,14 @@ def verify_application(manifest, by_service):
 
 def probe_containers(manifest, model, root):
     rows = validate_containers(manifest, model, root)
-    by_service = {row['Config']['Labels']['com.docker.compose.service']: row for row in rows}
+    by_service = {}
+    for row in rows:
+        service = row['Config']['Labels']['com.docker.compose.service']
+        # A stranded exited container registered to the same compose service
+        # (for example a one-shot cutover helper) must not shadow the
+        # container that actually serves the service.
+        if row['State']['Running'] or service not in by_service:
+            by_service[service] = row
     for service, config in model['services'].items():
         row = by_service.get(service)
         require(row is not None, 'A deployed service is missing')

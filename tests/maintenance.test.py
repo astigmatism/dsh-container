@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from maintenance.common import Failure, LABEL, REPOSITORY, atomic_json, run
 from maintenance.contract import validate_config, validate_manifest, validate_deployment, configuration_bindings, verify_portal
-from maintenance.engine import Updater, install_labels, pinned_bases, verify_recovered_release
+from maintenance.engine import Updater, install_labels, pinned_bases, probe_containers, verify_recovered_release
 from maintenance import recovery
 from maintenance.qualification import registered_files
 from maintenance.install import prepare
@@ -173,6 +173,27 @@ class ContractTests(Fixture):
         (self.root / 'Dockerfile').write_text('FROM node:latest\n')
         (self.root / 'ollama-router/Dockerfile').write_text('FROM node:latest\n')
         with self.assertRaises(Failure): pinned_bases(self.root)
+
+    def test_stranded_exited_container_cannot_shadow_running_service(self):
+        service_image = self.model['services']['application']['image']
+        running = {'Id': 'live-application', 'Image': service_image,
+                   'Config': {'Labels': {'com.docker.compose.service': 'application'}},
+                   'State': {'Running': True, 'Status': 'running', 'Health': {'Status': 'healthy'}}}
+        stranded = dict(running, Id='stranded-cutover',
+                        Config={'Labels': {'com.docker.compose.service': 'application'}},
+                        State={'Running': False, 'Status': 'exited', 'ExitCode': 0})
+        edge = {'Id': 'live-edge', 'Image': self.model['services']['edge']['image'],
+                'Config': {'Labels': {'com.docker.compose.service': 'edge'}},
+                'State': {'Running': True, 'Status': 'running', 'Health': {'Status': 'healthy'}}}
+        with patch('maintenance.engine.validate_containers', return_value=[running, edge, stranded]), \
+             patch('maintenance.engine.inspect', side_effect=lambda kind, identity: {'Id': identity}):
+            by_service = probe_containers(self.manifest, self.model, self.root)
+        self.assertEqual(by_service['application']['Id'], 'live-application')
+        self.assertEqual(by_service['edge']['Id'], 'live-edge')
+        with patch('maintenance.engine.validate_containers', return_value=[stranded, edge]), \
+             patch('maintenance.engine.inspect', side_effect=lambda kind, identity: {'Id': identity}), \
+             self.assertRaisesRegex(Failure, 'not healthy'):
+            probe_containers(self.manifest, self.model, self.root)
 
 
 class RecoveryTests(Fixture):

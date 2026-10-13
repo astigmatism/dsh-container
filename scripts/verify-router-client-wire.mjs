@@ -117,7 +117,19 @@ try {
     if (reported) assert.deepEqual(reports.map(row => [row.provider, row.code]), [[model.provider, reported]], `${label}: discovery hub report`);
     if (expected === 'MODEL_UNAVAILABLE') assert.match(result.finish.reason.failure.message, /Switch this session to another model/);
   }
-  console.log('Router error codes classify by error.code before HTTP status, inside and outside streams, and reach discovery.');
+  // §3 (contract 1.2): an omitted `model` is answered by the default of the
+  // active configuration, which the contract does not promise is `daytime` —
+  // while a trial configuration is selected it is the trial. A client that must
+  // not be served by a particular model MUST send an ID, so every request Harness
+  // owns names its model. Assert it for every recorded request, not just one.
+  assert.ok(seen.length >= 12, `fixture recorded ${seen.length} requests; expected every scenario to send one`);
+  for (const [index, request] of seen.entries()) {
+    assert.ok(typeof request.body?.model === 'string' && request.body.model.length > 0,
+      `request ${index + 1} (${JSON.stringify(request.body ?? {}).slice(0, 80)}) sends no model ID`);
+    assert.equal(request.body.model, model.id, `request ${index + 1} sends the route's service ID`);
+    assert.equal(request.headers['x-client-name'], CLIENT, `request ${index + 1} identifies Harness`);
+  }
+  console.log(`Router error codes classify by error.code before HTTP status, inside and outside streams, and reach discovery; all ${seen.length} requests named their model and identified the client.`);
 } finally {
   delete globalThis[HUB];
   server.closeAllConnections();

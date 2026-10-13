@@ -5,11 +5,14 @@ import test from 'node:test';
 
 const text = await readFile(new URL('../docs/llm-router-contract.md', import.meta.url), 'utf8');
 const MAP = '## How DeepSeek Harness upholds this contract';
-// sha256 of llm-router docs/CLIENT_CONTRACT.md at d5edba88089070e82bb72600e860fd204df88481.
-const CONTRACT_V1_SHA256 = '5314c4ac4ec09e3bbe51816883077c28cff2c4538a09a64fa71961cbb432121f';
+// sha256 of llm-router docs/CLIENT_CONTRACT.md at 0b1668669214a7c67cbba8008ddc98ffc1e14b72.
+// The 1.2 text was copied from that commit and the SHA recomputed from the raw URL
+// https://raw.githubusercontent.com/astigmatism/llm-router/0b1668669214a7c67cbba8008ddc98ffc1e14b72/docs/CLIENT_CONTRACT.md
+// which is byte-identical to the commit's blob.
+const CONTRACT_SHA256 = '8d93fd81520bef2779ce7b57eb8555c51a1c8cb8e46a9264c70e62cdbc84721e';
 const HEADER = [
-  '> **Vendored copy — do not edit.** LLM Router client contract, version 1, copied from',
-  '> llm-router commit `d5edba88089070e82bb72600e860fd204df88481`. Canonical source:',
+  '> **Vendored copy — do not edit.** LLM Router client contract, version 1.2, copied from',
+  '> llm-router commit `0b1668669214a7c67cbba8008ddc98ffc1e14b72`. Canonical source:',
   '> https://github.com/astigmatism/llm-router/blob/main/docs/CLIENT_CONTRACT.md',
   '> Replace this copy only when the router maintainer announces a new contract version.',
   '',
@@ -20,9 +23,9 @@ test('the vendored contract is verbatim under its §11 header', () => {
   const end = text.indexOf(`\n${MAP}\n`);
   assert.ok(end > 0, 'the conformance map follows the copy');
   const vendored = text.slice(HEADER.length, end);
-  assert.equal(createHash('sha256').update(vendored).digest('hex'), CONTRACT_V1_SHA256,
+  assert.equal(createHash('sha256').update(vendored).digest('hex'), CONTRACT_SHA256,
     'never edit the vendored text; replace it only for a new contract version');
-  assert.match(vendored, /^# LLM Router client contract\n\n\*\*Version 1 · 2026-10-07\.\*\*/);
+  assert.match(vendored, /^# LLM Router client contract\n\n\*\*Version 1\.2 · 2026-10-13\.\*\*/);
 });
 
 test('the conformance map covers every §13 item and records the §5 deviation', () => {
@@ -30,7 +33,7 @@ test('the conformance map covers every §13 item and records the §5 deviation',
   const map = text.slice(text.indexOf(`\n${MAP}\n`));
   const checklist = contract.slice(contract.indexOf('## 13. Conformance checklist'), contract.indexOf('## 14. References'));
   const items = [...checklist.matchAll(/^- \[ \] (.+)$/gm)].map(match => match[1]);
-  assert.equal(items.length, 11);
+  assert.equal(items.length, 12);
   const rows = [...map.matchAll(/^\| (.+?) \| .+ \| .+ \| .+ \|$/gm)].map(match => match[1]);
   for (const item of items) assert.ok(rows.includes(item), `conformance map row for: ${item}`);
   for (const row of map.matchAll(/^\| (?!§13 item|---)(.+?) \| (.+) \| (.+) \| (.+) \|$/gm)) {

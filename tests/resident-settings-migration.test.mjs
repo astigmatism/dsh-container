@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fakeRouter, paired, solo, trio } from './fixtures/router-contract.mjs';
+import { fakeRouter, paired, solo, strata, trio } from './fixtures/router-contract.mjs';
 
 const runtime = process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh';
 let YAML;
@@ -182,6 +182,37 @@ test('the opt-in trial becomes available from its own metadata and disappears wi
   assert.equal(config(await rows(file), 'agent-default-model').provider, 'local-ollama');
   assert.equal(config(await rows(file), 'llm-pi-ai').providers['local-ollama'].residentState.status, 'available');
   assert.equal(config(await rows(file), 'llm-pi-ai').providers['local-everyday'].residentState.status, 'available');
+});
+
+// Contract 1.2 §3: a published configuration can declare no `daytime` at all, and
+// does not list it in `offline_services` either. The route is held with that
+// reason; the update still exits 0, the route keeps its own stored limits, and
+// the only model actually serving — the opt-in trial — is never taken up.
+test('a configuration with no daytime at all holds the route, exits 0, and never reaches for the trial', { skip: !YAML }, async t => {
+  const router = await fakeRouter(t, strata());
+  const { home, file } = await fixture(t, router.baseURL);
+  const before = await rows(file);
+  const result = await launch(home);
+  assert.match(result.stdout, /daytime: unavailable \(not offered by the router\)/);
+  assert.match(result.stdout, /trial: available/);
+  const migrated = await rows(file);
+  const providers = config(migrated, 'llm-pi-ai').providers;
+  const day = providers['local-ollama'];
+  assert.equal(day.residentUnavailable, true);
+  assert.equal(day.residentState.status, 'unavailable');
+  assert.equal(day.residentState.reason, 'not offered by the router');
+  assert.equal(day.residentState.service, 'daytime');
+  assert.deepEqual(day.models.map(row => row.id), ['daytime'], 'the held route still names the service it waits for');
+  // No other model's numbers fill the gap: the trial's 160K context and text-only
+  // modalities stay on the trial's own route.
+  assert.equal(day.models[0].contextWindow, config(before, 'llm-pi-ai').providers['local-ollama'].models[0].contextWindow);
+  assert.deepEqual(providers['local-trial'].models[0].input, ['text']);
+  // The trial is the only model serving this configuration, and it is still not a
+  // default: the saved selection stays on the held Daytime route.
+  const selection = config(migrated, 'agent-default-model');
+  assert.equal(selection.provider, 'local-ollama');
+  assert.equal(selection.model, 'daytime');
+  assert.doesNotMatch(await fs.readFile(file, 'utf8'), /fixture-|local-active|qwen3\.8/);
 });
 
 // A host runtime installed by an earlier image carries an older availability

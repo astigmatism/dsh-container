@@ -1,4 +1,4 @@
-/** Resident model discovery under the LLM Router client contract, version 1.
+/** Resident model discovery under the LLM Router client contract, version 1.2.
  *
  * docs/llm-router-contract.md is authoritative. Harness sends only the stable
  * service IDs `daytime`, `nighttime` and `trial`, reads `/v1/router/capabilities`
@@ -182,7 +182,12 @@ export async function fetchCapabilities(baseURL, { etag, clientName = routerClie
 
 /**
  * Synthesize a capabilities document from a pre-contract `/v1/models` listing.
- * `local-active` is the legacy alias of `daytime` (§3). The result is marked
+ * Such a router runs the legacy single-marker mode, where the reserved alias
+ * `local-active` is not a service but names the one model the router has active
+ * (§3, 1.2). This deployment sends that traffic to its Daytime route, so the
+ * active model is read as the `daytime` service — a choice about the managed
+ * topology, not a claim that the alias is an alias of `daytime`; in a published
+ * resident catalog an undeclared `local-active` is a 404. The result is marked
  * `legacy`: such a router publishes no admission state or offline services.
  */
 export function legacyCapabilities(body) {

@@ -1,7 +1,7 @@
 # Resident routes: optional Nighttime, the opt-in Trial, and deployment-local code overrides
 
 Resident routing follows the [LLM Router client contract](llm-router-contract.md)
-(version 1). Its conformance map records how each requirement is met. Daytime
+(version 1.2). Its conformance map records how each requirement is met. Daytime
 is provider `local-ollama` with model `daytime`; Nighttime is provider
 `local-everyday` with model `nighttime`; the Trial is provider `local-trial`
 with model `trial`. These are the router's stable service IDs. The canonical
@@ -110,8 +110,26 @@ are logged to the Harness log and the container log, for example
 or `router-model-discovery: trial: unavailable → available`.
 
 A pre-contract router without `/v1/router/capabilities`, such as the vendored
-managed-mode router, is read from its `/v1/models` listing. `local-active`
-maps to Daytime there, and limits it does not publish are kept as stored.
+managed-mode router, is read from its `/v1/models` listing, and limits it does not
+publish are kept as stored. That router runs the legacy single-marker mode, where
+the reserved alias `local-active` names the one model the router has active; the
+managed topology routes that traffic to Daytime, so the synthesized document reads
+it as the `daytime` service. That is this deployment's choice about which resident
+the active slot feeds. It is not a contract claim: `local-active` is not a service
+and not an alias of `daytime`, it is accepted undeclared only in that legacy mode,
+and in a published resident catalog only the configuration's default entry may
+declare it — anywhere else it is `404 MODEL_NOT_FOUND`. It is never a default and
+never an automatic choice, and it names no `trial`: the synthesis knows only the
+two services that existed before the contract.
+
+Two more cases follow from the same section of the contract. A resident whose
+service the current configuration does not declare, with no `offline_services` row
+for it either, is recorded `unavailable` with reason `not offered by the router` —
+this can now apply to `daytime` as well as to the opt-in `trial`, and it is never
+answered by sending another name. And a model the catalog gives no service ID
+(`service` set to its canonical ID, no service alias, `MODEL_HAS_NO_SERVICE_ID`) is
+never surfaced as a model anyone can choose: candidates are the configured
+residents, never rows of the document.
 
 ## Review and adopt executable overrides
 

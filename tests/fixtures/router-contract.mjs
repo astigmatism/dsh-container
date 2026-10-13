@@ -56,15 +56,39 @@ export function residentModel({ service = 'daytime', aliases = service === 'dayt
   };
 }
 
+/** A catalog entry the configuration gave no service alias (contract 1.2 §4).
+ * `service` is its canonical ID because the router will not invent one, no alias
+ * is declared, and the model carries `MODEL_HAS_NO_SERVICE_ID`. Under §3 such a
+ * model is not selectable and MUST NOT be surfaced as a model a person can choose.
+ */
+export function unaddressedModel({ id = UNADDRESSED_ID, displayName = 'Strata experiment (uncatalogued)',
+  contextWindow = 131072, slots = 1 } = {}) {
+  const metadata = {
+    schema_version: 2, alias: false, backend_kind: 'llama_cpp', upstream_model: id, display_name: displayName,
+    context_window: contextWindow, total_context_window: contextWindow * slots, context_safety_reserve: 1024,
+    active_request_limit: slots, model_context_window: 262144, output_policy: 'unrestricted',
+    max_output_tokens: null, default_output_tokens: null, health: { available: true, status: 200 },
+    aliases: [], nsfw: null, input_modalities: ['text'], capabilities: ['completion', 'thinking'],
+    reasoning: reasoning(), capability_score: { value: 55, version: 1, basis: 'computed' },
+    live: { slots, slot_context_window: contextWindow, vision: false },
+    complete: false, warnings: ['MODEL_HAS_NO_SERVICE_ID'],
+  };
+  return {
+    id, service: id, display_name: displayName, aliases: [], available: true, slots, context_window: contextWindow,
+    input_modalities: ['text'], capabilities: ['completion', 'thinking'], nsfw: null, capability_score: 55, metadata,
+  };
+}
+
 let revisionCounter = 0;
 /** A complete capabilities document. Revision changes with content. */
 export function capabilitiesDocument({ models = [residentModel(), residentModel({ service: 'nighttime' })],
   offline = [], configuration = { id: 'qwen27b-q6k-with-nighttime', exclusive: false },
-  accepting = true, draining = !accepting, maintenance = false, schemaVersion = 1, revision } = {}) {
+  accepting = true, draining = !accepting, maintenance = false, schemaVersion = 1, complete = true,
+  warnings = [], revision } = {}) {
   const ids = Object.fromEntries(models.flatMap(model => [[model.id, model.id], ...model.aliases.map(alias => [alias, model.id])]));
   const document = {
     object: 'router.capabilities', schema_version: schemaVersion, observed_at: '2026-10-07T02:13:28.004Z',
-    complete: true, warnings: [],
+    complete, warnings,
     router: { name: 'llm-router', version: '0.1.0', accepting_requests: accepting, draining, drain_reason: draining ? 'fixture switch' : null, maintenance },
     configuration, default_model: models[0]?.id ?? null, models, offline_services: offline, ids,
   };

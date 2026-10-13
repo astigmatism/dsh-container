@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { capabilitiesDocument, residentModel, paired, trio, strata, solo, draining, offlineRow, legacySettings,
-  settingsService, DAYTIME_ID, NIGHTTIME_ID, NIGHTTIME_MTP3_ID, TRIAL_ID, UNADDRESSED_ID } from "./fixtures/router-contract.mjs";
+import { capabilitiesDocument, residentModel, unaddressedModel, paired, trio, strata, solo, draining, offlineRow,
+  legacySettings, settingsService, DAYTIME_ID, NIGHTTIME_ID, NIGHTTIME_MTP3_ID, TRIAL_ID, UNADDRESSED_ID } from "./fixtures/router-contract.mjs";
 
 const pluginSource = await readFile(new URL("../seed/plugins/dsh-router-model-discovery.js", import.meta.url), "utf8");
 const plugin = await import(`data:text/javascript;base64,${Buffer.from(pluginSource).toString("base64")}`);
@@ -209,6 +209,86 @@ test("a disappeared ID without an offline entry, an invalid document, and an amb
   assert.equal(residentStatus({ object: "router.capabilities" }, "daytime").status, "incomplete");
   const twice = paired({ models: [residentModel(), residentModel({ id: "other", service: "daytime" })] });
   assert.equal(residentStatus(twice, "daytime").status, "incomplete");
+});
+
+test("a model the catalog gives no service ID is never offered, addressed, or persisted (1.2 §3, §4)", async () => {
+  const orphan = unaddressedModel();
+  assert.equal(orphan.service, orphan.id, "such a row is named by its canonical ID because the router will not invent one");
+  assert.deepEqual(orphan.aliases, []);
+  const document = trio({ models: [...trio().models, orphan] });
+  for (const service of ["daytime", "nighttime", "trial"]) {
+    const state = residentStatus(document, service);
+    assert.equal(state.status, "available", service);
+    assert.notEqual(state.served, UNADDRESSED_ID, service);
+  }
+  // The picker offers the three residents whatever the catalog also publishes:
+  // a row nobody addressed cannot appear, cannot be planned into a route, and is
+  // never written to settings.
+  const state = structuredClone(legacySettings("http://router.invalid/v1"));
+  const { errors } = await synchronizeRouterSettings(settingsService(state, [], applyOperation), { document });
+  assert.deepEqual(errors.map(error => [error.provider, error.error.message]), []);
+  assert.deepEqual(Object.keys(state["llm-pi-ai"].providers).sort(), ["custom", "local-everyday", "local-ollama", "local-trial"]);
+  assert.equal(JSON.stringify(state).includes(UNADDRESSED_ID), false, "settings record a model nobody may send");
+  assert.equal(state["agent-default-model"].model, "daytime");
+});
+
+test("CATALOG_HAS_NO_SERVICE_ID holds every resident and is never a Harness failure (1.2 §4)", async () => {
+  const document = capabilitiesDocument({
+    models: [unaddressedModel(), unaddressedModel({ id: "fixture-strata-preview-uncatalogued", displayName: "Strata preview (uncatalogued)" })],
+    complete: false, warnings: ["CATALOG_HAS_NO_SERVICE_ID"],
+  });
+  for (const service of ["daytime", "nighttime", "trial"]) {
+    const state = residentStatus(document, service);
+    assert.equal(state.status, "unavailable", service);
+    assert.equal(state.reason, "not offered by the router", service);
+    assert.equal(state.served, undefined, service);
+    // Never another name, and never the router's default model either.
+    assert.doesNotMatch(JSON.stringify(residentStateRecord(state)), /fixture-|strata/i, service);
+  }
+  const state = structuredClone(legacySettings("http://router.invalid/v1"));
+  const { errors } = await synchronizeRouterSettings(settingsService(state, [], applyOperation), { document });
+  assert.deepEqual(errors.map(error => [error.provider, error.error.message]), [],
+    "a router that publishes nothing addressable is not a failed update");
+  for (const name of ["local-ollama", "local-everyday", "local-trial"]) {
+    const provider = state["llm-pi-ai"].providers[name];
+    assert.equal(provider.residentUnavailable, true, name);
+    assert.equal(provider.residentState.reason, "not offered by the router", name);
+  }
+  assert.notEqual(state["agent-default-model"].provider, "local-trial");
+});
+
+test("MODEL_HAS_NO_SERVICE_ID reaches a resident as its own recorded reason, not as a note (1.2 §4)", () => {
+  const row = residentModel({ service: "nighttime" });
+  row.metadata.warnings = ["MODEL_HAS_NO_SERVICE_ID"];
+  row.metadata.complete = false;
+  const document = paired({ models: [residentModel(), row] });
+  const state = residentStatus(document, "nighttime");
+  assert.equal(state.status, "incomplete");
+  assert.match(state.reason, /MODEL_HAS_NO_SERVICE_ID/);
+  assert.equal(residentLabel(state), "Nighttime — incomplete metadata");
+  // The warning is carried verbatim in the recorded reason; no new field is
+  // invented for it, so there is no second channel for router advice.
+  const record = residentStateRecord(state);
+  assert.deepEqual(Object.keys(record).sort(),
+    ["configuration", "label", "limits", "message", "nsfw", "reason", "service", "status"]);
+  assert.match(record.message, /MODEL_HAS_NO_SERVICE_ID/);
+  assert.equal(residentStatus(document, "daytime").status, "available", "the other resident is judged on its own row");
+});
+
+test("every resident request names its model; none relies on the router's default (1.2 §3)", async () => {
+  // An omitted `model` is answered by the default of the active configuration,
+  // which 1.2 does not promise is `daytime` — while the trial configuration is
+  // selected it is the trial. Harness therefore always sends an ID, so the case
+  // never arises: exactly one model row per resident route, named by its service ID.
+  for (const document of [paired(), trio(), strata(), solo(), draining(), null]) {
+    const state = structuredClone(legacySettings("http://router.invalid/v1"));
+    await synchronizeRouterSettings(settingsService(state, [], applyOperation), { document });
+    for (const [name, service] of Object.entries(RESIDENT_SERVICES)) {
+      const models = state["llm-pi-ai"].providers[name].models;
+      assert.deepEqual(models.map(model => model.id), [service], `${name} with ${document?.configuration?.id ?? "no router"}`);
+      assert.ok(models[0].id.length > 0, `${name} configures an empty model ID`);
+    }
+  }
 });
 
 test("a new canonical ID behind nighttime (MTP3) stays available; the ID is information only", () => {

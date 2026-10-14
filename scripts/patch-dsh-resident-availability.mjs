@@ -6,18 +6,74 @@
  * unavailable or incomplete models without consuming retries, lets a switching
  * router make requests wait, and accepts pre-service-ID model IDs of a
  * resident route during migration (docs/llm-router-contract.md §3, §5, §7).
+ *
+ * v3 adds the opt-in `modelPicker.availableOnly` picker filter, read from the
+ * harness settings document (the profile patch, then the pre-0.2 settings
+ * file). The flag rides the `modelCatalog` result as `availableOnly`; the
+ * server catalog keeps reporting every model, and only the picker view
+ * changes: with the filter on, the list holds models with
+ * `available !== false` — a route draining a router switch is not offered
+ * either — empty provider groups drop out, and a list with nothing to show
+ * renders one status line. Default off: no setting, no file, or a value that
+ * is not exactly `true` leaves the current picker untouched.
  */
 import { readFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const marker = 'dsh-resident-availability-v2';
+const marker = 'dsh-resident-availability-v3';
+const previousMarker = 'dsh-resident-availability-v2';
 function replace(source, before, after) {
   if (!source.includes(before) || source.indexOf(before) !== source.lastIndexOf(before)) {
     throw new Error(`Resident availability source drift: ${before.slice(0, 100)}`);
   }
   return source.replace(before, after);
 }
+let yamlParseFn;
+function parseYamlSettings(text) {
+  // The installed Harness tree hoists the `yaml` package; resolve it lazily so
+  // importing this script never requires the installation to exist.
+  yamlParseFn ??= createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json')('yaml').parse;
+  return yamlParseFn(text);
+}
+/**
+* Resolve the opt-in `modelPicker.availableOnly` picker filter from the
+* harness settings document — the same surface the resident state is
+* persisted to: the live profile patch, then the pre-0.2 settings file.
+* The first readable document decides; a missing, unreadable or unparsable
+* document leaves the filter off, as does every value but an exact `true`.
+* @param env - environment for the profile and home directories.
+* @param readText - read one candidate file (utf8).
+* @param parseText - parse one settings document (YAML).
+* @returns whether the picker offers only available models.
+*/
+export async function modelPickerAvailableOnly(env = process.env, readText = (file) => readFile(file, 'utf8'), parseText = parseYamlSettings) {
+  const candidates = [];
+  const profileDir = env.DSH_PROFILE_DIR;
+  if (typeof profileDir === 'string' && profileDir.length > 0) candidates.push(join(profileDir, 'cordis.patch.yml'));
+  const home = env.DSH_HOME;
+  if (typeof home === 'string' && home.length > 0) candidates.push(join(home, 'profiles', 'web', 'cordis.patch.yml'), join(home, 'settings.yaml'));
+  for (const file of candidates) {
+    let text;
+    try {
+      text = await readText(file);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      return false;
+    }
+    let document;
+    try {
+      document = parseText(text);
+    } catch (error) {
+      return false;
+    }
+    if (Array.isArray(document)) return document.some((entry) => entry?.id === 'modelPicker' && entry?.config?.availableOnly === true);
+    return document?.modelPicker?.availableOnly === true;
+  }
+  return false;
+}
 export function patchAdapter(input) {
-  if (input.includes(marker)) return input;
+  if (input.includes(marker) || input.includes(previousMarker)) return input;
   let s = input;
   // Settings forms project only declared fields; declare the discovery-owned state.
   s = replace(s, '\tmaxConcurrency: z.number().step(1).min(1),', '\tresidentUnavailable: z.boolean(),\n\tresidentState: z.any(),\n\tmaxConcurrency: z.number().step(1).min(1),');
@@ -56,7 +112,7 @@ export function routerSwitchingDelay(retry) {
   return Math.min(ROUTER_SWITCHING_POLICY.initialDelayMs * 2 ** Math.min(Math.max(retry - 1, 0), 16), ROUTER_SWITCHING_POLICY.maxDelayMs);
 }
 export function patchRetry(input) {
-  if (input.includes(marker)) return input;
+  if (input.includes(marker) || input.includes(previousMarker)) return input;
   return replace(input, 'async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {', `async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {
         // ${marker}: an unavailable selection is terminal, even under always-retry.
         if (failure.code === 'MODEL_UNAVAILABLE') return;
@@ -73,21 +129,40 @@ export function patchRetry(input) {
         }`);
 }
 export function patchRegistry(input) {
-  if (input.includes(marker) || input.includes('dsh-resident-availability-v1')) return input;
+  if (input.includes(marker) || input.includes(previousMarker) || input.includes('dsh-resident-availability-v1')) return input;
   return replace(input, '\t\t\t\t\tname: model.name,', `\t\t\t\t\tname: model.name,
 \t\t\t\t\t// ${marker}: preserve descriptive availability through the registry.
 \t\t\t\t\t...(model.available === false ? { available: false } : {}),`);
 }
 export function patchCatalog(input) {
   if (input.includes(marker)) return input;
-  let s = replace(input, 'async function buildModelCatalog(ctx, defaultSelection', `// ${marker}\nasync function buildModelCatalog(ctx, defaultSelection`);
-  s = replace(s, '\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);', '\t\t\t\tif (model.available === false) return { id: model.id, name: model.name, available: false };\n\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);');
-  s = replace(s, 'routableProviders: groups.map((group) => group.id)', 'routableProviders: groups.filter(group => group.models.some(model => model.available !== false)).map((group) => group.id)');
-  s = replace(s, 'return models.some((model) => model.id === selection.model);', 'return models.some((model) => model.id === selection.model && model.available !== false);');
+  let s = input;
+  if (!input.includes(previousMarker)) {
+    s = replace(s, 'async function buildModelCatalog(ctx, defaultSelection', `// ${marker}\nasync function buildModelCatalog(ctx, defaultSelection`);
+    s = replace(s, '\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);', '\t\t\t\tif (model.available === false) return { id: model.id, name: model.name, available: false };\n\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);');
+    s = replace(s, 'routableProviders: groups.map((group) => group.id)', 'routableProviders: groups.filter(group => group.models.some(model => model.available !== false)).map((group) => group.id)');
+    s = replace(s, 'return models.some((model) => model.id === selection.model);', 'return models.some((model) => model.id === selection.model && model.available !== false);');
+  }
+  // v3: the flag rides the catalog result; the server keeps reporting every
+  // model, the client decides the view. The settings document is the same
+  // surface the resident state is persisted to, read here because the
+  // standalone section is not a registered settings entry.
+  if (s.includes(`// ${previousMarker}\nasync function buildModelCatalog`)) {
+    s = s.replace(`// ${previousMarker}\nasync function buildModelCatalog`, `// ${marker}\nasync function buildModelCatalog`);
+  }
+  if (s.includes('import { mkdir } from "node:fs/promises";')) {
+    s = replace(s, 'import { mkdir } from "node:fs/promises";', 'import { mkdir, readFile } from "node:fs/promises";\nimport { parse as parseYamlSettings } from "yaml";');
+  }
+  if (s.includes('import { isAbsolute, resolve } from "node:path";')) {
+    s = replace(s, 'import { isAbsolute, resolve } from "node:path";', 'import { isAbsolute, join, resolve } from "node:path";');
+  }
+  s = replace(s, 'async function buildModelCatalog(ctx, defaultSelection = ctx.agentDefaultModel.currentSelection()) {', `${modelPickerAvailableOnly.toString()}\nasync function buildModelCatalog(ctx, defaultSelection = ctx.agentDefaultModel.currentSelection()) {`);
+  s = replace(s, '\tconst providers = ctx.llm.listProviders();', '\tconst availableOnly = await modelPickerAvailableOnly();\n\tconst providers = ctx.llm.listProviders();');
+  s = replace(s, '\t\tgroups,\n\t\tfailures: catalog.flatMap((item) => item.kind === "failure" ? [item.failure] : [])', '\t\tgroups,\n\t\tavailableOnly,\n\t\tfailures: catalog.flatMap((item) => item.kind === "failure" ? [item.failure] : [])');
   return s;
 }
 export function patchCatalogCodec(input) {
-  const codecMarker = 'dsh-resident-availability-v1-codec';
+  const codecMarker = 'dsh-resident-availability-v3-codec';
   if (input.includes(codecMarker)) return input;
   // Only the modelCatalog result's model descriptor, never arbitrary names.
   const start = input.indexOf('const _deepseek_ai_dsh_api_session_controller_session_modelCatalog_result$schema =');
@@ -95,22 +170,56 @@ export function patchCatalogCodec(input) {
   if (start < 0 || end < 0) throw new Error('Resident availability source drift: model catalog codec');
   let section = input.slice(start, end);
   const bundled = section.includes('"models": array(object({');
-  const before = bundled ? '"models": array(object({' : "'models': z.array(z.object({";
-  section = replace(section, before, before + (bundled ? '\n"available": boolean().optional(),' : "\n'available': z.boolean().optional(),"));
+  const availableDecl = bundled ? '"available": boolean().optional(),' : "'available': z.boolean().optional(),";
+  const availableOnlyDecl = bundled ? '"availableOnly": boolean().optional(),' : "'availableOnly': z.boolean().optional(),";
+  // Each hunk applies once: an older release may already carry the field.
+  if (!section.includes(availableDecl)) {
+    const before = bundled ? '"models": array(object({' : "'models': z.array(z.object({";
+    section = replace(section, before, before + '\n' + availableDecl);
+  }
+  if (!section.includes(availableOnlyDecl)) {
+    const before = bundled ? '"routableProviders": array(string()).readonly(),' : "'routableProviders': z.array(z.string()).readonly(),";
+    section = replace(section, before, availableOnlyDecl + '\n' + before);
+  }
   return input.slice(0, start) + '// ' + codecMarker + '\n' + section + input.slice(end);
 }
 export function patchClient(input) {
   if (input.includes(marker)) return input;
-  let s = replace(input, 'var ModelCatalogDirectory = class {', `// ${marker}\n\t\tvar ModelCatalogDirectory = class {`);
-  // Opening a picker re-reads the catalog; discovery pushes every state change
-  // through settings/document-updated, so no client-side polling is needed.
-  s = replace(s, 'await this.catalog.load();', 'this.catalog.invalidate();\n\t\t\t\tawait this.catalog.load();');
-  s = replace(s, 'group.models.some((model) => model.id === selection.model)', 'group.models.some((model) => model.id === selection.model && model.available !== false)');
-  s = replace(s, 'title: model.name,\n\t\t\t\t\t\t\t\t\t\t\t\t\tdisabled: busy,', 'title: model.name,\n\t\t\t\t\t\t\t\t\t\t\t\t\tdisabled: busy || model.available === false,');
-  s = replace(s, 'const choose = (selection) => {', `const choose = (selection) => {
+  let s = input;
+  if (!input.includes(previousMarker)) {
+    s = replace(s, 'var ModelCatalogDirectory = class {', `// ${marker}\n\t\tvar ModelCatalogDirectory = class {`);
+    // Opening a picker re-reads the catalog; discovery pushes every state change
+    // through settings/document-updated, so no client-side polling is needed.
+    s = replace(s, 'await this.catalog.load();', 'this.catalog.invalidate();\n\t\t\t\tawait this.catalog.load();');
+    s = replace(s, 'group.models.some((model) => model.id === selection.model)', 'group.models.some((model) => model.id === selection.model && model.available !== false)');
+    s = replace(s, 'title: model.name,\n\t\t\t\t\t\t\t\t\t\t\t\t\tdisabled: busy,', 'title: model.name,\n\t\t\t\t\t\t\t\t\t\t\t\t\tdisabled: busy || model.available === false,');
+    s = replace(s, 'const choose = (selection) => {', `const choose = (selection) => {
                 if (!choices.some(choice => choice.selection.provider === selection.provider && choice.selection.model === selection.model && choice.model.available !== false)) return;`);
-  s = replace(s, 'for (const model of group.models) this.reasoning.set(', 'for (const model of group.models) if (model.available !== false) this.reasoning.set(');
-  s = replace(s, 'if (rowId(group.id, model.id) !== id) continue;', 'if (rowId(group.id, model.id) !== id || model.available === false) continue;');
+    s = replace(s, 'for (const model of group.models) this.reasoning.set(', 'for (const model of group.models) if (model.available !== false) this.reasoning.set(');
+    s = replace(s, 'if (rowId(group.id, model.id) !== id) continue;', 'if (rowId(group.id, model.id) !== id || model.available === false) continue;');
+  }
+  // v3: the opt-in availableOnly filter, transported on the catalog result.
+  // The raw groups keep every model; only this view changes.
+  if (s.includes(`// ${previousMarker}\n\t\tvar ModelCatalogDirectory = class {`)) {
+    s = s.replace(`// ${previousMarker}\n\t\tvar ModelCatalogDirectory = class {`, `// ${marker}\n\t\tvar ModelCatalogDirectory = class {`);
+  }
+  s = replace(s, 'routable: null,\n\t\t\t\t\t\tgroups: catalog.value?.groups ?? [],', 'routable: null,\n\t\t\t\t\t\tavailableOnly: catalog.value?.availableOnly === true,\n\t\t\t\t\t\tgroups: catalog.value?.groups ?? [],');
+  s = replace(s, 'routable,\n\t\t\t\t\tgroups: catalog.value.groups,', 'routable,\n\t\t\t\t\tavailableOnly: catalog.value.availableOnly === true,\n\t\t\t\t\tgroups: catalog.value.groups,');
+  s = replace(s, 'const groups = (0, react.useMemo)(() => orderModelProviders(state.groups), [state.groups]);', 'const groups = (0, react.useMemo)(() => orderModelProviders(state.availableOnly === true ? state.groups.map((group) => ({ ...group, models: group.models.filter(availableOnlyModel) })).filter((group) => group.models.length > 0) : state.groups), [state.groups, state.availableOnly]);');
+  s = replace(s, '\t\t/** Dictionary namespace owned by this plugin. */', `\t\t/** Resident-state suffix the discovery plugin writes into a row name while a router switch drains. */
+\t\tconst ROUTER_SWITCHING_SUFFIX = ' — router switching configuration';
+\t\t/** Whether one catalog row stays in the availableOnly picker view. */
+\t\tfunction availableOnlyModel(model) {
+\t\t\treturn model.available !== false && !(typeof model.name === 'string' && model.name.endsWith(ROUTER_SWITCHING_SUFFIX));
+\t\t}
+\t\t/** Whether any raw catalog row reports a router switch in progress. */
+\t\tfunction routerSwitchingActive(groups) {
+\t\t\treturn groups.some((group) => group.models.some((model) => typeof model.name === 'string' && model.name.endsWith(ROUTER_SWITCHING_SUFFIX)));
+\t\t}
+\t\t/** Dictionary namespace owned by this plugin. */`);
+  s = replace(s, 'children: t(choices.length === 0 ? "empty.models" : "search.empty")', 'children: state.availableOnly === true && choices.length === 0 && routerSwitchingActive(state.groups) ? t("status.waitingRouter") : t(choices.length === 0 ? "empty.models" : "search.empty")');
+  s = replace(s, '\t\t\t"empty.models": "没有可用的模型。",', '\t\t\t"empty.models": "没有可用的模型。",\n\t\t\t"status.waitingRouter": "正在等待路由器切换…",');
+  s = replace(s, '\t\t\t"empty.models": "No models available.",', '\t\t\t"empty.models": "No models available.",\n\t\t\t"status.waitingRouter": "Waiting on the router…",');
   return s;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

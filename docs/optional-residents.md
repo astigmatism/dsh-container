@@ -63,6 +63,44 @@ Limits change only while a model is available. They are the serving model's
 marked stale and not acted on. The 128K values in `config/settings.yaml` are
 placeholders until the first successful discovery.
 
+## The opt-in picker filter: `modelPicker.availableOnly`
+
+The setting `modelPicker.availableOnly` (boolean, **off by default**) changes
+what the picker shows, never what exists. With it on, the catalog keeps
+reporting every model, but the picker offers only models whose current state
+is usable: an unavailable model is not shown at all (not greyed out), a
+provider with nothing usable drops out of the list, and a route draining a
+router switch is not offered either. When nothing is left to offer, the picker
+renders one status line — "Waiting on the router…" while a switch is
+draining, "No models available." otherwise — instead of a wall of greyed rows.
+
+It is read from the same settings document the state above persists to: the
+live profile patch, then the pre-0.2 settings file. The first readable
+document decides; an absent, unreadable or unparsable document, or any value
+that is not exactly `true`, leaves the filter off.
+
+```yaml
+# $DSH_PROFILE_DIR/cordis.patch.yml (list form)
+- id: modelPicker
+  config:
+    availableOnly: true
+```
+
+```yaml
+# $DSH_HOME/settings.yaml (pre-0.2 map form)
+modelPicker:
+  availableOnly: true
+```
+
+The flag rides the `modelCatalog` result as `availableOnly`; the server side
+is unchanged and old clients ignore it. With the filter off the picker is
+byte-for-byte the current release: every state in the table above stays
+selectable or blocked exactly as shown, and a switching row keeps its
+selectable status (its requests wait on the switch's own retry chain). The
+section is not a registered settings entry, so it is edited in the file
+directly; booting a host that carries it without the filter logs a harmless
+`entry modelPicker not found` notice.
+
 Request-time router errors are classified by `error.code` first. This covers
 HTTP bodies and in-stream `response.failed`/`error` events.
 

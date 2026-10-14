@@ -10,7 +10,8 @@ import { promisify } from 'node:util';
 const runtime = process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh';
 let adapter = '';
 try { adapter = await readFile(`${runtime}/node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js`, 'utf8'); } catch {}
-const patched = adapter.includes('dsh-router-contract-v3') && adapter.includes('dsh-resident-availability-v2');
+const patched = adapter.includes('dsh-router-contract-v3')
+  && (adapter.includes('dsh-resident-availability-v2') || adapter.includes('dsh-resident-availability-v3'));
 if (!patched && process.env.DSH_TEST_HARNESS === '1') throw new Error('the packaged runtime lacks the router contract patches');
 
 test('a queued request outlives the idle timeout on keepalives; every §10 code maps to its action', {

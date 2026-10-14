@@ -2,10 +2,40 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCodec, patchRetry } from '../scripts/patch-dsh-resident-availability.mjs';
+import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCodec, patchRetry, modelPickerAvailableOnly } from '../scripts/patch-dsh-resident-availability.mjs';
 import { EndpointConcurrencyGate } from '../scripts/patch-dsh-llm-pi-ai.mjs';
 const fixture = JSON.parse(await readFile(new URL('./fixtures/dsh-resident-availability-0.2.0-rc.2.json', import.meta.url)));
 const clone = value => JSON.parse(JSON.stringify(value));
+// Dependency-free stand-in for the installed `yaml` package, faithful to it on
+// the settings shapes this patch reads (verified against it in the container).
+function parseSettingsLite(text) {
+  const lines = text.split('\n').filter(line => line.trim() !== '' && !line.trim().startsWith('#'));
+  if (lines.length === 0) return null;
+  const scalar = value => value === 'true' ? true : value === 'false' ? false : value;
+  if (lines[0].startsWith('- ')) {
+    const entries = [];
+    for (const line of lines) {
+      const item = line.match(/^- id: (\S+)$/);
+      if (item) { entries.push({ id: item[1], config: {} }); continue; }
+      const config = line.match(/^    (\w+): (\S+)$/);
+      if (config && entries.length > 0) entries.at(-1).config[config[1]] = scalar(config[2]);
+    }
+    return entries;
+  }
+  const out = {};
+  let section = null;
+  for (const line of lines) {
+    const top = line.match(/^(\w+):$/);
+    if (top) { out[top[1]] = {}; section = out[top[1]]; continue; }
+    const nested = line.match(/^  (\w+): (\S+)$/);
+    if (nested && section) section[nested[1]] = scalar(nested[2]);
+  }
+  return out;
+}
+const settingsFiles = files => async file => {
+  if (!(file in files)) { const error = new Error('ENOENT'); error.code = 'ENOENT'; throw error; }
+  return files[file];
+};
 class LlmError extends Error { constructor(message, code) { super(message); this.code = code; } }
 function adapter() {
   const source = patchAdapter(fixture.adapter);
@@ -78,7 +108,7 @@ test('registry and catalog preserve unavailable identity, external groups, and a
   registry.registration = () => ({ adapter: f.value }); registry.detachedModalities = value => value;
   const listed = await registry.listModels('local-everyday');
   assert.equal(listed[0].available, false);
-  const catalog = vm.runInNewContext(patchCatalog(fixture.catalog) + '\n({ buildModelCatalog, modelAvailable })', { RemoteError: Error });
+  const catalog = vm.runInNewContext(patchCatalog(fixture.catalog) + '\n({ buildModelCatalog, modelAvailable })', { RemoteError: Error, process: { env: {} }, parseYamlSettings: parseSettingsLite });
   const selected = { provider: 'local-everyday', model: 'night', reasoningEffort: 'high' };
   const ctx = { agentDefaultModel: { currentSelection: () => selected }, llm: {
     listProviders: () => [{ id: 'local-everyday' }, { id: 'amazon-bedrock' }],
@@ -108,9 +138,87 @@ test('host and browser RPC codecs preserve model availability', () => {
   for (const key of ['codec', 'clientCodec']) {
     const patched = patchCatalogCodec(fixture[key]);
     assert.match(patched, /['"]available['"]: (?:z\.)?boolean\(\)\.optional\(\)/);
-    // The added field belongs to each model, inside its models array.
-    assert.ok(patched.indexOf('available') > patched.indexOf('models'));
+    assert.match(patched, /['"]availableOnly['"]: (?:z\.)?boolean\(\)\.optional\(\)/);
+    // The added fields belong to the model descriptor, after the models array
+    // and before the routable providers.
+    assert.ok(patched.indexOf('models') < patched.indexOf('available') < patched.indexOf('routableProviders'));
   }
+});
+
+test('modelPicker.availableOnly reads the settings document and defaults off', async () => {
+  const row = (value) => ['- id: modelPicker', '  config:', `    availableOnly: ${value}`].join('\n') + '\n';
+  const off = (env, files) => modelPickerAvailableOnly(env, settingsFiles(files), parseSettingsLite);
+  assert.equal(await off({}, {}), false, 'no directories, no files');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': ['- id: agent-default-model', '  config:', '    provider: local-ollama'].join('\n') }), false, 'a document without the section');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': row('true') }), true, 'list form, exact true');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': row('false') }), false, 'list form, false');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': row('"true"') }), false, 'a quoted string is not true');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': 'modelPicker:\n  availableOnly: true\n' }), true, 'pre-0.2 map form');
+  assert.equal(await off({ DSH_PROFILE_DIR: '/p', DSH_HOME: '/h' }, { '/p/cordis.patch.yml': row('false'), '/h/settings.yaml': 'modelPicker:\n  availableOnly: true\n' }), false, 'the live profile patch wins over the legacy file');
+  assert.equal(await off({ DSH_PROFILE_DIR: '/p', DSH_HOME: '/h' }, { '/h/profiles/web/cordis.patch.yml': row('true') }), true, 'a missing profile patch falls through');
+  assert.equal(await modelPickerAvailableOnly({ DSH_HOME: '/h' }, settingsFiles({ '/h/settings.yaml': 'x: [' }), () => { throw new Error('yaml'); }), false, 'an unparsable document leaves the filter off');
+});
+
+test('the modelCatalog result carries the availableOnly flag from the settings document', async () => {
+  const source = patchCatalog(fixture.catalog);
+  const settings = '- id: modelPicker\n  config:\n    availableOnly: true\n';
+  const sandbox = files => ({
+    RemoteError: Error,
+    process: { env: { DSH_HOME: '/h' } },
+    join: (first, ...rest) => [first, ...rest].join('/'),
+    readFile: settingsFiles(files),
+    parseYamlSettings: parseSettingsLite,
+  });
+  const selected = { provider: 'local-everyday', model: 'night', reasoningEffort: 'high' };
+  const ctx = { agentDefaultModel: { currentSelection: () => selected }, llm: {
+    listProviders: () => [{ id: 'local-everyday' }],
+    listModels: async () => [{ id: 'night', name: 'Nighttime' }],
+    resolveModelInfo: async () => ({}),
+  } };
+  const on = vm.runInNewContext(source + '\nbuildModelCatalog', sandbox({ '/h/profiles/web/cordis.patch.yml': settings }));
+  const result = await on(ctx);
+  assert.equal(result.availableOnly, true, 'a modelPicker.availableOnly: true document is transported on the result');
+  assert.deepEqual(clone(result.groups[0].models[0]), { id: 'night', name: 'Nighttime' }, 'the catalog still reports every model');
+  const off = vm.runInNewContext(source + '\nbuildModelCatalog', sandbox({}));
+  assert.equal((await off(ctx)).availableOnly, false, 'without the setting the flag stays off');
+});
+
+test('the availableOnly picker filter hides unavailable and switching rows and shows one status line', () => {
+  const source = patchClient(fixture.client);
+  // The flag rides the catalog result into both store writes.
+  assert.match(source, /availableOnly: catalog\.value\?\.availableOnly === true/);
+  assert.match(source, /availableOnly: catalog\.value\.availableOnly === true/);
+  // Default off: the raw groups pass through untouched.
+  assert.match(source, /state\.availableOnly === true \? state\.groups\.map/);
+  assert.match(source, /: state\.groups\), \[state\.groups, state\.availableOnly\]\)/);
+  // One status line while a router switch drains.
+  assert.match(source, /t\("status\.waitingRouter"\)/);
+  assert.match(source, /"status\.waitingRouter": "Waiting on the router…"/);
+  assert.match(source, /"status\.waitingRouter": "正在等待路由器切换…"/);
+  const start = source.indexOf('const ROUTER_SWITCHING_SUFFIX'), end = source.indexOf('/** Dictionary namespace owned by this plugin. */', start);
+  const helpers = vm.runInNewContext(source.slice(start, end) + '\n({ availableOnlyModel, routerSwitchingActive })');
+  assert.equal(helpers.availableOnlyModel({ id: 'day', name: 'Daytime' }), true, 'an available row stays');
+  assert.equal(helpers.availableOnlyModel({ id: 'trial', name: 'Trial', available: false }), false, 'an unavailable row drops out');
+  assert.equal(helpers.availableOnlyModel({ id: 'night', name: 'Nighttime — router switching configuration' }), false, 'a route draining a switch is not offered either');
+  assert.equal(helpers.routerSwitchingActive([{ id: 'p', models: [{ id: 'n', name: 'Nighttime — router switching configuration' }] }]), true);
+  assert.equal(helpers.routerSwitchingActive([{ id: 'p', models: [{ id: 'd', name: 'Daytime' }] }]), false);
+});
+
+test('a v2-patched install upgrades in place to the v3 transport', () => {
+  // The v2 release is this patch script with its four catalog hunks only.
+  let v2 = fixture.catalog;
+  v2 = v2.replace('async function buildModelCatalog(ctx, defaultSelection', '// dsh-resident-availability-v2\nasync function buildModelCatalog(ctx, defaultSelection');
+  v2 = v2.replace('\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);', '\t\t\t\tif (model.available === false) return { id: model.id, name: model.name, available: false };\n\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);');
+  v2 = v2.replace('routableProviders: groups.map((group) => group.id)', 'routableProviders: groups.filter(group => group.models.some(model => model.available !== false)).map((group) => group.id)');
+  v2 = v2.replace('return models.some((model) => model.id === selection.model);', 'return models.some((model) => model.id === selection.model && model.available !== false);');
+  assert.equal(patchCatalog(v2), patchCatalog(fixture.catalog), 'in-place lands on the fresh-build state');
+  // A release that already patched the codec keeps one declaration per field.
+  let v2Codec = fixture.codec.replace("'models': z.array(z.object({", "'models': z.array(z.object({\n'available': z.boolean().optional(),");
+  v2Codec = '// dsh-resident-availability-v1-codec\n' + v2Codec;
+  const upgraded = patchCatalogCodec(v2Codec);
+  assert.equal(upgraded.match(/'available': z\.boolean\(\)\.optional\(\)/g).length, 1);
+  assert.equal(upgraded.match(/'availableOnly': z\.boolean\(\)\.optional\(\)/g).length, 1);
+  assert.equal(patchCatalogCodec(upgraded), upgraded, 'idempotent after the upgrade');
 });
 
 

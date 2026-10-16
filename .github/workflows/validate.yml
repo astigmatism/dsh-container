@@ -10,7 +10,10 @@ permissions:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The alpha.5 --build builds three images and replays the update/recovery
+    # and maintenance Docker suites against the larger runtime graph; it runs
+    # past the old 30-minute cap. Keep enough headroom for a cold runner.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Validate source, Compose, tests, and images

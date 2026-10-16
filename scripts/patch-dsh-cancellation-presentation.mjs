@@ -95,9 +95,7 @@ export function cancellationPresentationFromTurnEnd(event) {
 export function patchSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
   let source = input;
-  const failureTitle = input.includes('node.code === "ACCOUNT_SIGNED_OUT" ? t("message.accountStopped")')
-    ? 'node.code === "ACCOUNT_SIGNED_OUT" ? t("message.accountStopped") : t("message.turnError")'
-    : 't("message.turnError")';
+  const failureTitle = 'node.code === "ACCOUNT_SIGNED_OUT" || node.code === "INTERRUPTED" ? t("message.taskStopped") : t("message.turnError")';
 
   source = replaceOnce(
     source,
@@ -129,8 +127,8 @@ export function patchSource(input) {
 
   source = replaceOnce(
     source,
-    `\t\t\t\t\tnode.code !== void 0 && (0, react_jsx_runtime.jsx)("code", {`,
-    `\t\t\t\t\tcancellation === void 0 && node.code !== void 0 && (0, react_jsx_runtime.jsx)("code", {`,
+    `\t\t\t\t\tnode.code !== void 0 && node.code !== "INTERRUPTED" && (0, react_jsx_runtime.jsx)("code", {`,
+    `\t\t\t\t\tcancellation === void 0 && node.code !== void 0 && node.code !== "INTERRUPTED" && (0, react_jsx_runtime.jsx)("code", {`,
     "turn cancellation error code",
   );
 
@@ -148,27 +146,17 @@ export function patchSource(input) {
     "English cancellation locale",
   );
 
-  if (source.includes('const reason = match.event.data.reason;')) {
-    source = replaceOnce(source,
-      'function failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end") return void 0;\n\t\t\tconst reason = match.event.data.reason;',
-      `function failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end") return void 0;\n\t\t\tconst reason = match.event.data.reason;\n\t\t\tif (reason.kind === "aborted" && !(reason.reason.kind === "hook" && reason.reason.reason === "deepseek-account/signed-out")) {\n\t\t\t\tconst cancellation = cancellationPresentation(reason.reason);\n\t\t\t\treturn { seq: match.event.seq, time: match.event.time, message: cancellation.detail, cancellation };\n\t\t\t}`,
-      'aborted turn projection');
-  } else {
   source = replaceOnce(
     source,
-    `\t\tfunction failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end" || match.event.data.reason.kind !== "error") return void 0;\n\t\t\tconst failure = match.event.data.reason.error;\n\t\t\tconst display = displayFailure(failure);\n\t\t\treturn {\n\t\t\t\tseq: match.event.seq,\n\t\t\t\ttime: match.event.time,\n\t\t\t\tmessage: display.message,\n\t\t\t\t...display.code === void 0 ? {} : { code: display.code }\n\t\t\t};\n\t\t}`,
-    `\t\tfunction failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end") return void 0;\n\t\t\tif (match.event.data.reason.kind === "aborted") {\n\t\t\t\tconst cancellation = cancellationPresentation(match.event.data.reason.reason);\n\t\t\t\treturn {\n\t\t\t\t\tseq: match.event.seq,\n\t\t\t\t\ttime: match.event.time,\n\t\t\t\t\tmessage: cancellation.detail,\n\t\t\t\t\tcancellation\n\t\t\t\t};\n\t\t\t}\n\t\t\tif (match.event.data.reason.kind !== "error") return void 0;\n\t\t\tconst failure = match.event.data.reason.error;\n\t\t\tconst display = displayFailure(failure);\n\t\t\treturn {\n\t\t\t\tseq: match.event.seq,\n\t\t\t\ttime: match.event.time,\n\t\t\t\tmessage: display.message,\n\t\t\t\t...display.code === void 0 ? {} : { code: display.code }\n\t\t\t};\n\t\t}`,
+    `\t\tfunction failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end") return void 0;\n\t\t\tconst failure = endFailure(match.event.data.reason);`,
+    `\t\tfunction failureFrom(match) {\n\t\t\tif (match.event.type !== "turn/end") return void 0;\n\t\t\tif (match.event.data.reason.kind === "aborted" && !(match.event.data.reason.reason.kind === "hook" && match.event.data.reason.reason.reason === "deepseek-account/signed-out")) {\n\t\t\t\tconst cancellation = cancellationPresentation(match.event.data.reason.reason);\n\t\t\t\treturn {\n\t\t\t\t\tseq: match.event.seq,\n\t\t\t\t\ttime: match.event.time,\n\t\t\t\t\tmessage: cancellation.detail,\n\t\t\t\t\tcancellation\n\t\t\t\t};\n\t\t\t}\n\t\t\tconst failure = endFailure(match.event.data.reason);`,
     "aborted turn projection",
   );
 
-  }
-
   source = replaceOnce(
     source,
-    source.includes('event.data.reason.reason.reason === "deepseek-account/signed-out"')
-      ? `\t\t\t\tif (event.type === "turn/end" && (event.data.reason.kind === "error" || event.data.reason.kind === "aborted" && event.data.reason.reason.kind === "hook" && event.data.reason.reason.reason === "deepseek-account/signed-out")) return {`
-      : `\t\t\t\tif (event.type === "turn/end" && event.data.reason.kind === "error") return {`,
-    `\t\t\t\tif (event.type === "turn/end" && (event.data.reason.kind === "error" || event.data.reason.kind === "aborted")) return {`,
+    `\t\t\t\tif (event.type === "turn/end" && endFailure(event.data.reason) !== void 0) return {`,
+    `\t\t\t\tif (event.type === "turn/end" && (endFailure(event.data.reason) !== void 0 || event.data.reason.kind === "aborted")) return {`,
     "aborted turn match",
   );
 

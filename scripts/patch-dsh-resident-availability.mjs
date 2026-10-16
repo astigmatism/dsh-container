@@ -169,17 +169,21 @@ export function patchCatalogCodec(input) {
   const end = input.indexOf('let _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath', start);
   if (start < 0 || end < 0) throw new Error('Resident availability source drift: model catalog codec');
   let section = input.slice(start, end);
-  const bundled = section.includes('"models": array(object({');
-  const availableDecl = bundled ? '"available": boolean().optional(),' : "'available': z.boolean().optional(),";
-  const availableOnlyDecl = bundled ? '"availableOnly": boolean().optional(),' : "'availableOnly': z.boolean().optional(),";
+  // Generated-codec dialects: bundled ("models": array(object({), plain
+  // ('models': z.array(z.object({) and remotes ("models": zod.z.array(zod.z.object({).
+  const modelsLine = section.match(/^([ \t]*)("|')models\2: (?:(?:zod\.z|z)\.)?array\((?:(?:zod\.z|z)\.)?object\(\{$/m);
+  if (modelsLine === undefined) throw new Error('Resident availability source drift: model catalog codec descriptor');
+  const prefix = section.includes('zod.z.array') ? 'zod.z.' : section.includes('z.array') ? 'z.' : '';
+  const availableDecl = `${modelsLine[1]}${modelsLine[2]}available${modelsLine[2]}: ${prefix}boolean().optional(),`;
   // Each hunk applies once: an older release may already carry the field.
-  if (!section.includes(availableDecl)) {
-    const before = bundled ? '"models": array(object({' : "'models': z.array(z.object({";
-    section = replace(section, before, before + '\n' + availableDecl);
+  if (!section.includes(`${modelsLine[2]}available${modelsLine[2]}: ${prefix}boolean().optional(),`)) {
+    section = replace(section, modelsLine[0], modelsLine[0] + '\n' + availableDecl);
   }
-  if (!section.includes(availableOnlyDecl)) {
-    const before = bundled ? '"routableProviders": array(string()).readonly(),' : "'routableProviders': z.array(z.string()).readonly(),";
-    section = replace(section, before, availableOnlyDecl + '\n' + before);
+  const routableLine = section.match(/^([ \t]*)("|')routableProviders\2: (?:(?:zod\.z|z)\.)?array\((?:(?:zod\.z|z)\.)?string\(\)\)\.readonly\(\)(?:\.describe\(.*\))?,\s*$/m);
+  if (routableLine === undefined) throw new Error('Resident availability source drift: routableProviders codec');
+  const availableOnlyDecl = `${routableLine[1]}${routableLine[2]}availableOnly${routableLine[2]}: ${prefix}boolean().optional(),`;
+  if (!section.includes(`${routableLine[2]}availableOnly${routableLine[2]}: ${prefix}boolean().optional(),`)) {
+    section = replace(section, routableLine[0], availableOnlyDecl + '\n' + routableLine[0]);
   }
   return input.slice(0, start) + '// ' + codecMarker + '\n' + section + input.slice(end);
 }
@@ -205,7 +209,8 @@ export function patchClient(input) {
   }
   s = replace(s, 'routable: null,\n\t\t\t\t\t\tgroups: catalog.value?.groups ?? [],', 'routable: null,\n\t\t\t\t\t\tavailableOnly: catalog.value?.availableOnly === true,\n\t\t\t\t\t\tgroups: catalog.value?.groups ?? [],');
   s = replace(s, 'routable,\n\t\t\t\t\tgroups: catalog.value.groups,', 'routable,\n\t\t\t\t\tavailableOnly: catalog.value.availableOnly === true,\n\t\t\t\t\tgroups: catalog.value.groups,');
-  s = replace(s, 'const groups = (0, react.useMemo)(() => orderModelProviders(state.groups), [state.groups]);', 'const groups = (0, react.useMemo)(() => orderModelProviders(state.availableOnly === true ? state.groups.map((group) => ({ ...group, models: group.models.filter(availableOnlyModel) })).filter((group) => group.models.length > 0) : state.groups), [state.groups, state.availableOnly]);');
+  s = replace(s, 'const groups = (0, react.useMemo)(() => orderModelProviders(state.groups).map((group) => ({', 'const groups = (0, react.useMemo)(() => orderModelProviders(state.availableOnly === true ? state.groups.map((group) => ({ ...group, models: group.models.filter(availableOnlyModel) })).filter((group) => group.models.length > 0) : state.groups).map((group) => ({');
+  s = replace(s, '})), [state.groups, accountProviderName]);', '})), [state.groups, state.availableOnly, accountProviderName]);');
   s = replace(s, '\t\t/** Dictionary namespace owned by this plugin. */', `\t\t/** Resident-state suffix the discovery plugin writes into a row name while a router switch drains. */
 \t\tconst ROUTER_SWITCHING_SUFFIX = ' — router switching configuration';
 \t\t/** Whether one catalog row stays in the availableOnly picker view. */
@@ -218,7 +223,7 @@ export function patchClient(input) {
 \t\t}
 \t\t/** Dictionary namespace owned by this plugin. */`);
   s = replace(s, 'children: t(choices.length === 0 ? "empty.models" : "search.empty")', 'children: state.availableOnly === true && choices.length === 0 && routerSwitchingActive(state.groups) ? t("status.waitingRouter") : t(choices.length === 0 ? "empty.models" : "search.empty")');
-  s = replace(s, '\t\t\t"empty.models": "没有可用的模型。",', '\t\t\t"empty.models": "没有可用的模型。",\n\t\t\t"status.waitingRouter": "正在等待路由器切换…",');
+  s = replace(s, '\t\t\t"empty.models": "暂无可用模型",', '\t\t\t"empty.models": "暂无可用模型",\n\t\t\t"status.waitingRouter": "正在等待路由器切换…",');
   s = replace(s, '\t\t\t"empty.models": "No models available.",', '\t\t\t"empty.models": "No models available.",\n\t\t\t"status.waitingRouter": "Waiting on the router…",');
   return s;
 }

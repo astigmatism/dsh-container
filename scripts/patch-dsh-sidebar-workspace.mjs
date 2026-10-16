@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const MARKER = 'dsh-sidebar-workspace-fence-v1';
-export const SIDEBAR_VERSION = '0.24.1';
+export const SIDEBAR_VERSION = '0.26.1';
 
 /** Embedded in the host bundle; dependencies are provided by its existing imports. */
 export function createWorkspaceGuards({ realpath, relative, isAbsolute, join, dirname, basename, requireAbsolute, resolveSessionPath, SidebarError }) {
@@ -71,36 +71,43 @@ export function patchSidebarWorkspace(input) {
   let source = replace(input, 'import { access, lstat,', 'import { realpath, access, lstat,');
   source = replace(source, 'const SIDEBAR_PREFS_DEFAULTS = {', 'const SIDEBAR_PREFS_DEFAULTS = {\n\tworkspaceFence: true,');
   source = replace(source, 'const PrefsSchema = z.object({', 'const PrefsSchema = z.object({\n\tworkspaceFence: z.boolean().default(true),');
-  const start = source.indexOf('//#region src/path-security.ts');
-  const end = source.indexOf('//#region src/fs-operations.ts', start);
-  if (start < 0 || end < start) throw new Error('Workspace path module anchor changed');
-  source = source.slice(0, start) + `// ${MARKER}\n${createWorkspaceGuards.toString()}\nconst { ensureWorkspacePath, ensureWorkspaceWritePath, resolveEntry } = createWorkspaceGuards({ realpath, relative, isAbsolute, join, dirname, basename, requireAbsolute, resolveSessionPath, SidebarError });\nfunction fenceEnabledOf(getSettings) { return getSettings()?.get().value?.workspaceFence !== false; }\n` + source.slice(end);
-  source = replace(source, 'async function resolveEntry(cwd, target) {\n\tconst absolute = requireAbsolute(resolveSessionPath(cwd, target));\n\treturn {\n\t\tabsolute,\n\t\treal: absolute,\n\t\trealCwd: requireAbsolute(cwd)\n\t};\n}', '');
+  // 0.26 resolution is deliberately lexical; swap the three resolvers that
+  // carry the old fence's name for the realpath-based guards, keeping the
+  // shared resolveTarget/requireAbsolute helpers the rest of the module uses.
+  for (const declaration of [
+    'async function ensureWorkspacePath(cwd, target, _fence) {\n\treturn resolveTarget(cwd, target);\n}\n',
+    'async function ensureWorkspaceWritePath(cwd, target, _fence) {\n\treturn resolveTarget(cwd, target);\n}\n',
+    'function resolveEntry(cwd, target) {\n\treturn {\n\t\tabsolute: resolveTarget(cwd, target),\n\t\trealCwd: requireAbsolute(cwd)\n\t};\n}\n',
+  ]) source = replace(source, declaration, '');
+  const anchor = '//#region src/path-security.ts\n';
+  source = replace(source, anchor, `${anchor}// ${MARKER}\n${createWorkspaceGuards.toString()}\nconst { ensureWorkspacePath, ensureWorkspaceWritePath, resolveEntry } = createWorkspaceGuards({ realpath, relative, isAbsolute, join, dirname, basename, requireAbsolute, resolveSessionPath, SidebarError });\nfunction fenceEnabledOf(getSettings) { return getSettings()?.get().value?.workspaceFence !== false; }\n`);
   // Carry the live preference explicitly through every filesystem entry point.
   for (const [before, after, count] of [
-    ['const { cwd, dir, relativePath, chunks, limit } = input;', 'const { cwd, dir, relativePath, chunks, limit, fence = true } = input;'],
-    ['ensureWorkspacePath(cwd, base)', 'ensureWorkspacePath(cwd, base, fence)'],
+    ['const { cwd, dir, relativePath, chunks } = input;', 'const { cwd, dir, relativePath, chunks, fence = true } = input;'],
     ['ensureWorkspaceWritePath(cwd, target)', 'ensureWorkspaceWritePath(cwd, target, fence)'],
-    ['const { cwd, path, name } = input;', 'const { cwd, path, name, fence = true } = input;', 2],
+    ['const { cwd, path, content, expectedMtimeMs } = input;', 'const { cwd, path, content, expectedMtimeMs, fence = true } = input;'],
+    ['ensureWorkspaceWritePath(cwd, path)', 'ensureWorkspaceWritePath(cwd, path, fence)'],
+    ['const { cwd, path, name } = input;', 'const { cwd, path, name, fence = true } = input;', 3],
     ['const { cwd, path } = input;', 'const { cwd, path, fence = true } = input;'],
-    ['resolveEntry(cwd, path)', 'resolveEntry(cwd, path, fence)', 3],
+    ['= resolveEntry(cwd, path);', '= await resolveEntry(cwd, path, fence);', 3],
+    ['= await resolveEntry(cwd, path);', '= await resolveEntry(cwd, path, fence);'],
     ['ensureWorkspaceWritePath(cwd, join(dirname(absolute), name))', 'ensureWorkspaceWritePath(cwd, join(dirname(absolute), name), fence)'],
-    ['ensureWorkspaceWritePath(cwd, join(absolute, name))', 'ensureWorkspaceWritePath(cwd, join(absolute, name), fence)'],
-    ['ensureWorkspacePath(cwd, requireString(payload, "path"))', 'ensureWorkspacePath(cwd, requireString(payload, "path"), fenceEnabledOf(getSettings))'],
-    ['ensureWorkspacePath(cwd, requested)', 'ensureWorkspacePath(cwd, requested, fenceEnabledOf(getSettings))'],
-    ['ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, "path"), selected))', 'ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, "path"), selected), fenceEnabledOf(getSettings))'],
-    ['ensureWorkspaceWritePath(cwd, requireString(payload, "path"))', 'ensureWorkspaceWritePath(cwd, requireString(payload, "path"), fenceEnabledOf(getSettings))'],
-    ['ensureWorkspacePath(cwd, raw)', 'ensureWorkspacePath(cwd, raw, fenceEnabledOf(getSettings))'],
+    ['ensureWorkspaceWritePath(cwd, join(absolute, name))', 'ensureWorkspaceWritePath(cwd, join(absolute, name), fence)', 2],
     ['return renameWorkspaceEntry({\n\t\t\t\tcwd,', 'return renameWorkspaceEntry({\n\t\t\t\tfence: fenceEnabledOf(getSettings),\n\t\t\t\tcwd,'],
     ['return mkdirWorkspaceEntry({\n\t\t\t\tcwd,', 'return mkdirWorkspaceEntry({\n\t\t\t\tfence: fenceEnabledOf(getSettings),\n\t\t\t\tcwd,'],
+    ['return createWorkspaceFile({\n\t\t\t\tcwd,', 'return createWorkspaceFile({\n\t\t\t\tfence: fenceEnabledOf(getSettings),\n\t\t\t\tcwd,'],
     ['return removeWorkspaceEntry({\n\t\t\t\tcwd,', 'return removeWorkspaceEntry({\n\t\t\t\tfence: fenceEnabledOf(getSettings),\n\t\t\t\tcwd,'],
     ['const { path, size } = await writeWorkspaceUpload({', 'const { path, size } = await writeWorkspaceUpload({\n\t\t\t\t\tfence: fenceEnabledOf(() => settingsFace),'],
-    ['ensureWorkspacePath(await sessionCwdOf(ctx, sessionId, url.searchParams.get("cwd") ?? void 0), raw)', 'ensureWorkspacePath(await sessionCwdOf(ctx, sessionId, url.searchParams.get("cwd") ?? void 0), raw, fenceEnabledOf(() => settingsFace))'],
-    ['const absolute = await ensureWorkspacePath(await sessionCwdOf(ctx, sessionId), path);', 'const absolute = await ensureWorkspacePath(await sessionCwdOf(ctx, sessionId), path, fenceEnabledOf(() => settingsFace));'],
+    ['ensureWorkspacePath(cwd, requireString(payload, "path"))', 'ensureWorkspacePath(cwd, requireString(payload, "path"), fenceEnabledOf(getSettings))'],
+    ['ensureWorkspacePath(cwd, requested)', 'ensureWorkspacePath(cwd, requested, fenceEnabledOf(getSettings))'],
+    ['ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, "path"), selected))', 'ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, "path"), selected), fenceEnabledOf(getSettings))', 2],
+    ['ensureWorkspacePath(cwd, raw)', 'ensureWorkspacePath(cwd, raw, fenceEnabledOf(getSettings))'],
+    ['ensureWorkspacePath(await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get("cwd") ?? void 0)), raw)', 'ensureWorkspacePath(await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get("cwd") ?? void 0)), raw, fenceEnabledOf(() => settingsFace))'],
+    ['const absolute = await ensureWorkspacePath(await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId)), path);', 'const absolute = await ensureWorkspacePath(await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId)), path, fenceEnabledOf(() => settingsFace));'],
     ['attachFsWatch(ctx, ws, req);', 'attachFsWatch(ctx, ws, req, () => fenceEnabledOf(() => settingsFace));'],
     ['async function attachFsWatch(ctx, ws, req)', 'async function attachFsWatch(ctx, ws, req, fenceEnabled)'],
     ['handleFsWatchFrame(ctx, ws, watchers, sessionId, data)', 'handleFsWatchFrame(ctx, ws, watchers, sessionId, data, fenceEnabled)', 2],
-    ['const dir = await ensureWorkspacePath(await sessionCwdOf(ctx, sessionId), path);', 'const dir = await ensureWorkspacePath(await sessionCwdOf(ctx, sessionId), path, fenceEnabled());'],
+    ['const dir = await ensureWorkspacePath(await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId)), path);', 'const dir = await ensureWorkspacePath(await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId)), path, fenceEnabled());'],
   ]) source = replace(source, before, after, count ?? 1);
   return source;
 }

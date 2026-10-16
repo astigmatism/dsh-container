@@ -12,7 +12,7 @@ const ids = ['compaction-basic', 'command-compact', 'tool-result-pruner'];
 const policies = new Map(ids.map(id => [id, managed.find(row => row.id === id)]));
 assert.ok([...policies.values()].every(Boolean));
 const pkg = `${root}/node_modules/@deepseek-ai/dsh-web-app`;
-assert.equal(JSON.parse(fs.readFileSync(`${pkg}/package.json`)).version, '0.2.0-rc.2');
+assert.equal(JSON.parse(fs.readFileSync(`${pkg}/package.json`)).version, '0.2.1-alpha.5');
 for (const preset of ['standard', 'ptc', 'cordis', 'minimal']) {
   const file = `${pkg}/presets/${preset}.patch.yml`;
   const document = YAML.parseDocument(fs.readFileSync(file, 'utf8'), options);
@@ -31,8 +31,14 @@ for (const preset of ['standard', 'ptc', 'cordis', 'minimal']) {
     plugins.add(group);
   }
   for (const id of ids) {
-    const row = group.get('config').items.find(row => row.get('id') === id);
-    assert.ok(row, `${preset} missing ${id}`);
+    let row = group.get('config').items.find(row => row.get('id') === id);
+    if (!row) {
+      // 0.2.1 dropped the pruner from the minimal preset; the maintained
+      // policy still ships it in every preset.
+      assert.equal(id, 'tool-result-pruner', `${preset} missing ${id}`);
+      row = document.createNode({ id, name: '@deepseek-ai/dsh-compaction-tool-result-pruner' });
+      group.get('config').items.push(row);
+    }
     row.set('disabled', false);
     if (policies.get(id).config) row.set('config', document.createNode(policies.get(id).config));
   }

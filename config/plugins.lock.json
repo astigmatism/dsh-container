@@ -1,18 +1,18 @@
 {
-  "capturedAt": "2026-10-02",
-  "dsh": "0.2.0-rc.2 (dsh-v0.2.0-rc.2; 639ed015397290b3745d163aafe02ffee4aa3f84)",
+  "capturedAt": "2026-10-16",
+  "dsh": "0.2.1-alpha.5 (dsh-v0.2.1-alpha.5; 1517a4dbca0a2789ff1d41ba439600f8547d23fa)",
   "profile": "web",
   "plugins": {
     "@zoytown/dsh-token": "0.1.3",
-    "dsh-context": "0.62.2",
+    "dsh-context": "0.72.0",
     "dsh-favicon-status": "0.1.0-rc.8",
     "dsh-follow-up-suggestions": "0.1.0 (local, seed/profile/plugins; adapted from shaoeric/dsh-suggest@ccbc98a)",
     "dsh-local-speech-input": "0.1.0 (local)",
     "dsh-loop-detector": "1.0.0 (local patch)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
-    "dsh-session-pin": "0.7.16 (session/workspace navigation patch)",
-    "dsh-ui-appearance": "0.1.17 (settings icon patch)",
-    "dsh-better-sidebar": "0.24.1",
+    "dsh-session-pin": "0.7.19 (session/workspace navigation patch)",
+    "dsh-ui-appearance": "0.1.23 (settings icon patch)",
+    "dsh-better-sidebar": "0.26.1",
     "dsh-ego-browser": "0.8.6 (container adapter v1)"
   },
   "sourceHeads": {

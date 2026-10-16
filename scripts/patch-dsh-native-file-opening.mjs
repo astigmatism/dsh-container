@@ -110,6 +110,13 @@ export function patchConversationSource(input) {
 /** Make produced-file and folder affordances obey the same Host capability. */
 export function patchDeliverablesSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
+  // 0.2.1-alpha.5 rewrote Deliverables around server-reported Host desktop
+  // metadata (/api/present.host): open affordances follow the Host's own
+  // desktop availability and there is no browser-side loopback heuristic
+  // left to gate, so this is verification-only.
+  if (input.includes('PRESENT_HOST_ROUTE') && !input.includes('isLoopback')) {
+    return `${input}\n// ${PATCH_MARKER}: verified Deliverables gates open actions on server-reported Host desktop metadata.\n`;
+  }
   if (input.includes('function producedFileMentions(paths, openFile, label)') &&
       input.includes('producedFileMentions([...new Set([...paths ?? [], ...presented.map((file) => file.path)])], owner.openFile,') &&
       input.includes('openFile(path);')) {

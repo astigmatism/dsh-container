@@ -9,8 +9,8 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 FROM ${NODE_IMAGE} AS harness
 
-ARG DSH_VERSION=0.2.0-rc.2
-ARG DSH_UPSTREAM_COMMIT=639ed015397290b3745d163aafe02ffee4aa3f84
+ARG DSH_VERSION=0.2.1-alpha.5
+ARG DSH_UPSTREAM_COMMIT=1517a4dbca0a2789ff1d41ba439600f8547d23fa
 ARG PNPM_VERSION=11.7.0
 
 LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-container" \
@@ -187,8 +187,8 @@ RUN cd /opt/dsh-seed/profiles/web \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
-    && grep -Fq 'dsh-better-sidebar@0.24.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-context@0.62.2' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-better-sidebar@0.26.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-context@0.72.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.8' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-follow-up-suggestions@link:' /opt/dsh-seed/plugin-inventory.txt \
     && dsh --profile web --dump-config | grep -Fq 'name: dsh-follow-up-suggestions' \
@@ -196,8 +196,8 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-container-v1' node_modules/dsh-ego-browser/lib/index.js \
-    && grep -Fq 'dsh-session-pin@0.7.16' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ui-appearance@0.1.17' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-session-pin@0.7.19' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ui-appearance@0.1.23' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \

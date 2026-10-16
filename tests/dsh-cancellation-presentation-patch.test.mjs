@@ -26,13 +26,13 @@ function assistantProjection() {
 						className: MessageItem_module_css_default.turnErrorCopy,
 						children: [(0, react_jsx_runtime.jsx)("span", {
 							className: MessageItem_module_css_default.turnErrorTitle,
-							children: t("message.turnError")
+							children: node.code === "ACCOUNT_SIGNED_OUT" || node.code === "INTERRUPTED" ? t("message.taskStopped") : t("message.turnError")
 						}), (0, react_jsx_runtime.jsx)("span", {
 							className: MessageItem_module_css_default.turnErrorMessage,
 							children: failureMessage(node.message, node.code, t)
 						})]
 					}),
-					node.code !== void 0 && (0, react_jsx_runtime.jsx)("code", {
+					node.code !== void 0 && node.code !== "INTERRUPTED" && (0, react_jsx_runtime.jsx)("code", {
 						className: MessageItem_module_css_default.turnErrorCode,
 						children: node.code
 					})
@@ -44,8 +44,9 @@ function assistantProjection() {
 		function lastStep$1(context) {
 		}
 		function failureFrom(match) {
-			if (match.event.type !== "turn/end" || match.event.data.reason.kind !== "error") return void 0;
-			const failure = match.event.data.reason.error;
+			if (match.event.type !== "turn/end") return void 0;
+			const failure = endFailure(match.event.data.reason);
+			if (failure === void 0) return void 0;
 			const display = displayFailure(failure);
 			return {
 				seq: match.event.seq,
@@ -56,7 +57,7 @@ function assistantProjection() {
 		}
 		const turnErrorDefinition = {
 			match: (event) => {
-				if (event.type === "turn/end" && event.data.reason.kind === "error") return {
+				if (event.type === "turn/end" && endFailure(event.data.reason) !== void 0) return {
 					id: String(event.data.turn),
 					role: "update"
 				};
@@ -75,7 +76,6 @@ function assistantProjection() {
 			}
 		};
 `;
-
 test("explicit user Stop remains a benign visible outcome", () => {
   assert.deepEqual(cancellationPresentation({ kind: "user" }), {
     severity: "benign",

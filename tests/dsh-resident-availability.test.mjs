@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCodec, patchRetry, modelPickerAvailableOnly } from '../scripts/patch-dsh-resident-availability.mjs';
 import { EndpointConcurrencyGate } from '../scripts/patch-dsh-llm-pi-ai.mjs';
-const fixture = JSON.parse(await readFile(new URL('./fixtures/dsh-resident-availability-0.2.0-rc.2.json', import.meta.url)));
+const fixture = JSON.parse(await readFile(new URL('./fixtures/dsh-resident-availability-0.2.1-alpha.5.json', import.meta.url)));
 const clone = value => JSON.parse(JSON.stringify(value));
 // Dependency-free stand-in for the installed `yaml` package, faithful to it on
 // the settings shapes this patch reads (verified against it in the container).
@@ -41,7 +41,7 @@ function adapter() {
   const source = patchAdapter(fixture.adapter);
   const Adapter = vm.runInNewContext(source.slice(source.indexOf('var PiAiAdapter')) + '\nPiAiAdapter', {
     LlmAdapter: class {}, LlmError, EndpointConcurrencyGate, AbortController, AbortSignal,
-    resolveReasoningLevel: () => 'medium', contentHasImage: () => false,
+    resolveReasoningLevel: () => 'medium', contentHasImage: () => false, conversationUpdates: () => ({}),
     toPiContext: () => ({}), timeoutOf: () => undefined,
     idleWatchdog: signal => ({ signal, next: iterator => iterator.next() }),
     __addDisposableResource: (_env, value) => value,
@@ -137,8 +137,8 @@ test('client renders unavailable choices disabled and prevents alternate-picker 
 test('host and browser RPC codecs preserve model availability', () => {
   for (const key of ['codec', 'clientCodec']) {
     const patched = patchCatalogCodec(fixture[key]);
-    assert.match(patched, /['"]available['"]: (?:z\.)?boolean\(\)\.optional\(\)/);
-    assert.match(patched, /['"]availableOnly['"]: (?:z\.)?boolean\(\)\.optional\(\)/);
+    assert.match(patched, /['"]available['"]: (?:zod\.z|z)?\.?boolean\(\)\.optional\(\)/);
+    assert.match(patched, /['"]availableOnly['"]: (?:zod\.z|z)?\.?boolean\(\)\.optional\(\)/);
     // The added fields belong to the model descriptor, after the models array
     // and before the routable providers.
     assert.ok(patched.indexOf('models') < patched.indexOf('available') < patched.indexOf('routableProviders'));
@@ -190,7 +190,7 @@ test('the availableOnly picker filter hides unavailable and switching rows and s
   assert.match(source, /availableOnly: catalog\.value\.availableOnly === true/);
   // Default off: the raw groups pass through untouched.
   assert.match(source, /state\.availableOnly === true \? state\.groups\.map/);
-  assert.match(source, /: state\.groups\), \[state\.groups, state\.availableOnly\]\)/);
+  assert.match(source, /state\.groups, state\.availableOnly, accountProviderName\]/);
   // One status line while a router switch drains.
   assert.match(source, /t\("status\.waitingRouter"\)/);
   assert.match(source, /"status\.waitingRouter": "Waiting on the router…"/);

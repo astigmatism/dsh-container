@@ -186,6 +186,20 @@ test("0.2.0-rc.2's in-app produced-file opener is verified upstream and marker-o
   );
 });
 
+test("0.2.1-alpha.5 server-driven desktop metadata is verified and marker-only", () => {
+  const alphaFixture = `
+		const PRESENT_HOST_ROUTE = PRESENT_HOST_PATH.slice(1);
+		async readHost(signal) {
+			const response = await fetch(PRESENT_HOST_ROUTE, { signal });
+		}
+`;
+  const patched = patchDeliverablesSource(alphaFixture);
+
+  assert.match(patched, /dsh-native-file-opening-v1/);
+  assert.match(patched, /server-reported Host desktop metadata/);
+  assert.equal(patchDeliverablesSource(patched), patched, "alpha.5 deliverables verification is idempotent");
+});
+
 test("upstream anchor drift fails with a clear diagnostic", () => {
   const driftedConversation = conversationFixture.replace("openFile: requestOpenFile,", "openFile: renamedOpenFile,");
   assert.throws(

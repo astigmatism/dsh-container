@@ -3,10 +3,10 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { isPatched, marker, patchSource } from '../scripts/patch-dsh-busy-enter-steer.mjs';
 
-// Verbatim excerpt of @deepseek-ai/dsh-client-ui-conversation@0.2.0-rc.2
+// Verbatim excerpt of @deepseek-ai/dsh-client-ui-conversation@0.2.1-alpha.5
 // lib/client.js: the busy-Enter settings vocabulary, resolveSubmitMode, and
 // ComposerSubmissionPolicy (MIT; license alongside).
-const fixture = await readFile(new URL('./fixtures/dsh-client-ui-conversation-busy-enter-0.2.0-rc.2.js', import.meta.url), 'utf8');
+const fixture = await readFile(new URL('./fixtures/dsh-client-ui-conversation-busy-enter-0.2.1-alpha.5.js', import.meta.url), 'utf8');
 
 function load(source) {
   const stubs = `

@@ -38,7 +38,7 @@ requireMarkers("dsh-llm shared overflow classifier", llm, [
   "token[\\s_-]+slot",
 ]);
 requireMarkers("pi-ai context estimator", estimate, [
-  "const CHARS_PER_TOKEN = 4",
+  "const CHARS_PER_TOKEN = 3.5",
   "const ESTIMATED_IMAGE_CHARS = 4800",
   'message.role === "toolResult"',
   'block.type === "thinking"',

@@ -18,7 +18,7 @@ function adapter() {
     react: { useMemo: f => f(), useEffect: () => {}, createElement: (type, props, ...children) => jsx(type, { ...props, children }) },
     react_jsx_runtime: { jsx, jsxs: jsx },
     useRecordVersion: () => {},
-    useSessionCwd: (_ctx, id) => { assert.equal(id, reference); return cwd; },
+    useSessionRoot: (_ctx, id) => { assert.equal(id, reference); return cwd; },
     EDITOR_KIND: 'editor',
     sidebar_module_css_default: {},
     RenderBoundary: 'boundary', OrphanedTab: 'orphan', t: key => key,

@@ -17,13 +17,13 @@ needs the NVIDIA Container Toolkit.
 
 ## Captured configuration
 
-The `0.2.0-rc.2` upgrade reaches canonical `main` only after its required Linux
-qualification passes. See the [qualification and rollback record](docs/harness-0.2-upgrade.md)
+The `0.2.1-alpha.5` upgrade reaches canonical `main` only after its required
+Linux qualification passes. See the [qualification and rollback record](docs/harness-0.2.1-upgrade.md)
 for the release decision and test scope. Production verification is a separate
 step after an operator updates a selected deployment through Service Portal.
 
-- DeepSeek Harness `0.2.0-rc.2`, official package from tag `dsh-v0.2.0-rc.2`
-  at `639ed015397290b3745d163aafe02ffee4aa3f84`; pnpm `11.7.0`;
+- DeepSeek Harness `0.2.1-alpha.5`, official package from tag `dsh-v0.2.1-alpha.5`
+  at `1517a4dbca0a2789ff1d41ba439600f8547d23fa`; pnpm `11.7.0`;
   Docker CLI `29.6.0`. Both package graphs are frozen in Git.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
@@ -130,7 +130,7 @@ recreation, or any write to the disabled plugin's durable index.
 
 ## Native terminal workflow
 
-Harness 0.2.0-rc.2 owns the terminal in the right sidebar. Open a conversation,
+Harness 0.2.1-alpha.5 owns the terminal in the right sidebar. Open a conversation,
 add a **Terminal** tab, and select Bash. The shell runs inside the container in
 that session's workspace. Output streams as it arrives; reconnecting restores
 the retained screen, and closing the terminal ends its process. Processes do
@@ -530,7 +530,7 @@ default and are persisted in `data/gateway/sessions.json`, so they survive
 gateway restarts until they expire. Override the lifetime in seconds with
 `HARNESS_SESSION_TTL_SECONDS` in the private `.env`.
 
-Harness `0.2.0-rc.2` also authenticates its own browser and RPC carrier.
+Harness `0.2.1-alpha.5` also authenticates its own browser and RPC carrier.
 The container entrypoint generates a fresh 32-byte launch token on every
 start, stores it as `data/backend-auth/launch-token` with mode `0600`, and supplies
 the same value to Harness. The gateway sees that file through a read-only
@@ -649,8 +649,8 @@ when private hosts are enabled.
 The CLI's dependency graph is also locked in `config/dsh-runtime.package-lock.json`
 and installed with `npm ci`. Pinning only the top-level CLI admits newer internal
 prereleases through upstream caret ranges. This lock pins every Harness package
-to 0.2.0-rc.2 and Cordis to 4.0.4, using published packages resolved on
-2026-10-02. Regenerate and review both locks with any Harness upgrade.
+to 0.2.1-alpha.5 and Cordis to 4.0.5, using published packages resolved on
+2026-10-16. Regenerate and review both locks with any Harness upgrade.
 
 Ordinary `docker compose build` uses the Harness version and upstream commit
 pinned in `Dockerfile` on Windows, macOS, and Linux. Legacy `DSH_VERSION` and

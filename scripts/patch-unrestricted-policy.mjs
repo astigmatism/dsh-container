@@ -8,6 +8,18 @@ function replace(source, before, after) {
   if (!source.includes(before)) throw new Error(`Pinned DSH source drift at ${before.slice(0, 90)}`);
   return source.replace(before, after);
 }
+function requireUpstream(source, anchors, description) {
+  for (const anchor of anchors) {
+    if (!source.includes(anchor)) throw new Error(`${description} upstream drift: ${anchor.slice(0, 90)}`);
+  }
+  return source;
+}
+
+// 0.2.1-alpha.5 still resolves maxTokens without the container's
+// unrestricted-output policy, so the adapter, simple-options, and compaction
+// patches remain real patches (null maxTokens is an explicit unrestricted
+// capability, never a request default). The Responses transport patches stay
+// container-local because the router owns connection and stall recovery.
 export function patchAdapter(input) {
   if (input.includes(marker)) return input;
   let s = replace(input, 'const maxTokens = entry.maxTokens ?? base?.maxTokens ?? request.defaultMaxTokens;',
@@ -27,30 +39,6 @@ export function patchSimpleOptions(input) {
   return replace(input, 'maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),',
     `// ${marker}: exact deliberate quota, otherwise omitted. Router counts formatted context.\n        maxTokens: model.maxTokens === null ? options?.maxTokens : clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),`);
 }
-export function patchResponses(input) {
-  if (input.includes(marker)) return input;
-  let s = input;
-  s = replace(s, 'const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;',
-    'const reasoningEffort = clampedReasoning === "off" && model.maxTokens !== null ? undefined : clampedReasoning;');
-  s = replace(s, 'Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)',
-    '(model.maxTokens === null ? options.maxTokens : Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS))');
-  s = replace(s, 'else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null)',
-    'else if (model.maxTokens !== null && model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null)');
-  s = replace(s, 'return new OpenAI({', 'return new (model.maxTokens === null ? RouterOpenAI : OpenAI)({');
-  // The SDK has a default header timer; timeout=0 is an immediate abort in this
-  // pinned SDK. Override the local route's fetch method, not its numeric timeout.
-  // ${errorMarker}: keep the router's machine-readable error code beside the
-  // display text so the adapter classifies by error.code (contract §10).
-  s = replace(s, '            output.errorMessage = formatProviderError(normalizeProviderError(error), `${model.provider === "openai" ? "OpenAI" : model.provider} API error`);',
-    `            output.errorMessage = formatProviderError(normalizeProviderError(error), \`\${model.provider === "openai" ? "OpenAI" : model.provider} API error\`);
-            // ${errorMarker}
-            const routerError = routerErrorOf(error);
-            if (routerError !== undefined) output.routerError = routerError;`);
-  s += `\n// ${errorMarker}: SDK APIError carries status and error.code; in-stream failures carry routerCode.\nfunction routerErrorOf(error) {\n  const body = error?.error !== null && typeof error?.error === 'object' ? error.error : undefined;\n  const code = typeof error?.routerCode === 'string' && error.routerCode ? error.routerCode\n    : typeof error?.status === 'number' && typeof (body?.code ?? error.code) === 'string' ? (body?.code ?? error.code) : undefined;\n  if (code === undefined) return undefined;\n  const message = typeof error.routerMessage === 'string' ? error.routerMessage : typeof body?.message === 'string' ? body.message : undefined;\n  return { code, ...(typeof error.status === 'number' ? { status: error.status } : {}), ...(message === undefined ? {} : { message }) };\n}\n`;
-  s += `\n// ${marker}: the router owns connection/stall recovery and generation has no total deadline.\n// ${activityMarker}: every received byte, including queue keepalive comments, is stream activity.\nclass RouterOpenAI extends OpenAI {\n  constructor(options) {\n    super(options);\n    this.routerActivity = typeof options?.fetch?.routerActivity === 'function' ? options.fetch.routerActivity : undefined;\n  }\n  async fetchWithTimeout(url, init, _ms, controller) {\n    const { request } = await import(String(url).startsWith('https:') ? 'node:https' : 'node:http');\n    const { Readable } = await import('node:stream');\n    const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;\n    const activity = this.routerActivity;\n    return new Promise((resolve, reject) => {\n      const headers = new Headers(init.headers);\n      if (typeof init.body === 'string') headers.set('content-length', String(Buffer.byteLength(init.body)));\n      const req = request(url, { method: init.method || 'POST', headers: Object.fromEntries(headers), signal }, res => {\n        let body = Readable.toWeb(res);\n        if (activity) body = body.pipeThrough(new TransformStream({ transform(chunk, stream) { try { activity(); } catch {} stream.enqueue(chunk); } }));\n        resolve(new Response(body, { status: res.statusCode, headers: res.headers }));\n      });\n      req.once('error', reject);\n      if (init.body) req.write(init.body);\n      req.end();\n    });\n  }\n}\n`;
-  return s;
-}
-
 export function patchCompaction(input) {
   // The runtime validator is separate from schema normalization. Repair older
   // patched bundles too: the broad v1 replacement hit the resolved-value check
@@ -76,6 +64,33 @@ export function patchCompaction(input) {
   s = replace(s, validation, nullableValidation);
   s = replace(s, 'const maxTokensSchema = z.number().step(1).min(1);',
     'const maxTokensSchema = z.union([z.number().step(1).min(1), z.const(null)]);');
+  return s;
+}
+export function patchResponses(input) {
+  if (input.includes(marker)) return input;
+  let s = input;
+  s = replace(s, 'const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;',
+    'const reasoningEffort = clampedReasoning === "off" && model.maxTokens !== null ? undefined : clampedReasoning;');
+  s = replace(s, 'Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)',
+    '(model.maxTokens === null ? options.maxTokens : Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS))');
+  s = replace(s, 'else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null)',
+    'else if (model.maxTokens !== null && model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null)');
+  s = replace(s, 'return new OpenAI({', 'return new (model.maxTokens === null ? RouterOpenAI : OpenAI)({');
+  // The SDK has a default header timer; timeout=0 is an immediate abort in this
+  // pinned SDK. Override the local route's fetch method, not its numeric timeout.
+  // ${errorMarker}: keep the router's machine-readable error code beside the
+  // display text so the adapter classifies by error.code (contract §10).
+  s = replace(s, `            output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
+                ? \`\${errorMessage}\\nCheck your ChatGPT usage: \${CHATGPT_USAGE_URL}\`
+                : errorMessage;`,
+    `            output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
+                ? \`\${errorMessage}\\nCheck your ChatGPT usage: \${CHATGPT_USAGE_URL}\`
+                : errorMessage;
+            // ${errorMarker}
+            const routerError = routerErrorOf(error);
+            if (routerError !== undefined) output.routerError = routerError;`);
+  s += `\n// ${errorMarker}: SDK APIError carries status and error.code; in-stream failures carry routerCode.\nfunction routerErrorOf(error) {\n  const body = error?.error !== null && typeof error?.error === 'object' ? error.error : undefined;\n  const code = typeof error?.routerCode === 'string' && error.routerCode ? error.routerCode\n    : typeof error?.status === 'number' && typeof (body?.code ?? error.code) === 'string' ? (body?.code ?? error.code) : undefined;\n  if (code === undefined) return undefined;\n  const message = typeof error.routerMessage === 'string' ? error.routerMessage : typeof body?.message === 'string' ? body.message : undefined;\n  return { code, ...(typeof error.status === 'number' ? { status: error.status } : {}), ...(message === undefined ? {} : { message }) };\n}\n`;
+  s += `\n// ${marker}: the router owns connection/stall recovery and generation has no total deadline.\n// ${activityMarker}: every received byte, including queue keepalive comments, is stream activity.\nclass RouterOpenAI extends OpenAI {\n  constructor(options) {\n    super(options);\n    this.routerActivity = typeof options?.fetch?.routerActivity === 'function' ? options.fetch.routerActivity : undefined;\n  }\n  async fetchWithTimeout(url, init, _ms, controller) {\n    const { request } = await import(String(url).startsWith('https:') ? 'node:https' : 'node:http');\n    const { Readable } = await import('node:stream');\n    const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;\n    const activity = this.routerActivity;\n    return new Promise((resolve, reject) => {\n      const headers = new Headers(init.headers);\n      if (typeof init.body === 'string') headers.set('content-length', String(Buffer.byteLength(init.body)));\n      const req = request(url, { method: init.method || 'POST', headers: Object.fromEntries(headers), signal }, res => {\n        let body = Readable.toWeb(res);\n        if (activity) body = body.pipeThrough(new TransformStream({ transform(chunk, stream) { try { activity(); } catch {} stream.enqueue(chunk); } }));\n        resolve(new Response(body, { status: res.statusCode, headers: res.headers }));\n      });\n      req.once('error', reject);\n      if (init.body) req.write(init.body);\n      req.end();\n    });\n  }\n}\n`;
   return s;
 }
 

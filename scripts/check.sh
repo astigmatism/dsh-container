@@ -298,7 +298,10 @@ if [ "$build" -eq 1 ]; then
     for (const [name, source, markers] of [
       ["chat", conversation, [
         "dsh-cancellation-presentation-v1",
-        "event.data.reason.kind === \"error\" || event.data.reason.kind === \"aborted\"",
+        // alpha.5 refactored the turn-error routing predicate to read the reason
+        // kind once; the aborted/interrupted/error seat the cancellation patch
+        // projects into is unchanged.
+        "reason === \"aborted\" || reason === \"interrupted\" || reason === \"error\"",
         "failure.cancellation === void 0 ? {} : { cancellation: failure.cancellation }",
         "Stopped by safety hook",
         "dsh-native-file-opening-v1",
@@ -308,13 +311,12 @@ if [ "$build" -eq 1 ]; then
       ]],
       ["deliverables", deliverables, [
         "dsh-native-file-opening-v1",
-        // 0.2.0-rc.2 redesign: produced-file chips unconditionally call
-        // the in-app resource opener of the chat view; the legacy
-        // owner/opener branches no longer exist, and the patch verifies
-        // them upstream.
-        "function producedFileMentions(paths, openFile, label)",
+        // 0.2.1-alpha.5 rewrote Deliverables around server-reported Host
+        // desktop metadata; produced-file chips still route through the chat
+        // resource opener, and the patch verifies the upstream gate.
+        "function producedFileMentions(paths, openFile, label, operations = [])",
         "owner.openFile",
-        "verified produced-file actions use the chat resource opener",
+        "verified Deliverables gates open actions on server-reported Host desktop metadata.",
       ]],
     ]) {
       for (const marker of markers) {

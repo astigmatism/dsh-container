@@ -242,7 +242,10 @@ test('real pinned adapter: unavailable placeholder, state messages, switching di
     'amazon-bedrock': { models: [{ id: 'amazon.nova-lite-v1:0' }] },
   } });
   const profiles = resolveProfiles(config.providers.get());
-  const adapter = new PiAiAdapter({ profiles: () => profiles, auth: {} });
+  // alpha.5 resolves the provider API key inside listModels (returning an
+  // empty catalog on a missing credential). These fixtures declare no
+  // apiKeyEnv, so the real resolver yields undefined; mirror that.
+  const adapter = new PiAiAdapter({ profiles: () => profiles, auth: {}, resolveApiKey: async () => undefined });
   const [night] = await adapter.listModels('local-everyday');
   assert.equal(night.available, false);
   assert.equal(night.name, 'Nighttime — offline (flash-next-solo-128k)');

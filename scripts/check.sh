@@ -209,12 +209,22 @@ if [ "$build" -eq 1 ]; then
     --volume "$project_dir:/src:ro" --entrypoint node "$gateway_image" \
     --test /src/tests/external-tls.integration.mjs
 
+  # The three image builds leave a large BuildKit cache on the runner. Reclaim
+  # it before the recovery/maintenance rehearsals, which build their own
+  # fixtures, so the overlay filesystem stays within the runner's limits.
+  docker builder prune -f >/dev/null 2>&1 || true
+
   if [ "${CI:-false}" = true ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --external
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
+    # Reclaim the fixture images and volumes the rehearsals leave behind before
+    # the boot checks; the tagged release images the later steps use are kept.
+    docker image prune -f >/dev/null 2>&1 || true
+    docker volume prune -f >/dev/null 2>&1 || true
+    docker builder prune -f >/dev/null 2>&1 || true
   fi
 
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.1-alpha.5 ] || {

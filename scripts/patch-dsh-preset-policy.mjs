@@ -30,6 +30,20 @@ for (const preset of ['standard', 'ptc', 'cordis', 'minimal']) {
       ] });
     plugins.add(group);
   }
+  // 0.2.1-alpha.5 ships the minimal preset with a compaction group whose
+  // isolate map omits toolResultPruner, so the pruner service leaks into the root
+  // realm and the preset fails to mount ("Preset services require isolate realms:
+  // toolResultPruner"). Ensure both compaction services are isolated in every
+  // preset, matching the standard/ptc/cordis presets.
+  let isolate = group.get('isolate');
+  if (!YAML.isMap(isolate)) {
+    isolate = document.createNode({ compaction: true, toolResultPruner: true });
+    group.set('isolate', isolate);
+  } else {
+    for (const service of ['compaction', 'toolResultPruner']) {
+      if (isolate.get(service) !== true) isolate.set(service, true);
+    }
+  }
   for (const id of ids) {
     let row = group.get('config').items.find(row => row.get('id') === id);
     if (!row) {

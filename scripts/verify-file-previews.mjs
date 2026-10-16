@@ -222,16 +222,20 @@ try {
   console.log('Verified text/HTML/PDF/download adapter paths and existing workspace containment.');
   await page.setViewportSize({ width: 1500, height: 500 });
   await page.getByRole('button', { name: 'Context Insights', exact: true }).click();
-  const insights = page.locator('.lc-ov-scroll');
+  const insights = page.locator('.lc-ov-pagescroll');
   await insights.waitFor();
   await insights.hover();
   await page.mouse.wheel(0, 500);
-  await page.waitForFunction(() => document.querySelector('.lc-ov-scroll')?.scrollTop > 0);
-  await page.locator('.lc-ov-card').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.lc-ov-pagescroll')?.scrollTop > 0);
+  // dsh-context 0.72 renders Context Insights as a full-height panel with no
+  // close control; reopening the session returns to the conversation view.
+  await select(sessions[0]);
   await page.setViewportSize({ width: 1500, height: 1000 });
   console.log('Verified Context Insights data rendering and scrolling.');
 
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  // alpha.5 moved the app Settings entry under the account menu as a menuitem.
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await page.waitForFunction(() => document.body.hasAttribute('data-ds-dark-theme'));
   const appearanceBefore = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim());

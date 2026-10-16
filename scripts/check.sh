@@ -177,6 +177,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-file-previews.mjs
     node --check scripts/patch-dsh-sidebar-workspace.mjs
     node --check scripts/patch-dsh-web-auth.mjs
+    node --check scripts/patch-dsh-web-runtime-compat.mjs
     node --check scripts/patch-dsh-session-title-reasoning.mjs
     node --check scripts/patch-dsh-busy-enter-steer.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
@@ -235,6 +236,8 @@ if [ "$build" -eq 1 ]; then
     /opt/dsh-build/patch-dsh-session-title-reasoning.mjs --check
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-busy-enter-steer.mjs --check
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
+    /opt/dsh-build/patch-dsh-web-runtime-compat.mjs --check
 
   # Use the packaged native executor for deadlines, output capture and actual
   # process-tree cleanup; mock plugin tests alone cannot verify these contracts.

@@ -216,16 +216,16 @@ if [ "$build" -eq 1 ]; then
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
   fi
 
-  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.0-rc.2 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.1-alpha.5 ] || {
     echo "Built image has the wrong Harness version label." >&2
     exit 1
   }
-  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 639ed015397290b3745d163aafe02ffee4aa3f84 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 1517a4dbca0a2789ff1d41ba439600f8547d23fa ] || {
     echo "Built image has the wrong upstream commit label." >&2
     exit 1
   }
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
-    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.2.0-rc.2") process.exit(1)'
+    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.2.1-alpha.5") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-file-previews.mjs --check
@@ -261,16 +261,16 @@ if [ "$build" -eq 1 ]; then
     ')
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
-    'dsh-better-sidebar@0.24.1' \
-    'dsh-context@0.62.2' \
+    'dsh-better-sidebar@0.26.1' \
+    'dsh-context@0.72.0' \
     'dsh-favicon-status@0.1.0-rc.8' \
     'dsh-follow-up-suggestions@link:' \
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
     'dsh-ego-browser@0.8.6' \
-    'dsh-session-pin@0.7.16' \
-    'dsh-ui-appearance@0.1.17'
+    'dsh-session-pin@0.7.19' \
+    'dsh-ui-appearance@0.1.23'
   do
     printf '%s\n' "$inventory" | grep -Fq "$expected" || {
       echo "Built image is missing: $expected" >&2

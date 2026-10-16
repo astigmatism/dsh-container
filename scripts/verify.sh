@@ -467,4 +467,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.2.0-rc.2, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.2.1-alpha.5, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

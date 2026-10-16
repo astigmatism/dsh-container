@@ -28,6 +28,10 @@ replayed from a fresh tarball and a fresh `pnpm install` before this PR.
 
 ## What upstream changed and how the container follows
 
+- **The `webRuntime` cordis service is gone.** alpha.5 dropped the service the
+  profile plugins (Better Sidebar and others) required at boot;
+  `patch-dsh-web-runtime-compat.mjs` re-provides `webRuntime` from
+  `webStartup.trustedHosts` so the composed profile mounts unchanged.
 - **Unrestricted output stays container-local.** The published 0.2.1-alpha.5
   packages still resolve `maxTokens` without the null (unrestricted)
   capability, so the adapter, simple-options, and compaction patches in
@@ -50,6 +54,14 @@ replayed from a fresh tarball and a fresh `pnpm install` before this PR.
   verifies that path and keeps the deliverables-side capability guard.
 - **The minimal preset omits tool-result pruning** in alpha.5; the preset
   policy patch inserts the pruner row so all four presets prune.
+- **The schedule bundle folded into the core web-app graph.** Its module is now
+  always present, and the remaining official optional bundles are cordis
+  patch-bundles that leave the dumped config unchanged; the composition test
+  verifies each selection loads with the incompatible Token inactive and each
+  installed bundle's patch manifest, rather than by module presence.
+- **Client verification re-anchored to alpha.5 UI.** Context Insights is now a
+  full-height panel with no close control, and app Settings moved under the
+  account menu as a menuitem; the boot-check browser verifications follow.
 - Resident availability, web auth, launch-token grep, busy-enter steer,
   cancellation presentation, progress status, token session format, and the
   ego adapters re-anchored to alpha.5 surfaces with the same contracts.
@@ -63,6 +75,10 @@ replayed from a fresh tarball and a fresh `pnpm install` before this PR.
   composition, effective-config verifiers, plugin inventory, and marker greps.
 - `node-pty` PTY verifier on the alpha.5 subprocess package.
 - Repository unit tests and `./scripts/check.sh --host`.
+- Image-level Docker verifications replayed against the built alpha.5 image:
+  the plain and `DSH_VERIFY_RESIDENT_CATALOG` boot checks, the client test
+  batch, module marker greps, token policy, router startup in both modes,
+  profile-sync divergence, and persisted-settings initialization.
 - CI `test-and-build` (`./scripts/check.sh --build`) on the PR revision:
   recorded below when the run completes.
 

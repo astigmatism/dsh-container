@@ -101,7 +101,7 @@ def finish_worker(action, code):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('install', 'launch', 'update', 'verify', 'boot', 'recover', 'rollback', 'self-test'))
+    parser.add_argument('action', choices=('install', 'launch', 'update', 'verify', 'boot', 'recover', 'rollback', 'self-test', 'check'))
     parser.add_argument('--manifest', type=Path)
     parser.add_argument('--recovery-point', type=Path)
     parser.add_argument('--deployment-dir', type=Path)
@@ -144,6 +144,13 @@ def main():
                 'Portal URL conflicts with the deployment manifest')
     if args.mode:
         require(args.mode == manifest['mode'], 'Requested topology conflicts with installed deployment')
+    if args.action == 'check':
+        # A portal update check is read-only: it takes no maintenance lock,
+        # launches no worker, and touches no service. It only compares the
+        # running image's recorded revision with canonical main.
+        from maintenance.update_check import report
+        report(manifest, os.environ.get('SERVICE_PORTAL_DEPLOYED_REVISION', ''))
+        return
     if args.action == 'launch':
         launch(root, args.dry_run, args.worker_action)
     elif args.action == 'update':

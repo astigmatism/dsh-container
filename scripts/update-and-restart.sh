@@ -18,9 +18,10 @@ while [ "$#" -gt 0 ]; do
     --dry-run) shift ;;
     --boot) action=boot; shift ;;
     --verify) action=verify; shift ;;
+    check) action=check; shift ;;
     --external-ollama|--remote-ollama|--managed-ollama)
       mode_flag=$1; shift ;;
-    -h|--help) echo "usage: update-and-restart.sh [--manifest FILE | --deployment-dir DIR] [--dry-run]"; exit 0 ;;
+    -h|--help) echo "usage: update-and-restart.sh [check] [--manifest FILE | --deployment-dir DIR] [--dry-run]"; exit 0 ;;
     *) echo "Unknown maintenance option" >&2; exit 2 ;;
   esac
 done
@@ -34,6 +35,12 @@ case "$manifest" in */deployment.json|deployment.json) ;; *) echo "Manifest must
 root=$(CDPATH= cd -- "$(dirname -- "$manifest")" && pwd)
 manifest=$root/deployment.json
 [ ! -f "$root/adoption.json" ] || { echo "Adoption is incomplete; rerun the original deploy.sh command to resume safely." >&2; exit 1; }
+if [ "$action" = check ]; then
+  # A Service Portal update check runs here, in the runner the portal started,
+  # and never launches a maintenance worker: it takes no lock, reads no
+  # service, and writes nothing outside a temporary directory.
+  exec python3 -B "$root/maintenance/main.py" check --manifest "$manifest"
+fi
 set --
 [ -z "$mode_flag" ] || set -- "$mode_flag"
 [ -z "$portal_url" ] || set -- "$@" --portal-url "$portal_url"

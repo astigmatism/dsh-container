@@ -2,6 +2,7 @@
 """Synthetic deployment contract, transaction, and recovery tests; no Docker."""
 import copy
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -557,6 +558,107 @@ class SourceTests(unittest.TestCase):
         with patch('maintenance.engine.run', return_value='not a revision') as command, self.assertRaises(Failure):
             fetch_source(Path('/tmp/synthetic-source'))
         self.assertEqual(command.call_count, 1)
+
+
+class UpdateCapabilityLabelTests(unittest.TestCase):
+    def test_harness_is_opted_into_portal_update_checks(self):
+        # The portal checks a deployment only when the running container
+        # advertises io.service-portal.update.check, and it compares live
+        # labels against the installed contract, so the engine owns this label.
+        manifest = {'roles': {'application': 'harness', 'edge': 'gateway'}, 'user': '1000:1000'}
+        model = {'services': {
+            'application': {'labels': {LABEL + 'check': 'stale', 'io.service-portal.url': 'http://app.test'}},
+            'edge': {'labels': {LABEL + 'enabled': 'true', LABEL + 'check': 'true'}}}}
+        install_labels(model, manifest, 'sha256:' + '9' * 64)
+        harness = model['services']['application']['labels']
+        self.assertEqual(harness[LABEL + 'check'], 'true')
+        self.assertEqual(harness[LABEL + 'image'], 'sha256:' + '9' * 64)
+        self.assertEqual(harness['io.service-portal.url'], 'http://app.test')
+        self.assertNotIn(LABEL + 'check', model['services']['edge']['labels'])
+        self.assertNotIn(LABEL + 'enabled', model['services']['edge']['labels'])
+
+
+class PortalUpdateCheckTests(unittest.TestCase):
+    """The portal disables its Update control only on a successful `current`,
+    so this protocol is the only update visibility an operator has."""
+    manifest = {'repository': 'https://git.test/app.git', 'branch': 'main'}
+
+    def check(self, deployed, *, target, commits=(), ancestor=True, in_history=True):
+        from maintenance import update_check
+
+        def command(workdir, *arguments, env):
+            name = arguments[0]
+            if name == 'rev-parse':
+                if 'refs/remotes/origin/check' in arguments:
+                    return target + '\n'
+                return arguments[-1].split('^')[0] + '\n'
+            if name == 'rev-list':
+                return str(len(commits)) + '\n'
+            if name == 'log':
+                return ''.join(f'{sha} 2026-10-01T00:00:00+00:00 Advance the harness\n'
+                               for sha in commits)
+            return ''
+
+        def status(workdir, *arguments, env):
+            if arguments[0] == 'cat-file':
+                return 0 if in_history else 1
+            if arguments[0] == 'merge-base':
+                return 0 if ancestor else 1
+            return 1
+
+        with patch.object(update_check, '_fetch_canonical', return_value=('/synthetic-work', target)), \
+             patch.object(update_check, '_git', side_effect=command), \
+             patch.object(update_check, '_status', side_effect=status), \
+             patch('sys.stdout', new_callable=io.StringIO) as output:
+            update_check.report(self.manifest, deployed)
+        return output.getvalue()
+
+    def test_current_is_reported_only_for_the_canonical_revision(self):
+        report = self.check('a' * 40, target='a' * 40)
+        self.assertIn('service-portal-check: status=current behind=0 '
+                      f'deployed={"a" * 40} target={"a" * 40}', report)
+        self.assertNotIn('service-portal-check-commit:', report)
+
+    def test_behind_lists_the_count_and_pending_commits(self):
+        report = self.check('b' * 40, target='a' * 40, commits=['c' * 40, 'd' * 40])
+        self.assertIn('service-portal-check: status=available behind=2 '
+                      f'deployed={"b" * 40} target={"a" * 40}', report)
+        self.assertEqual(report.count('service-portal-check-commit: '), 2)
+        self.assertTrue(report.startswith('service-portal-check-commit: ' + 'c' * 40))
+
+    def test_missing_deployed_revision_stays_available_not_an_error(self):
+        # An unknown running revision must leave the Update control enabled.
+        report = self.check('', target='a' * 40)
+        self.assertIn('status=available behind=unknown deployed=unknown', report)
+        self.assertIn('service-portal-check-note: ', report)
+
+    def test_unreachable_or_divergent_revision_reports_unknown_distance(self):
+        for deployed, kwargs in (('e' * 40, {'in_history': False}),
+                                 ('f' * 40, {'ancestor': False})):
+            with self.subTest(deployed=deployed):
+                report = self.check(deployed, target='a' * 40, **kwargs)
+                self.assertIn(f'status=available behind=unknown deployed={deployed}', report)
+                self.assertIn('service-portal-check-note: ', report)
+
+    def test_check_never_writes_outside_the_fetched_repository(self):
+        from maintenance import update_check
+        with tempfile.TemporaryDirectory() as base:
+            workdir = Path(base) / 'work'
+            workdir.mkdir()
+            with patch.object(update_check, '_fetch_canonical', return_value=(str(workdir), 'a' * 40)), \
+                 patch.object(update_check, '_git', return_value='a' * 40 + '\n'), \
+                 patch.object(update_check, '_status', return_value=0), \
+                 patch('sys.stdout', new_callable=io.StringIO):
+                update_check.report(self.manifest, 'a' * 40)
+            self.assertFalse(workdir.exists())
+
+    def test_operational_script_routes_check_without_a_worker(self):
+        script = (Path(__file__).resolve().parents[1] / 'scripts/update-and-restart.sh').read_text()
+        self.assertIn('check) action=check; shift ;;', script)
+        self.assertIn('main.py" check --manifest "$manifest"', script)
+        # The check must return before the delegated path starts a worker.
+        self.assertLess(script.index('main.py" check --manifest'),
+                        script.index('launch --manifest'))
 
 
 class BootLoopTests(unittest.TestCase):

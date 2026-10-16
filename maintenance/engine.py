@@ -186,6 +186,11 @@ def install_labels(model, manifest, runner):
     model['services'][harness]['labels'].update({
         LABEL + 'enabled': 'true', LABEL + 'script': SCRIPT,
         LABEL + 'image': runner, LABEL + 'user': manifest['user'],
+        # Opt this deployment into the portal's periodic update check, which
+        # runs this same script with the single argument `check`. Without it
+        # the control never reports whether the deployment is current, so a
+        # failed update is indistinguishable from one that had nothing to do.
+        LABEL + 'check': 'true',
     })
 
 

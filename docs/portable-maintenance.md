@@ -122,6 +122,20 @@ transaction worker. Python, Git and build tools are packaged in that image.
 build, write a lock/status file, or change services. `--verify` checks health,
 authenticated HTTPS, provider discovery, container metadata and Portal capability.
 
+The Portal's periodic update report runs the same script with the single argument
+`check`, opted into by the `io.service-portal.update.check` label the engine
+installs with the rest of the update capability. It answers inside the Portal
+runner: no transaction worker, no maintenance lock, no service access, and
+nothing written outside a temporary repository holding only the commit objects
+of canonical `main`, which it compares with the running image's recorded source
+revision. It prints the Portal protocol (`service-portal-check: status=…
+behind=… deployed=… target=…` plus pending commits), so the control reports
+current or how far behind the deployment is instead of staying silent. Without
+that label the Portal has no update status at all, and a failed update is
+indistinguishable from one that had nothing to do. A revision the check cannot
+place is reported as `available` with `unknown`, never as an error, because only
+a successful `current` may disable the control.
+
 Maintenance resolves canonical `main` once, fetches exactly that commit into
 disposable storage, checks digest-pinned bases, and builds and qualifies candidate
 images before stopping services. It does not rewrite an application checkout.

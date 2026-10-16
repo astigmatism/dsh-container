@@ -18,6 +18,9 @@ services:
     labels:
       io.service-portal.update.enabled: "true"
       io.service-portal.update.script: "scripts/update-and-restart.sh"
+      # Opt in to the portal's periodic check, which runs that script with the
+      # single argument `check` and reports current / N commits behind.
+      io.service-portal.update.check: "true"
       io.service-portal.update.image: "${HARNESS_IMAGE:-local/deepseek-harness:0.2.0-rc.2-portable}"
       io.service-portal.update.user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
       io.service-portal.update.host-home: "${HOST_HOME:-}"

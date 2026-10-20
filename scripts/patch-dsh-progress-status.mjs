@@ -30,8 +30,8 @@ export function patchSource(input) {
     source = replace(source,
       'const label = startTime === void 0 ? t("chat.deepDiving") : t("chat.deepDivingFor", { duration: formatRunDuration(Math.max(1e3, now - startTime), t).map((part) => part.text).join("") });',
       `// ${marker}\nconst step = rawStep === undefined ? null : { number: rawStep.step, startedAt: rawStep.start?.time ?? null, status: rawStep.status };\nconst durationText = ms => formatRunDuration(Math.max(0, ms), t).map(part => part.text).join('');\nconst label = (step ? 'Working · step ' + step.number + (step.status === 'open' && step.startedAt !== null ? ' · current step ' + durationText(now - step.startedAt) : ' · between steps') : 'Working') + (startTime === undefined ? '' : ' · total ' + durationText(now - startTime));`);
-    source = replace(source, 'const turnOutline = useProjection("turnOutline");',
-      `const runningStep = useChatNode(latestTurnAnchor ?? "", node => { const location = node?.location; return location?.kind === "turn" || location?.kind === "step" ? location.turn.steps.at(-1) : undefined; });\nconst turnOutline = useProjection("turnOutline");`);
+    source = replace(source, '\t\t\tconst runningStartTime = useChatNode(useChat((snapshot) => snapshot.navigation.items().at(-1)?.anchorKey) ?? "", (node) => {',
+      '\t\t\tconst runningStep = useChatNode(useChat((snapshot) => snapshot.navigation.items().at(-1)?.anchorKey) ?? "", (node) => { const location = node?.location; return location?.kind === "turn" || location?.kind === "step" ? location.turn.status === "open" ? location.turn.steps.at(-1) : undefined : undefined; });\n\t\t\tconst runningStartTime = useChatNode(useChat((snapshot) => snapshot.navigation.items().at(-1)?.anchorKey) ?? "", (node) => {');
     return replace(source, 'startTime: runningStartTime,', 'startTime: runningStartTime, rawStep: runningStep,');
   }
   if (input.includes('function TurnProcessNodeView({ node, turnProcess, t })')) {

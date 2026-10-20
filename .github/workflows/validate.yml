@@ -8,13 +8,26 @@ permissions:
   contents: read
 
 jobs:
+  # Required status check. Builds the images and runs the source, Compose,
+  # image-label, patch, client and boot verifications. The heavy recovery and
+  # maintenance Docker rehearsals are excluded here (see docker-rehearsals) so
+  # this gate stays light enough to finish reliably on a hosted runner.
   test-and-build:
     runs-on: ubuntu-latest
-    # The alpha.5 --build builds three images and replays the update/recovery
-    # and maintenance Docker suites against the larger runtime graph; it runs
-    # past the old 30-minute cap. Keep enough headroom for a cold runner.
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Validate source, Compose, tests, and images
         run: ./scripts/check.sh --build
+
+  # The recovery and maintenance Docker rehearsals each build their own fixture
+  # images and run throwaway containers. Isolating them keeps their cost and
+  # peak footprint off the required test-and-build gate while still qualifying
+  # the updater end to end.
+  docker-rehearsals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recovery and maintenance Docker rehearsals
+        run: ./scripts/check.sh --docker-rehearsals

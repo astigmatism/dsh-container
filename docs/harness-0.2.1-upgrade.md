@@ -79,8 +79,12 @@ replayed from a fresh tarball and a fresh `pnpm install` before this PR.
   the plain and `DSH_VERIFY_RESIDENT_CATALOG` boot checks, the client test
   batch, module marker greps, token policy, router startup in both modes,
   profile-sync divergence, and persisted-settings initialization.
-- CI `test-and-build` (`./scripts/check.sh --build`) on the PR revision:
-  recorded below when the run completes.
+- CI `test-and-build` (`./scripts/check.sh --build`) is the required status
+  check that gates landing on `main`. The full build — three images plus the
+  update/recovery and maintenance Docker rehearsals — exhausted a hosted runner
+  near the end, so the rehearsals now run in a separate `docker-rehearsals` job
+  (`./scripts/check.sh --docker-rehearsals`), keeping the required gate light
+  and reliable while still qualifying the updater end to end.
 
 ## Production acceptance (per deployment)
 

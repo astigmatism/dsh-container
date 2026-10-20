@@ -4,6 +4,7 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 build=0
+rehearsals_only=0
 
 # Synthetic credentials belong only to static configuration checks. Do not
 # let them conceal missing private credentials in upgrade/recovery tests.
@@ -15,6 +16,7 @@ compose_check() {
 case "${1:-}" in
   '') ;;
   --build) build=1 ;;
+  --docker-rehearsals) build=1; rehearsals_only=1 ;;
   --host)
     # No Docker invocation on development hosts. Container qualification is CI-only.
     host_guard=$(mktemp -d)
@@ -45,11 +47,11 @@ case "${1:-}" in
     exit 0
     ;;
   -h|--help)
-    echo "usage: ./scripts/check.sh [--host | --build]"
+    echo "usage: ./scripts/check.sh [--host | --build | --docker-rehearsals]"
     exit 0
     ;;
   *)
-    echo "usage: ./scripts/check.sh [--host | --build]" >&2
+    echo "usage: ./scripts/check.sh [--host | --build | --docker-rehearsals]" >&2
     exit 2
     ;;
 esac
@@ -214,17 +216,22 @@ if [ "$build" -eq 1 ]; then
   # fixtures, so the overlay filesystem stays within the runner's limits.
   docker builder prune -f >/dev/null 2>&1 || true
 
-  if [ "${CI:-false}" = true ]; then
+  # The recovery and maintenance Docker rehearsals are the heaviest part of the
+  # build: each builds its own fixture images and runs throwaway containers.
+  # They are isolated into the dedicated `docker-rehearsals` CI job so the
+  # required `test-and-build` gate stays light enough to finish reliably on a
+  # hosted runner, while the rehearsals still run, in their own job.
+  if [ "$rehearsals_only" -eq 1 ]; then
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image"
     python3 "$project_dir/tests/upgrade-recovery-docker.test.py" "$harness_image" --bundled-cli
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --external
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
-    # Reclaim the fixture images and volumes the rehearsals leave behind before
-    # the boot checks; the tagged release images the later steps use are kept.
+    # Reclaim the fixture images and volumes the rehearsals leave behind.
     docker image prune -f >/dev/null 2>&1 || true
     docker volume prune -f >/dev/null 2>&1 || true
     docker builder prune -f >/dev/null 2>&1 || true
+    exit 0
   fi
 
   [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.1-alpha.5 ] || {

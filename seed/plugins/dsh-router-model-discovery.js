@@ -388,7 +388,7 @@ export function residentStatus(document, service) {
     metadata = validateRouterMetadata(model.metadata);
     if (metadata.context_window !== model.context_window) throw new Error("router model context_window disagrees with its metadata");
     if (metadata.active_request_limit !== model.slots) throw new Error("router model slots disagree with its metadata");
-    capabilities = residentCapabilities({ model, metadata });
+    capabilities = residentCapabilities({ model, metadata, service });
   } catch (error) {
     // A pre-contract router publishes no complete metadata; its route stays
     // usable with the stored limits, as before discovery existed.
@@ -399,11 +399,20 @@ export function residentStatus(document, service) {
 }
 
 /** Limits and features of the model that will actually serve the service. */
-export function residentCapabilities({ model, metadata }) {
+export function residentCapabilities({ model, metadata, service }) {
   const input = metadata.input_modalities.filter(value => DSH_INPUT_MODALITIES.has(value));
   if (!input.includes("text")) throw new Error("router advertises no input modality Harness can represent");
   const reserve = metadata.context_safety_reserve ?? 0;
-  const displayName = nonEmptyString(metadata.display_name) ? metadata.display_name
+  // A picker lists one option per service, and one model may answer several names: a solo
+  // configuration serves `daytime` and `nighttime` from the same weights. The model's title
+  // identifies the model, so both rows read identically and the human in front of the picker is
+  // choosing between two options that say the same thing. When the router publishes a title for
+  // the exact name this row answers, that title is the label — it is the publisher's own name for
+  // what this service is, and it is the only fact in the document that separates the two rows.
+  const aliasTitle = service === undefined || !plainObject(metadata.alias_display_names)
+    ? undefined : metadata.alias_display_names[service];
+  const displayName = nonEmptyString(aliasTitle) ? aliasTitle
+    : nonEmptyString(metadata.display_name) ? metadata.display_name
     : nonEmptyString(model.display_name) ? model.display_name : undefined;
   return {
     displayName,

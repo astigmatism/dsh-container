@@ -61,6 +61,32 @@ test("solo: Nighttime is offline with the configuration ID; Daytime is unaffecte
   assert.equal(residentStatus(document, "daytime").capabilities.contextWindow, 131072 - 1024);
 });
 
+test("one model answering two services is two options, not one option written twice", () => {
+  // A solo configuration runs `daytime` and `nighttime` from one set of weights, which is honest:
+  // one model, two names. The picker lists a row per service, so a row titled by the model gives the
+  // human two rows reading identically — and the deployment's own gate addresses picker rows
+  // strictly, so "Qwen3.8 Flash-Next (256K)" twice is not a warning but a failure. The router
+  // publishes a title for each name it declares, and that title is what separates the rows.
+  const shared = { ...residentModel({ service: "daytime" }), aliases: ["local-active", "daytime", "nighttime"] };
+  shared.metadata.aliases = shared.aliases;
+  shared.metadata.alias_display_names = { "local-active": "local-active", daytime: "daytime", nighttime: "nighttime" };
+  const document = capabilitiesDocument({ models: [shared] });
+  const day = residentStatus(document, "daytime");
+  const night = residentStatus(document, "nighttime");
+  assert.equal(day.status, "available");
+  assert.equal(night.status, "available");
+  assert.equal(night.served, day.served, "one model behind both names");
+  assert.equal(residentLabel(day), "daytime");
+  assert.equal(residentLabel(night), "nighttime");
+  assert.notEqual(residentLabel(day), residentLabel(night), "a picker lists options a person can tell apart");
+  assert.equal(residentStatus(document, "daytime").capabilities.contextWindow,
+    residentStatus(document, "nighttime").capabilities.contextWindow, "only the title differs; the limits are the model\'s");
+  // A router that publishes no titles for its names is not broken, merely older than the field: the
+  // model's title labels both rows exactly as it did before, and nothing else moves.
+  delete shared.metadata.alias_display_names;
+  assert.equal(residentLabel(residentStatus(document, "nighttime")), "Qwen3.8 27B Q6_K (160K)");
+});
+
 test("trio: the opt-in trial is available from its own metadata and text-only", () => {
   const document = trio();
   const trial = residentStatus(document, "trial");

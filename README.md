@@ -456,6 +456,11 @@ The running status now shows the current step number, time in that step, and
 total turn duration. A long turn with advancing steps is distinguishable from
 one long step; the clock does not claim that the model is making useful
 progress. Reloading the page retains the durable turn/step time anchors.
+`useChatNode` is a prop of the memoized `ChatFlow` component, so the build also
+verifies the scope of both injected statements. An anchor that survives a
+release but matches inside the outer `ChatView` throws `ReferenceError:
+useChatNode is not defined` while rendering and blanks the whole transcript;
+that now fails the build instead of shipping.
 
 All three providers declare `maxConcurrency: 1`. The adapter keeps provider gates
 independent, and the resident models may run simultaneously. The router queues

@@ -133,12 +133,14 @@ run_entrypoint() {
   # Pin the optional build-script hooks to absent paths so the entrypoint
   # stays hermetic: hosts with a populated /opt/dsh-build and a routable
   # ai-router name would otherwise let live router discovery rewrite the
-  # fixture's persisted settings.
+  # fixture's persisted settings. A host running a real Harness deployment
+  # has all three hooks installed, so every one of them is pinned.
   set +e
   PATH="$source_root/tests/fixtures/settings-bin:$PATH" \
     FAKE_DSH_LOG="$fixture_path/dsh.log" \
     DSH_HOME="$fixture_path/data/dsh" \
     DSH_SIDEBAR_SETTINGS_INITIALIZER="$fixture_path/absent-sidebar-initializer" \
+    DSH_PROFILE_SETTINGS_MIGRATOR="$fixture_path/absent-profile-migrator" \
     DSH_ROUTER_SETTINGS_MIGRATOR="$fixture_path/absent-router-migrator" \
     DSH_CANONICAL_SETTINGS="$fixture_path/config/settings.yaml" \
     DSH_RUNTIME_PROFILE_SYNC="$fixture_path/profile-sync" \

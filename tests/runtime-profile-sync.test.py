@@ -36,8 +36,13 @@ class RuntimeProfileSyncTests(unittest.TestCase):
         (self.runtime / 'settings.yaml').write_text('private settings')
 
     def run_sync(self, runtime=None, success=True):
+        # Pin the optional build-script hook to an absent path so the fixture
+        # stays hermetic: a host that runs a real Harness deployment has the
+        # production profile migrator installed under /opt/dsh-build, and it
+        # would otherwise migrate this fixture's synthetic settings.
         result = subprocess.run(['sh', str(SCRIPT)], env=dict(
-            os.environ, DSH_SEED_HOME=str(self.seed), DSH_HOME=str(runtime or self.runtime)),
+            os.environ, DSH_SEED_HOME=str(self.seed), DSH_HOME=str(runtime or self.runtime),
+            DSH_PROFILE_02_MIGRATOR=str(self.root / 'absent-profile-migrator')),
             capture_output=True, text=True, timeout=30)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -554,6 +554,15 @@ export function planResidentProvider({ name: provider, state, stored, resolved, 
       input: capabilities.input,
       reasoningEfforts: capabilities.reasoningEfforts,
     });
+  } else if (!nonEmptyString(state.served)) {
+    // The document attributes no serving model to this route right now: the current
+    // configuration dropped its name, the router lists it offline, or the router is
+    // unreachable. The remembered title then describes a configuration that may no
+    // longer exist, and a picker section headed by a model the router does not offer
+    // reads as a model on offer. Name such a route after itself and let its state
+    // say why; the title returns with the model.
+    next.displayName = SERVICE_LABELS[service];
+    next.models[0].name = SERVICE_LABELS[service];
   } else if (!nonEmptyString(next.models[0].name)) {
     next.models[0].name = SERVICE_LABELS[service];
   }

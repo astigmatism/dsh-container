@@ -356,6 +356,48 @@ test("while a model is unavailable its last limits are kept and marked stale", (
   assert.equal(switching.residentState.limits, "stale");
 });
 
+test("a route with no model behind it is named after itself, not after a remembered model", () => {
+  const storedRoute = { baseURL: "http://router/v1", models: [{ id: "trial" }] };
+  const offered = capabilitiesDocument({ models: [residentModel(), residentModel({ service: "trial" })] });
+  const stored = planResidentProvider({ name: "local-trial", state: residentStatus(offered, "trial"),
+    stored: storedRoute, clientName: "deepseek-harness/test" });
+  assert.equal(stored.displayName, "Qwen3.8 Flash-Next (Strata trial) (160K)", "while it is offered the route is named by its model");
+  assert.equal(stored.models[0].name, "Qwen3.8 Flash-Next (Strata trial) (160K)");
+
+  // A configuration that drops the alias leaves no model, alias and offline entry for
+  // it. The remembered title describes a model this router no longer offers, so a
+  // picker section headed by it reads as a model on offer.
+  const dropped = capabilitiesDocument({ models: [residentModel()], configuration: { id: "solo-no-trial", exclusive: true } });
+  const state = residentStatus(dropped, "trial");
+  assert.equal(state.status, "unavailable");
+  assert.equal(state.reason, "not offered by the router");
+  const gone = planResidentProvider({ name: "local-trial", state, stored, clientName: "deepseek-harness/test" });
+  assert.equal(gone.displayName, "Trial", "the header names the route, not a model the router does not offer");
+  assert.equal(gone.models[0].name, "Trial");
+  assert.equal(gone.residentState.label, "Trial — unavailable");
+  assert.equal(gone.residentState.limits, "stale", "its last limits are still kept, marked stale");
+  assert.match(gone.residentState.message, /current configuration does not offer it/);
+
+  // Offline names no model either. A draining router still attributes one, and keeps
+  // the title it belongs to.
+  const known = { baseURL: "http://router/v1", displayName: "Qwen3.8 27B Abliterated Q6_K (96K)",
+    models: [{ id: "nighttime", name: "Qwen3.8 27B Abliterated Q6_K (96K)" }] };
+  const offline = planResidentProvider({ name: "local-everyday", state: residentStatus(solo(), "nighttime"),
+    stored: known, clientName: "deepseek-harness/test" });
+  assert.equal(offline.displayName, "Nighttime");
+  assert.equal(residentStatus(draining(), "nighttime").served, NIGHTTIME_ID);
+  const switching = planResidentProvider({ name: "local-everyday", state: residentStatus(draining(), "nighttime"),
+    stored: known, clientName: "deepseek-harness/test" });
+  assert.equal(switching.displayName, "Qwen3.8 27B Abliterated Q6_K (96K)", "the model behind a draining route is known");
+
+  // The title returns with the model, without anything else about the route being lost.
+  const back = planResidentProvider({ name: "local-trial", state: residentStatus(offered, "trial"),
+    stored: gone, clientName: "deepseek-harness/test" });
+  assert.equal(back.displayName, "Qwen3.8 Flash-Next (Strata trial) (160K)");
+  assert.equal(back.models[0].name, "Qwen3.8 Flash-Next (Strata trial) (160K)");
+  assert.equal(back.models[0].contextWindow, 163840 - 1024);
+});
+
 test("planning migrates old IDs, preserves preferences and identifies the client", () => {
   const stored = { api: "openai-responses", apiKeyEnv: "KEEP", baseURL: "http://router/v1", reasoning: "low",
     headers: { "x-client-name": "stale", Other: "kept" }, retryPolicy: { mode: "normal", maxRetries: 2 },

@@ -29,6 +29,7 @@ case "${1:-}" in
       sh -n "$shell_file"
     done
     python3 -B "$project_dir/tests/maintenance.test.py"
+    python3 -B "$project_dir/tests/router-endpoint.test.py"
     (cd "$project_dir" && python3 -B -c 'from maintenance.qualification import registered_files; registered_files(".")')
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
     node --test "$project_dir/tests/external-tls.integration.mjs"
@@ -78,6 +79,7 @@ fi
 "$project_dir/tests/compose-topology.test.sh"
 python3 "$project_dir/tests/gateway-credentials.test.py"
 python3 "$project_dir/tests/upgrade-recovery.test.py"
+python3 "$project_dir/tests/router-endpoint.test.py"
 python3 "$project_dir/tests/runtime-release.test.py"
 python3 "$project_dir/tests/runtime-profile-sync.test.py"
 "$project_dir/tests/delegated-gateway.test.sh"
@@ -227,6 +229,7 @@ if [ "$build" -eq 1 ]; then
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image"
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --external
     python3 "$project_dir/tests/maintenance-docker.test.py" "$harness_image" "$gateway_image" --managed
+    python3 "$project_dir/tests/router-endpoint-docker.test.py" "$gateway_image"
     # Reclaim the fixture images and volumes the rehearsals leave behind.
     docker image prune -f >/dev/null 2>&1 || true
     docker volume prune -f >/dev/null 2>&1 || true

@@ -23,6 +23,7 @@ if Path(__file__).resolve().parent.name != 'maintenance':
 from maintenance.common import Failure, LABEL, compose_command, inspect, read_json, run
 from maintenance.contract import require, validate_config, validate_manifest, validate_deployment
 from maintenance.engine import Updater, probe_release, validate_engine
+from maintenance import router
 
 
 # deploy/deepseek-harness-after-network.service: RestartPreventExitStatus=78.
@@ -101,8 +102,13 @@ def finish_worker(action, code):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('install', 'launch', 'update', 'verify', 'boot', 'recover', 'rollback', 'self-test', 'check'))
+    parser.add_argument('action', choices=('install', 'launch', 'update', 'verify', 'boot', 'recover',
+                                           'rollback', 'self-test', 'check', 'router', 'set-router'))
     parser.add_argument('--manifest', type=Path)
+    parser.add_argument('--router', help=f'{router.SETTING} value for set-router: host, host:port, or router base URL')
+    parser.add_argument('--router-admin', help='Optional router admin portal base for set-router')
+    parser.add_argument('--router-probe', action='store_true',
+                        help='With set-router, require the new router to answer before writing it')
     parser.add_argument('--recovery-point', type=Path)
     parser.add_argument('--deployment-dir', type=Path)
     parser.add_argument('--project-directory', type=Path)
@@ -128,6 +134,8 @@ def main():
     if args.action == 'self-test':
         from maintenance import recovery, install
         require(callable(recovery.restore) and callable(install.prepare), 'Incomplete maintenance package')
+        require(callable(router.apply) and callable(router.configure),
+                'Incomplete maintenance package: the active-router setting is missing')
         print('Maintenance schema 1 available')
         return
     if args.action == 'install':
@@ -144,6 +152,36 @@ def main():
                 'Portal URL conflicts with the deployment manifest')
     if args.mode:
         require(args.mode == manifest['mode'], 'Requested topology conflicts with installed deployment')
+    if args.action in ('router', 'set-router'):
+        # Which router this deployment uses is one setting. Reporting it and
+        # changing it are host-side file operations: no lock, no worker, no
+        # service interruption. Applying it is the next update, which
+        # re-derives the running config from it.
+        updater = Updater(root)
+        if args.action == 'set-router':
+            require(args.router, f'set-router needs --router HOST_OR_URL, the new {router.SETTING} value')
+            endpoint = router.parse_endpoint(args.router, args.router_admin)
+            if args.router_probe:
+                router.probe(endpoint, os.environ.get('HARNESS_CLIENT_INSTANCE', ''))
+            change = router.configure(root, updater.manifest, args.router, args.router_admin)
+            print('Active LLM router written to ' + change['file'])
+            print('  ' + router.SETTING + ': ' + (change['previous'] or '(undeclared)') + ' -> ' + change['value'])
+            if args.router_admin:
+                print('  ' + router.ADMIN_SETTING + ': ' + (change['previous_admin'] or '(undeclared)')
+                      + ' -> ' + args.router_admin)
+            print('  API ' + endpoint['api_base'] + ' | admin ' + endpoint['admin_base'])
+            if change['stale_admin']:
+                print('Note: ' + router.ADMIN_SETTING + ' still names ' + change['stale_admin']
+                      + '; pass --router-admin to move it with the router.')
+            print('Apply it: scripts/update-and-restart.sh --manifest ' + str(args.manifest))
+            if change['previous']:
+                print('Move back the same way with ' + change['previous']
+                      + '; the router it leaves keeps serving until this one is verified.')
+            return
+        updater.report_router()
+        if (root / router.RECORD).is_file():
+            print('Last applied: ' + router.describe(read_json(root / router.RECORD)))
+        return
     if args.action == 'check':
         # A portal update check is read-only: it takes no maintenance lock,
         # launches no worker, and touches no service. It only compares the

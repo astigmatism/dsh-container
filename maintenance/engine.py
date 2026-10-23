@@ -15,6 +15,7 @@ import uuid
 from .common import Failure, LABEL, REPOSITORY, atomic_json, atomic_text, compose_command, digest, inspect, read_json, run, sync_path, sync_directory
 from .contract import SCRIPT, require, validate_config, validate_manifest, validate_deployment, configuration_bindings, portal_services, verify_portal
 from . import recovery
+from . import router
 from .source_binds import source_file, plan_binds, check_inputs, register_binds, validate_resident_binds
 
 PACKAGE = Path(__file__).resolve().parent
@@ -240,7 +241,20 @@ class Updater:
             require(Path(path).exists() and not Path(path).is_symlink(), 'A declared state or configuration path is missing or symlinked')
         if dry_run:
             require(not (self.root / 'transaction.json').exists(), 'Interrupted maintenance requires recovery before another update')
+            self.report_router()
             print('Dry-run: validated deployment, state paths and Portal reachability. Would fetch pinned main, build, verify, snapshot, deploy and verify Portal capability; rollback on failure.')
+
+    def report_router(self):
+        """Say which router this update would apply and where it came from.
+
+        Read-only, so `update --dry-run` and the report action let an operator
+        confirm a migration before anything is rebuilt or restarted.
+        """
+        _, fact = router.plan(self.model, self.manifest, self.root)
+        print('Active LLM router: ' + router.describe(fact), flush=True)
+        for note in fact['drift']:
+            print('Router note: a lower-priority file declares another value — ' + note, flush=True)
+        return fact
 
     def prepare_source_binds(self):
         self.pending_binds = plan_binds(self.source_binds, self.model, self.manifest['roles'], self.reviewed_source)
@@ -256,6 +270,15 @@ class Updater:
             candidate = copy.deepcopy(self.model)
             manifest = copy.deepcopy(self.manifest)
             manifest['revision'] = revision
+            # The active router is re-derived from the environment on every
+            # update, never carried forward from the materialized model: moving
+            # this consumer to another router is one env edit. Resolving it
+            # before the build means a bad setting fails before any work.
+            active_router = router.apply(candidate, manifest, self.root)
+            manifest['router'] = active_router
+            print('Active LLM router: ' + router.describe(active_router), flush=True)
+            for note in active_router['drift']:
+                print('Router note: a lower-priority file declares another value — ' + note, flush=True)
             register_binds(manifest, copy.deepcopy(self.pending_binds))
             validate_resident_binds(candidate, manifest)
             images = {}
@@ -307,6 +330,7 @@ class Updater:
             (release_dir / 'scripts').mkdir(mode=0o700)
             shutil.copy2(source / SCRIPT, release_dir / SCRIPT)
             atomic_json(release_dir / 'compose.json', candidate)
+            atomic_json(release_dir / router.RECORD, active_router)
             atomic_text(release_dir / 'runner-image', images['harness'] + '\n')
             atomic_text(release_dir / 'start-after-network.sh', '#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/scripts/update-and-restart.sh" --boot\n')
             (release_dir / 'start-after-network.sh').chmod(0o700)
@@ -355,8 +379,17 @@ class Updater:
         old_model, existed = self.old_model(old_root, previous_model or self.model)
         point = self.root / 'recovery' / (time.strftime('%Y%m%dT%H%M%S-') + uuid.uuid4().hex[:8])
         point.mkdir(parents=True, mode=0o700)
+        # The router decision belongs with the model it produced: snapshot the
+        # record together with compose.json, so a rollback restores the mapping
+        # and the explanation of it as one generation.
+        if (Path(release) / router.RECORD).is_file():
+            atomic_json(self.root / router.RECORD, read_json(Path(release) / router.RECORD))
+        operational_files = ['compose.json', 'deployment.json', SCRIPT, 'maintenance', 'runner-image',
+                             'start-after-network.sh']
+        if (self.root / router.RECORD).is_file():
+            operational_files.append(router.RECORD)
         paths = list(dict.fromkeys([a['original'] for a in self.pending_binds] + self.manifest['state_paths'] + self.manifest['input_paths']
-                + self.manifest['artifact_paths'] + [str(self.root / p) for p in ('compose.json', 'deployment.json', SCRIPT, 'maintenance', 'runner-image', 'start-after-network.sh')]))
+                + self.manifest['artifact_paths'] + [str(self.root / p) for p in operational_files]))
         # Never snapshot a parent and its child twice.
         paths = [p for p in paths if not any(Path(p).is_relative_to(Path(q)) and p != q for q in paths)]
         recovery.check_space(point, paths)

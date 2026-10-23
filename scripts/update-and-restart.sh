@@ -6,6 +6,9 @@ manifest=
 dry_run=0
 mode_flag=
 portal_url=
+router_value=
+router_admin=
+router_probe=
 action=update
 for argument do
   [ "$argument" != --dry-run ] || dry_run=1
@@ -19,9 +22,14 @@ while [ "$#" -gt 0 ]; do
     --boot) action=boot; shift ;;
     --verify) action=verify; shift ;;
     check) action=check; shift ;;
+    router) action=router; shift ;;
+    set-router) action=set-router; shift ;;
+    --router) [ "$#" -ge 2 ] || exit 2; router_value=$2; shift 2 ;;
+    --router-admin) [ "$#" -ge 2 ] || exit 2; router_admin=$2; shift 2 ;;
+    --router-probe) router_probe=1; shift ;;
     --external-ollama|--remote-ollama|--managed-ollama)
       mode_flag=$1; shift ;;
-    -h|--help) echo "usage: update-and-restart.sh [check] [--manifest FILE | --deployment-dir DIR] [--dry-run]"; exit 0 ;;
+    -h|--help) echo "usage: update-and-restart.sh [check|router|set-router --router HOST_OR_URL] [--manifest FILE | --deployment-dir DIR] [--dry-run]"; exit 0 ;;
     *) echo "Unknown maintenance option" >&2; exit 2 ;;
   esac
 done
@@ -40,6 +48,17 @@ if [ "$action" = check ]; then
   # and never launches a maintenance worker: it takes no lock, reads no
   # service, and writes nothing outside a temporary directory.
   exec python3 -B "$root/maintenance/main.py" check --manifest "$manifest"
+fi
+if [ "$action" = router ] || [ "$action" = set-router ]; then
+  # The active router is one setting. Reporting it, and moving this consumer to
+  # another router, are file operations in the caller's process: no lock, no
+  # maintenance worker, no service interruption. The running config follows on
+  # the next update, which re-derives it instead of keeping the old mapping.
+  set -- "$action" --manifest "$manifest"
+  if [ -n "${router_value:-}" ]; then set -- "$@" --router "$router_value"; fi
+  if [ -n "${router_admin:-}" ]; then set -- "$@" --router-admin "$router_admin"; fi
+  if [ -n "${router_probe:-}" ]; then set -- "$@" --router-probe; fi
+  exec python3 -B "$root/maintenance/main.py" "$@"
 fi
 set --
 [ -z "$mode_flag" ] || set -- "$mode_flag"

@@ -171,6 +171,10 @@ def prepare(args, source):
                 'state_paths': compact_paths(state), 'input_paths': compact_paths(inputs),
                 'artifact_paths': [], 'source_artifacts': source_artifacts,
                 'bindings': configuration_bindings(model), 'model_stores': compact_paths(model_stores),
+                # Where the active router came from, so later updates resolve it
+                # from the same private environment file the deployment was
+                # installed with, while that file exists.
+                'env_file': str(env_file) if env_file.exists() else '',
                 'previous_root': str(original_root)}
     # Adopt only the existing application-owned unit. Do not install a host-
     # specific scheduler or modify arbitrary units/drop-ins.

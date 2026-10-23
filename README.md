@@ -284,6 +284,70 @@ values. The operational manifest records the selected mode before any cutover.
 Subsequent maintenance uses that manifest and rejects a conflicting mode flag;
 it does not modify the old checkout's `.env`.
 
+## Move a deployment to another router
+
+Which router a deployment uses is an environment fact, not a property of the
+source or of the mode that created it. **`REMOTE_OLLAMA_HOST` in the deployment's
+private `.env` is the single authoritative setting**, and every update re-derives
+the running configuration from it instead of carrying forward whatever address
+the operational model was created with. The application itself always addresses
+the router as `http://ai-router:11434/v1`, so moving a consumer re-points that
+one name and touches nothing else: no settings, sessions, credentials or models.
+
+```sh
+# From a checkout, pointing at the operational bundle (the Service Portal's
+# update button runs the same script from inside that bundle):
+scripts/update-and-restart.sh router --manifest data/operations/deployment.json
+scripts/update-and-restart.sh set-router --router 192.168.1.23 --router-probe \
+  --manifest data/operations/deployment.json
+scripts/update-and-restart.sh --manifest data/operations/deployment.json   # apply: recreate + verify
+```
+
+`set-router` writes the one setting and prints the value to roll back with;
+`--router-probe` first requires the new router to answer its capabilities
+route, so a consumer is never moved onto a router that is not serving. The same
+edit made by hand works identically — nothing else is needed. `router` and
+`update --dry-run` both report the decision, the file it came from, and the
+address it replaces, without changing anything.
+
+Accepted spellings are a bare host (`192.168.1.23`, `router.lan`), a host with
+the router port, or a router base URL (`http://192.168.1.23:11434`, optionally
+with `/v1`). An optional `REMOTE_OLLAMA_ADMIN_HOST` records the admin base
+(defaulted to port 11435 of the same host) for reports and verification. An
+endpoint the container could not use — TLS, another port, a name that does not
+resolve, or this machine's own loopback — fails before anything is written or
+deployed.
+
+The setting is resolved in this order, and a file lower down that disagrees is
+reported rather than ignored: an explicit `$DSH_ROUTER_ENV_FILE`, the environment
+file recorded by adoption, the deployment `.env` above the operational directory,
+the operational record `data/operations/env`, and finally the environment file
+imported at adoption. The decision is recorded per deployment in
+`data/operations/router.json` and snapshotted with the model, so a rollback
+restores the mapping and its explanation together.
+
+Only remote mode reads it. External and managed modes resolve `ai-router` inside
+Docker (a shared network, or the bundled router), and an update removes a stale
+alias from those deployments rather than leaving one behind.
+
+**Migrating gradually, one consumer at a time.** Several routers can serve the
+network at once, and each consumer chooses independently. To move one: probe and
+`set-router` on that host, update it, confirm inference and model discovery on
+the new router, and only then retire the old router. The old router keeps
+serving every other consumer throughout — a move is a client-side re-point, so
+the previous router stays the backstop and the rollback is the same command with
+the previous value. Never stop a router because "the last known consumer moved";
+the deployment list below is how that is checked.
+
+**A consumer must be schema-2 aware before a multi-host router.** Pointing a
+revision older than `d2a0332` at a router that publishes several service names
+from one model yields duplicate picker labels (and the resident verification
+fails). Upgrade such a deployment first, then move it. `verify-resident-client.mjs`
+and the update verification are the check that both halves agree.
+
+[Router migration](docs/ROUTER_MIGRATION.md) records that precondition, the
+ordered per-consumer procedure, and which deployments are on which router today.
+
 ## Persisted settings lifecycle
 
 `config/settings.yaml` seeds **Daytime** as `local-ollama/daytime`,

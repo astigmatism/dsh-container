@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from maintenance import router
 from maintenance.common import Failure, REPOSITORY, atomic_json
 from maintenance.contract import configuration_bindings
-from maintenance.engine import Updater, install_labels
+from maintenance.engine import Updater, install_labels, verify_router
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 OLD_ROUTER, NEW_ROUTER, THIRD_ROUTER = '192.168.1.4', '192.168.1.23', '192.168.1.77'
@@ -292,6 +292,20 @@ class ConfigureTests(Deployment):
         route = answer.call_args_list[0].args[0].full_url
         self.assertEqual(route, f'http://{OLD_ROUTER}:11434/v1/router/capabilities')
         self.assertEqual(answer.call_args_list[0].args[0].get_header('X-client-name'), 'deepseek-harness/fixture')
+
+    def test_verification_checks_the_running_container_and_not_just_the_model(self):
+        _, _, manifest, _ = self.build()
+        fact = manifest['router']
+        running = lambda address: {'harness': {'HostConfig': {'ExtraHosts': [f'ai-router={address}']}}}
+        verify_router(manifest, running(fact['address']))
+        # Docker reports the alias in its own spelling, and that is what an
+        # inspection returns.
+        verify_router(manifest, {'harness': {'HostConfig': {'ExtraHosts': [f'ai-router:{fact["address"]}',
+                                                                          'other=10.0.0.1']}}})
+        with self.assertRaises(Failure):
+            verify_router(manifest, running(OLD_ROUTER if fact['address'] != OLD_ROUTER else NEW_ROUTER))
+        # A generation recorded before this decision existed is verified as it was.
+        verify_router({**manifest, 'router': None}, running(OLD_ROUTER))
 
     def test_the_source_still_renders_the_alias_from_the_setting(self):
         compose = (REPOSITORY_ROOT / 'compose.yaml').read_text()

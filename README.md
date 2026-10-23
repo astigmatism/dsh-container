@@ -308,7 +308,9 @@ scripts/update-and-restart.sh --manifest data/operations/deployment.json   # app
 route, so a consumer is never moved onto a router that is not serving. The same
 edit made by hand works identically — nothing else is needed. `router` and
 `update --dry-run` both report the decision, the file it came from, and the
-address it replaces, without changing anything.
+address it replaces, without changing anything. The update itself does not
+succeed until the recreated container is inspected and found to resolve
+`ai-router` to the address the setting names.
 
 Accepted spellings are a bare host (`192.168.1.23`, `router.lan`), a host with
 the router port, or a router base URL (`http://192.168.1.23:11434`, optionally

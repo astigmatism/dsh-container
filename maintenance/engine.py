@@ -69,6 +69,26 @@ def verify_application(manifest, by_service):
         operation='Gateway verification: verify-dictation-backend.mjs')
 
 
+def verify_router(manifest, by_service):
+    """The live consumer must resolve the canonical name to the chosen router.
+
+    A deployment still carrying the address it was installed with is precisely
+    the failure the re-derivation exists to prevent, so an update verifies the
+    consequence in the running container and not only in the model. A generation
+    recorded before this decision existed, and a deployment whose router comes
+    from Docker (external or managed mode), have nothing to compare against.
+    """
+    fact = manifest.get('router') or {}
+    if fact.get('status') != 'applied':
+        return
+    harness = next(service for service, role in manifest['roles'].items() if role == 'harness')
+    actual = [router.alias_of(entry)
+              for entry in by_service[harness]['HostConfig'].get('ExtraHosts') or []]
+    require((fact['name'], fact['address']) in actual,
+            f'The running container does not resolve {fact["name"]} to the address '
+            f'{fact["setting"]} names ({fact["address"]})')
+
+
 def probe_containers(manifest, model, root):
     rows = validate_containers(manifest, model, root)
     by_service = {}
@@ -90,6 +110,7 @@ def probe_containers(manifest, model, root):
             continue
         require(row['State']['Running'] and row['State'].get('Health', {}).get('Status') == 'healthy',
                 'An application service is not healthy')
+    verify_router(manifest, by_service)
     return by_service
 
 

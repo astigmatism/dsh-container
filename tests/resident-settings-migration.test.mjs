@@ -275,9 +275,10 @@ test('a configuration with no daytime at all gives it no row, exits 0, and never
 
 // A host runtime installed by an earlier image carries an older availability
 // patch; the packaged CI runtime (DSH_TEST_HARNESS=1) always carries this one.
+const { availabilityMarker } = await import('../scripts/patch-dsh-resident-availability.mjs');
 let adapterSource;
 try { adapterSource = YAML && await fs.readFile(path.join(runtime, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js'), 'utf8'); } catch {}
-const staleRuntime = Boolean(adapterSource) && !adapterSource.includes('dsh-resident-availability-v4');
+const staleRuntime = Boolean(adapterSource) && !adapterSource.includes(availabilityMarker);
 if (staleRuntime && process.env.DSH_TEST_HARNESS === '1') throw new Error('the packaged runtime lacks the current availability patch');
 
 test('real pinned adapter: per-model state, state messages, switching dispatch and legacy IDs', { skip: !YAML ? true : staleRuntime ? 'installed runtime predates this availability patch; set DSH_RUNTIME_ROOT' : false }, async t => {

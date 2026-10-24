@@ -31,6 +31,9 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const marker = 'dsh-resident-availability-v5';
+// Exported so a check that the packaged runtime carries *this* revision asks the
+// script instead of hard-coding a revision that goes stale at the next bump.
+export const availabilityMarker = marker;
 // One marker per revision of this script: every hunk family stamps `marker`, so
 // a file carrying only an older one was written by an older release of this
 // script. Such a tree is left as it was built (the hunks below are anchored on

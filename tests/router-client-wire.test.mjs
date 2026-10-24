@@ -7,12 +7,13 @@ import { promisify } from 'node:util';
 // The wire check needs an installed runtime patched by this release. It is
 // mandatory in the packaged CI runtime (DSH_TEST_HARNESS=1) and also runs at
 // image build; host runs need DSH_RUNTIME_ROOT pointing at such a runtime.
-// v4 is the revision that reads the per-model `residentStates` map, so the
-// per-model gating this check asserts cannot run on an older patched tree.
+// The current revision is the one that reads the per-model `residentStates`
+// map, so the per-model gating this check asserts cannot run on an older tree.
+const { availabilityMarker } = await import('../scripts/patch-dsh-resident-availability.mjs');
 const runtime = process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh';
 let adapter = '';
 try { adapter = await readFile(`${runtime}/node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js`, 'utf8'); } catch {}
-const patched = adapter.includes('dsh-router-contract-v3') && adapter.includes('dsh-resident-availability-v4');
+const patched = adapter.includes('dsh-router-contract-v3') && adapter.includes(availabilityMarker);
 if (!patched && process.env.DSH_TEST_HARNESS === '1') throw new Error('the packaged runtime lacks the router contract patches');
 
 test('a queued request outlives the idle timeout on keepalives; every §10 code maps to its action', {

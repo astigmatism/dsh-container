@@ -113,6 +113,9 @@ test("pinned pi-ai patch consumes router capacities and normalizes stream errors
   assert.match(patched, /const errorText =/);
   assert.match(patched, /message: errorText/);
   assert.match(patched, /routerFailureOf\(message, text\)/);
+  assert.match(patched, /globalThis\[ROUTER_CONTRACT_HUB\]\?\.report\?\.\(message\?\.provider, \{ code: error\.code, status: error\.status, message: error\.detail, model: message\?\.model \}\)/);
+  assert.match(patched, /globalThis\[ROUTER_CONTRACT_HUB\]\?\.success\?\.\(message\.provider, message\.model\)/,
+    "a completed turn clears the route/model pair the failure was recorded for");
   assert.match(patched, /fetch: routerActivityFetch\(watchdog\)/);
   assert.equal(patchSource(patched), patched, "patch is idempotent");
 });
@@ -246,7 +249,7 @@ const sdkText = (status, error) => `local-everyday API error (${status}): ${JSON
 
 test("router errors are classified by error.code before HTTP status (contract §10)", () => {
   const reports = [];
-  globalThis[ROUTER_CONTRACT_HUB] = { report: (provider, event) => reports.push([provider, event.code]) };
+  globalThis[ROUTER_CONTRACT_HUB] = { report: (provider, event) => reports.push([provider, event.code, event.model]) };
   try {
     const cases = [
       [{ routerError: { code: "SERVICE_OFFLINE", status: 503, message: "offline in runtime configuration \"solo\"" } }, "MODEL_UNAVAILABLE"],
@@ -266,10 +269,16 @@ test("router errors are classified by error.code before HTTP status (contract §
       const failure = routerFailureOf({ provider: "local-everyday", model: "nighttime", ...extra }, text);
       assert.equal(failure?.code, code, text);
       if (code === "MODEL_UNAVAILABLE") assert.match(failure.message, /Switch this session to another model/);
-      if (code === "ROUTER_SWITCHING") assert.match(failure.message, /waits and retries Nighttime without changing models/);
+      if (code === "ROUTER_SWITCHING") assert.match(failure.message, /waits and retries "nighttime" without changing models/);
+      // One route now carries every service the router publishes, so the advice
+      // can only name the model by the service ID the request quoted.
+      if (code === "MODEL_UNAVAILABLE" || code === "ROUTER_SWITCHING") assert.match(failure.message, /"nighttime"/, text);
     }
+    assert.match(routerFailureOf({ provider: "local-everyday", model: "nighttime" }, sdkText(503, { message: "unhealthy", code: "BACKEND_UNAVAILABLE" })).message,
+      /"nighttime"'s backend is unavailable/);
     assert.deepEqual(reports.slice(0, 5).map(row => row[1]), ["SERVICE_OFFLINE", "MODEL_NOT_FOUND", "BACKEND_UNAVAILABLE", "BACKEND_DRAINING", "MAINTENANCE_MODE"]);
-    assert.ok(reports.every(row => row[0] === "local-everyday"));
+    assert.ok(reports.every(row => row[0] === "local-everyday"), "the route that was asked is the event's subject");
+    assert.ok(reports.every(row => row[2] === "nighttime"), "the service the request named rides on the event");
     assert.equal(routerFailureOf({ model: "nighttime" }, sdkText(400, { code: "context_length_exceeded" })), undefined,
       "context overflow keeps its canonical classification");
     assert.equal(routerFailureOf({ model: "nighttime" }, "OpenAI Responses stream ended before a terminal response event"), undefined);
@@ -278,6 +287,15 @@ test("router errors are classified by error.code before HTTP status (contract §
 
 test("generated adapter routes router codes through the patched terminal classifier", () => {
   const { mapStopReason } = evaluatePatchedFixture();
+  const cleared = [];
+  globalThis[ROUTER_CONTRACT_HUB] = { success: (provider, model) => cleared.push([provider, model]) };
+  try {
+    mapStopReason({ stopReason: "stop", provider: "local-everyday", model: "nighttime",
+      content: [{ type: "text", text: "ok" }] }, 97280);
+    assert.deepEqual(cleared, [["local-everyday", "nighttime"]], "a completed turn clears the model it ran on");
+    mapStopReason({ stopReason: "error", provider: "local-everyday", model: "nighttime", errorMessage: "boom" }, 97280);
+    assert.equal(cleared.length, 1, "a failed turn clears nothing");
+  } finally { delete globalThis[ROUTER_CONTRACT_HUB]; }
   const result = mapStopReason({ stopReason: "error", provider: "local-everyday", model: "nighttime",
     errorMessage: sdkText(503, { message: "Nighttime is offline", type: "server_error", param: "model", code: "SERVICE_OFFLINE" }) }, 97280);
   assert.equal(result.failure.code, "MODEL_UNAVAILABLE");

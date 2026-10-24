@@ -300,31 +300,71 @@ service IDs from the reserved `local-active` compatibility alias, and says what
 an omitted `model` really selects. Each of those is mapped below where it changes
 what this project has to say about its own behavior.
 
-Harness is a long-running client with three Harness-owned resident routes:
+Harness is a long-running client with **one provider route per router**, and a
+route's model list is the catalog that router publishes:
 
-| Provider route | Service ID sent | Picker |
+| Provider route | Models it configures | Titled by |
 | --- | --- | --- |
-| `local-ollama` | `daytime` | Daytime |
-| `local-everyday` | `nighttime` | Nighttime |
-| `local-trial` | `trial` | Trial (opt-in, text-only) |
+| `local-ollama` | one row per service ID in `/v1/router/capabilities` — right now `daytime`, `nighttime` and the service published by the second host | the names the router publishes for them |
 
-Model selection is **by name**: each session sends the route the user selected.
+A route is written from its own router's document, and the only names it is asked
+to keep stating are the ones its own settings carry (plus, for the catalog route,
+the names of the routes it absorbed). Another router's model is not this route's
+business, so it is not offered here as a name that went missing.
 
-**Every request names its model (§3).** Harness always sends `model`. Each
-resident route configures exactly one model row, whose ID is that route's service
-ID, and a session's stored route is rewritten to it on every request, so a
-Harness request never omits `model` and is never answered by the active
-configuration's default. 1.2 states plainly that the default is not promised to
-be `daytime` — while a trial configuration is selected it is the trial — so the
-guarantee that a Harness session is never served by a model nobody named lives
-in the request: an ID is always sent. `scripts/verify-router-client-wire.mjs`
-records every outbound request and asserts each one carries a non-empty `model`.
+Harness keeps no list of services of its own. The three routes earlier releases
+configured (`local-ollama`/`daytime`, `local-everyday`/`nighttime`,
+`local-trial`/`trial`) each sent one service and were titled `Daytime`,
+`Nighttime` and `Trial` — words Harness invented, since the document already
+publishes what it calls each name. Those provider IDs survive only as
+`RETIRED_ROUTES`, to rewrite persisted selections onto the catalog route; a
+service the router starts publishing appears in the picker on the next revision,
+and one it stops publishing stays visible only as its recorded state.
+
+Row labels come from the document alone: `metadata.alias_display_names` for the
+name being offered, and the model's own `display_name_qualified` or
+`display_name` where a publisher left that name untitled. Two names of one model
+share the model's title, which is the publisher's own statement that they are the
+same model under different names, so the name a person is choosing is appended in
+parentheses — the qualifier the router itself would use. ` · NSFW` follows a row
+the document declares NSFW. Nothing here is composed by Harness:
+`display_name_qualified` is read, never built.
+
+What a model row is *named* follows from the same reading (`routerModelName`):
+while a model still answers a service the row carries the published title, and
+the service's state lives in its own record; when nothing answers it — the
+configuration dropped it, lists it offline, or the router is not answering — the
+row names itself and its state, because a remembered title describes a
+configuration that may already be gone. The reserved `local-active` alias is
+never such a row, even when a route written before service IDs still carries it.
+Nothing is published to settings without being read as valid: `metadata` is
+validated as a whole before any limit, modality or effort map is taken from it
+(§6), and metadata that contradicts its own catalog row — a different
+`context_window` or `active_request_limit` — is reported as incomplete rather
+than reconciled.
+
+Model selection is **by name**: each session sends the service ID it selected.
+
+**Every request names its model (§3).** Harness always sends `model`. Every
+model row on a router route is a service ID, and a session's stored route is
+rewritten to a service ID on every request, so a Harness request never omits
+`model` and is never answered by the active configuration's default. 1.2 states
+plainly that the default is not promised to be `daytime` — while a trial
+configuration is selected it is the trial — so the guarantee that a Harness
+session is never served by a model nobody named lives in the request: an ID is
+always sent. `scripts/verify-router-client-wire.mjs` records every outbound
+request and asserts each one carries a non-empty `model`. Names that are not
+services are never sent and never offered: a canonical model ID, and the reserved
+`local-active` compatibility alias, which §3 says is not a service. A `models[]`
+row whose `service` equals its `id` offers nothing, and such a document is held
+with a stated reason rather than an invented name.
 
 ### Deviation permitted by §5: fallback disabled
 
-Harness never falls back from Nighttime to Daytime, from Daytime to Nighttime,
-or onto the opt-in Trial. The owner fixed this on 2026-10-07 and added the
-Trial on 2026-10-13 under the same rule. A Harness session is a long
+Harness never moves a session from one model to another: not from `nighttime` to
+`daytime`, not onto an opt-in service, not when the router re-draws its catalog.
+The owner fixed this on 2026-10-07 and added the opt-in `trial` service on
+2026-10-13 under the same rule. A Harness session is a long
 conversation, and quietly
 switching models mid-session would change its context window, compaction and
 refusal behavior. Instead:
@@ -342,19 +382,20 @@ refusal behavior. Instead:
   They consume no retries.
 - **When it returns,** it is selectable again with no action. Failed prompts are
   never replayed.
-- **Every resident is independent:** one model's state never blocks updates to
-  another, including the opt-in route.
-- **Nothing selects the Trial.** No default, migration, verification, restore or
-  fallback path may put a session on it, and a session a human put there is never
-  moved off automatically. It is listed and state-checked, never sent inference by
-  an automated check. `migrateDefaultSelection` throws rather than move a default
-  onto an opt-in provider. An opt-in route is provisioned from its own serving
-  metadata: when it has to be created it inherits only client policy from
-  `local-ollama` (credential reference, headers, timeouts, cache, retry, effort,
-  base URL) and never another resident's limits, context window or input
-  modalities, so it never borrows Daytime's image input.
-- **A held route is not a failure.** A configuration that does not offer the
-  opt-in `trial` service leaves the route present with reason `not offered by the
+- **Every model is independent:** one model's state never blocks updates to
+  another, and one model's state never blocks its route. Only a router that
+  answers nothing, or publishes an unreadable document, gates the whole route.
+- **Nothing selects an opt-in service.** No default, migration, verification,
+  restore or fallback path may put a session on one, and a session a human put
+  there is never moved off automatically. It is listed and state-checked, never
+  sent inference by an automated check. `migrateDefaultSelection` throws rather
+  than move a default onto an opt-in service. `OPT_IN_SERVICES` defaults to the
+  one name 1.2 §3 gives as the example (`trial`) and is configuration
+  (`optInServices`), so a future opt-in name is a settings edit, not a Harness
+  release. An opt-in service is provisioned from its own serving metadata and
+  never inherits another model's limits, context window or input modalities.
+- **A held service is not a failure.** A configuration that does not offer the
+  opt-in `trial` service leaves its row present with reason `not offered by the
   router`: the boot migration prints its opt-in notice and exits 0. Exit 22 is
   reserved for invalid local settings; no router configuration — no `trial`, no
   `daytime`, an unreachable router — can produce it.
@@ -367,15 +408,15 @@ the one selected. It therefore never has a fallback refusal to surface (§5
 
 | §13 item | How Harness meets it | Code | Tests |
 | --- | --- | --- | --- |
-| Sends service IDs only, or, for a benchmark, a canonical ID pinned per run (§3). Persists no canonical IDs as configuration. Sends `X-Client-Name`. | Resident routes configure only `daytime`/`nighttime`/`trial`. Startup migration rewrites old IDs in the provider map, the default, compaction `modelPolicies` and every other resident `provider`/`model` pair. Old session routes move to the service ID on their next request, and the adapter accepts old IDs for side calls such as compaction summaries. Canonical IDs appear only in logs. Harness is not a benchmark client and takes no §3 pinning exception: it never resolves a service ID to a canonical ID to send, not even for one run. `X-Client-Name: deepseek-harness/<instance>` is set in the provider `headers` and on every discovery fetch. The instance comes from `HARNESS_CLIENT_INSTANCE`, then `HARNESS_TLS_IP`, then the hostname. Every request also names its model, so no request is answered by the active configuration's default (§3). | `seed/plugins/dsh-router-model-discovery.js` (`RESIDENT_SERVICES`, `planResidentProvider`, `migrateResidentRoute`, `routerClientName`, `agent/request` waterfall), `scripts/migrate-resident-models.mjs` (`routeMigrations`), `scripts/patch-dsh-resident-availability.mjs` (`residentModelId`), `config/settings.yaml`, `seed/profile/managed/cordis.patch.yml`, `compose.yaml` | `tests/router-model-discovery.test.mjs`, `tests/router-provider-remote.test.mjs` (startup migration; MTP3 revision), `tests/resident-settings-migration.test.mjs`, `tests/local-inference-contract.test.mjs`, `scripts/verify-router-client-wire.mjs` (every recorded request names a non-empty `model`; the service ID is what is sent), `scripts/verify-local-model-profiles.mjs`, CI `scripts/verify-router-startup.mjs` |
-| Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5). | The `trial` guards are the code 1.2 §3/§5 now describes: `OPT_IN_SERVICES`/`OPT_IN_PROVIDERS` and `isOptInService` mark the route, and nothing else may select it — no default (`migrateDefaultSelection` throws rather than move onto it), no restore target, no migration, no verification step, no fallback in either direction, and a session a human placed there is left there or fails, with `residentMessage` never suggesting another model. Candidates for a choice are the three configured residents only, never a `models[]` row: `serviceMatches` is a lookup of a configured service against `row.service`/`row.id`/`row.aliases`, never a source of names, so a row the document gives no service ID (`service === id`, `aliases: []`, `MODEL_HAS_NO_SERVICE_ID`) is never addressed, never provisioned, and never appears as a selectable model, and a document whose catalog declares no service ID at all (`CATALOG_HAS_NO_SERVICE_ID`, `complete: false`) leaves every resident held with a stated reason rather than an invented name. | `seed/plugins/dsh-router-model-discovery.js` (`OPT_IN_SERVICES`, `OPT_IN_PROVIDERS`, `isOptInService`, `serviceMatches`, `residentStatus`, `residentMessage` and its opt-in advice, `migrateDefaultSelection`, `planResidentProvider`), `scripts/verify-router-contract.mjs` (`isOptInService`), `scripts/verify-resident-client.mjs`, `config/settings.yaml` | `tests/router-model-discovery.test.mjs` (opt-in guards; a row with `service === id` and `MODEL_HAS_NO_SERVICE_ID` is never offered; a catalog with only `CATALOG_HAS_NO_SERVICE_ID` rows holds every resident; no migration case selects the trial), `tests/router-provider-remote.test.mjs`, `tests/resident-settings-migration.test.mjs`, `tests/local-inference-contract.test.mjs`, CI `scripts/verify-router-startup.mjs` |
-| Reads the capabilities document at startup without failing when the router or a model is unavailable. | The pre-launch migration reads `/v1/router/capabilities` with a 10 s timeout. An unreachable router, an HTTP error, or an offline, unhealthy or incomplete model is recorded per model. Startup exits non-zero only for invalid local settings. If the router is unreachable, stored or seeded settings are kept, every resident model is marked unavailable, and discovery recovers automatically. A configuration that does not offer the opt-in `trial` service is the same kind of recorded state: the route is held with its reason and the update exits 0. What a person *sees* for a recorded state names the route, not a model: a route the document attributes no serving model to — a dropped alias, an offline service, an unreachable router — loses the model title it remembered (it describes a configuration that may no longer exist, and a picker section headed by it reads as a model on offer) and is labelled `Trial` or `Nighttime`; a draining router still attributes a model, so that title stays. The title returns with the model. | `scripts/migrate-resident-models.mjs`, `synchronizeRouterSettings`, `fetchCapabilities`, `planResidentProvider`, `entrypoint.sh` | `tests/resident-settings-migration.test.mjs` (unreachable; HTTP error; invalid local settings), `tests/router-model-discovery.test.mjs` (labelled by its own name while nothing serves it; title kept for a draining route; title restored when the model returns), `tests/router-provider-remote.test.mjs` (unreachable at startup), CI `verify-router-startup.mjs --daytime-only` |
+| Sends service IDs only, or, for a benchmark, a canonical ID pinned per run (§3). Persists no canonical IDs as configuration. Sends `X-Client-Name`. | A router route configures the service IDs its router publishes and nothing else; Harness keeps no service list of its own. Startup migration rewrites old IDs in the provider map, the default, compaction `modelPolicies` and every other resident `provider`/`model` pair. Old session routes move to the service ID on their next request, and the adapter accepts old IDs for side calls such as compaction summaries. Canonical IDs appear only in logs. Harness is not a benchmark client and takes no §3 pinning exception: it never resolves a service ID to a canonical ID to send, not even for one run. `X-Client-Name: deepseek-harness/<instance>` is set in the provider `headers` and on every discovery fetch. The instance comes from `HARNESS_CLIENT_INSTANCE`, then `HARNESS_TLS_IP`, then the hostname. Every request also names its model, so no request is answered by the active configuration's default (§3). | `seed/plugins/dsh-router-model-discovery.js` (`ROUTER_PROVIDER`, `RETIRED_ROUTES`, `routerServices`, `planRouterProvider`, `migrateResidentRoute`, `routerClientName`, `agent/request` waterfall), `scripts/migrate-resident-models.mjs` (`routeMigrations`), `scripts/patch-dsh-resident-availability.mjs` (`residentModelId`), `config/settings.yaml`, `seed/profile/managed/cordis.patch.yml`, `compose.yaml` | `tests/router-model-discovery.test.mjs`, `tests/router-provider-remote.test.mjs` (startup migration; MTP3 revision), `tests/resident-settings-migration.test.mjs`, `tests/local-inference-contract.test.mjs`, `scripts/verify-router-client-wire.mjs` (every recorded request names a non-empty `model`; the service ID is what is sent), `scripts/verify-local-model-profiles.mjs`, CI `scripts/verify-router-startup.mjs` |
+| Never falls back to or away from an opt-in service such as `trial`, and never offers a model the document gives no service ID (§3, §5). | The `trial` guards are the code 1.2 §3/§5 now describes: `OPT_IN_SERVICES`/`isOptInService` mark the model, and nothing else may select it — no default (`migrateDefaultSelection` throws rather than move onto it), no restore target, no migration, no verification step, no fallback in either direction, and a session a human placed there is left there or fails, with `residentMessage` never suggesting another model. The offered names come from the document but are filtered before they can become a model: `offeredNames` takes `row.service` and its `row.aliases`, and removes the canonical ID, the reserved `local-active` compatibility alias, and a `service` that merely repeats `id` — the row the document gives no service ID for (`aliases: []`, `MODEL_HAS_NO_SERVICE_ID`) is therefore never addressed, never provisioned, and never appears as a selectable model, and a document whose catalog declares no service ID at all (`CATALOG_HAS_NO_SERVICE_ID`, `complete: false`) leaves every model held with a stated reason rather than an invented name. The list of opt-in names is configuration (`optInServices`), with the contract's own example as its default. | `seed/plugins/dsh-router-model-discovery.js` (`OPT_IN_SERVICES`, `isOptInService`, `offeredNames`, `routerServices`, `residentMessage` and its opt-in advice, `migrateDefaultSelection`, `planRouterProvider`), `scripts/verify-router-contract.mjs` (`isOptInService`), `scripts/verify-resident-client.mjs`, `config/settings.yaml` | `tests/router-model-discovery.test.mjs` (opt-in guards; a row with `service === id` and `MODEL_HAS_NO_SERVICE_ID` is never offered; a catalog with only `CATALOG_HAS_NO_SERVICE_ID` rows holds every resident; no migration case selects the trial), `tests/router-provider-remote.test.mjs`, `tests/resident-settings-migration.test.mjs`, `tests/local-inference-contract.test.mjs`, CI `scripts/verify-router-startup.mjs` |
+| Reads the capabilities document at startup without failing when the router or a model is unavailable. | The pre-launch migration reads `/v1/router/capabilities` with a 10 s timeout. An unreachable router, an HTTP error, or an offline, unhealthy or incomplete model is recorded per model. Startup exits non-zero only for invalid local settings. If the router is unreachable, stored or seeded settings are kept, every model the route carried is marked unavailable with the router's own reason, and discovery recovers automatically. A configuration that does not offer the opt-in `trial` service is the same kind of recorded state: the route is held with its reason and the update exits 0. What a person *sees* for a recorded state names the model and its state: a name the document attributes no serving model to — a dropped service, an offline service, an unreachable router — loses the model title it remembered, because that title describes a configuration that may no longer exist and reads as a model on offer, and is labelled with the published name and its state; a draining router still attributes a model, so that title stays. The title returns with the model. | `scripts/migrate-resident-models.mjs`, `synchronizeRouterSettings`, `fetchCapabilities`, `planRouterProvider`, `entrypoint.sh` | `tests/resident-settings-migration.test.mjs` (unreachable; HTTP error; invalid local settings), `tests/router-model-discovery.test.mjs` (labelled by its own name while nothing serves it; title kept for a draining route; title restored when the model returns), `tests/router-provider-remote.test.mjs` (unreachable at startup), CI `verify-router-startup.mjs --daytime-only` |
 | Long-running: subscribes to `/v1/router/events` and polls while disconnected. Request-scoped: reads the document before each request. | Harness is long-running (the request-scoped form does not apply). One watcher per router holds a subscription for the process lifetime and replaces its copy whenever `revision` changes. Each revision re-synchronizes settings at once, which pushes `settings/document-updated` to open pickers (the earlier 30 s client re-read was removed). While disconnected it polls every 30 s with `If-None-Match`; the revision is the ETag. It reconnects with backoff from the stream's `retry:` (3 s) up to 30 s. 60 s without bytes is a dead stream. `TOO_MANY_SUBSCRIBERS` falls back to polling. | `RouterWatch`, `ResidentDiscovery` in `seed/plugins/dsh-router-model-discovery.js` (adapted from the reference `watchRouter`) | `tests/router-provider-remote.test.mjs` (event stream; `TOO_MANY_SUBSCRIBERS`; discovery service), CI `scripts/verify-resident-availability.mjs` (open picker follows offline → available → offline) |
-| Chooses the model per request by capability or by name, with configurable fallback (or, for benchmarks, deliberately none). Returns to the preferred model when it is available again. | By name, with fallback deliberately disabled (deviation above). Every dispatch and every queued request re-checks the selected model's current state. A model that returns is used on the next request. The opt-in `local-trial` route is never selected, never a default and never a fallback target; only a human selection puts a session on it. The optional `modelPicker.availableOnly` setting (default off, read from the same settings document the resident state persists to: the profile patch, then the pre-0.2 settings file) makes the picker offer only models whose current state is usable: the flag rides the `modelCatalog` result as `availableOnly`, so the server catalog keeps reporting every model and only the picker view changes. With it on, unavailable rows and the rows of a route draining a router switch are not offered, empty provider groups drop out, and an all-hidden list renders one status line instead of a wall of greyed rows. With it off the picker is byte-for-byte the current release. | `scripts/patch-dsh-resident-availability.mjs` (`assertResidentAvailable`, `modelPickerAvailableOnly`, picker labels, catalog availability) | `tests/dsh-resident-availability.test.mjs` (setting resolution, catalog transport, picker filter, drain status line, default off, in-place upgrade), `tests/router-provider-remote.test.mjs` (returns with no action), CI `verify-resident-availability.mjs` (no fallback, no replay) |
+| Chooses the model per request by capability or by name, with configurable fallback (or, for benchmarks, deliberately none). Returns to the preferred model when it is available again. | By name, with fallback deliberately disabled (deviation above). Every dispatch and every queued request re-checks the selected model's current state. A model that returns is used on the next request. An opt-in service (`trial` by default, `optInServices` in the plugin settings) is never selected, never a default and never a fallback target; only a human selection puts a session on it. The optional `modelPicker.availableOnly` setting (default off, read from the same settings document the resident state persists to: the profile patch, then the pre-0.2 settings file) makes the picker offer only models whose current state is usable: the flag rides the `modelCatalog` result as `availableOnly`, so the server catalog keeps reporting every model and only the picker view changes. With it on, unavailable rows and the rows of a route draining a router switch are not offered, empty provider groups drop out, and an all-hidden list renders one status line instead of a wall of greyed rows. With it off the picker is byte-for-byte the current release. | `scripts/patch-dsh-resident-availability.mjs` (`assertResidentAvailable`, `residentModelBlocked`, `modelPickerAvailableOnly`, picker labels, catalog availability) | `tests/dsh-resident-availability.test.mjs` (setting resolution, catalog transport, picker filter, drain status line, default off, in-place upgrade), `tests/router-provider-remote.test.mjs` (returns with no action), CI `verify-resident-availability.mjs` (no fallback, no replay) |
 | Waits, without switching, while the router drains or is in maintenance. | `accepting_requests: false` makes every model "router switching configuration". Such a model is not blocked, and nothing switches. `BACKEND_DRAINING`/`MAINTENANCE_MODE` become `ROUTER_SWITCHING`, which waits on its own retry chain (2 → 30 s, unbounded while switching continues). That chain is separate from the provider's retry budget. Each attempt prepares the call again, so the model is resolved anew; one that is offline in the new configuration then fails clearly. | `residentStatus`; `routerFailureOf` in `scripts/patch-dsh-llm-pi-ai.mjs`; `patchRetry` in `scripts/patch-dsh-resident-availability.mjs` | `tests/router-model-discovery.test.mjs` (draining or maintenance), `tests/router-provider-remote.test.mjs` (router draining), `tests/dsh-resident-availability.test.mjs` (2 → 30 s chain), `scripts/verify-router-client-wire.mjs` |
 | Classifies errors by `error.code`, as in §10. `SERVICE_OFFLINE` doesn't consume retry or budget allowances. | The pi-ai transport keeps the router's `error.code` and status from the SDK error, and from in-stream `response.failed`/`error` events. The adapter classifies by code first, then status. `SERVICE_OFFLINE`/`MODEL_NOT_FOUND` become terminal `MODEL_UNAVAILABLE` (no retry), hold the model offline or unavailable, and re-read the document. `BACKEND_UNAVAILABLE` uses the provider's bounded retries (2, 0.5–10 s); three such failures mark the model unavailable. Other 5xx, 408, 429 and network errors are retried; other 4xx fail. Unknown 5xx codes are transient and unknown 4xx codes are request errors. A string `error` is tolerated. | `routerErrorOf`/`routerFailureOf` (`scripts/patch-dsh-llm-pi-ai.mjs`), `router-error-code-v1` (`scripts/patch-unrestricted-policy.mjs`), `ResidentDiscovery.report` | `tests/dsh-llm-pi-ai-patch.test.mjs`, `scripts/verify-router-client-wire.mjs` (every code, HTTP and in-stream, exact body shapes), `tests/dsh-resident-availability.test.mjs` (`MODEL_UNAVAILABLE` never replays, even under always-retry), `tests/router-provider-remote.test.mjs` (`SERVICE_OFFLINE` hold; `BACKEND_UNAVAILABLE` threshold) |
 | Sets `stream` explicitly; handles queue keepalives and errors inside streams; never treats an incomplete response as complete. | Every resident request is a Responses stream with `stream: true`. Bytes received while queued, including `: waiting for inference slot` comments, re-arm the idle watchdog. Errors inside the stream are classified as above. A stream without a terminal event, `response.incomplete`, and partial tool JSON are errors, and partial tool JSON is never executed. | `router-stream-activity-v1` (`scripts/patch-unrestricted-policy.mjs`, `routerActivityFetch` in `scripts/patch-dsh-llm-pi-ai.mjs`), `router-incomplete-tool-policy-v1` | `scripts/verify-router-client-wire.mjs` via `tests/router-client-wire.test.mjs` (queued 4× past the idle timeout), `scripts/verify-unrestricted-wire.mjs` (partial tool JSON) |
-| Takes context, reserve, slots and features from the serving model, and recomputes them when it changes. Hard-codes no context size. | On every change, an available model's context budget is set to `context_window − metadata.context_safety_reserve`. The same update sets `maxConcurrency` from `slots`, input modalities from `input_modalities`, and selectable efforts from `metadata.reasoning`. Compaction thresholds apply to that budget. While a model is not available its last limits are kept, marked `stale` and not acted on. `131072` in `config/settings.yaml` is only a placeholder before the first discovery. Images are refused before sending to a model without `image`, and efforts the model does not offer are refused before sending. | `residentCapabilities`, `planResidentProvider` | `tests/router-model-discovery.test.mjs` (limits recomputed; stale limits), `tests/router-provider-remote.test.mjs` (Daytime limits update while Nighttime is unhealthy; MTP3 context change), `scripts/verify-router-contract.mjs` (live) |
+| Takes context, reserve, slots and features from the serving model, and recomputes them when it changes. Hard-codes no context size. | On every change, an available model's context budget is set to `context_window − metadata.context_safety_reserve`. The same update sets input modalities from `input_modalities` and selectable efforts from `metadata.reasoning`. Harness limits a route as a whole, so its `maxConcurrency` is the `slots` of every *distinct* model the router offers — aliases of one model share its slots (§8), so two names of one model are not two slots — and the router's own per-model queue stays the authority; a route therefore admits no more than the router could serve at once, though it cannot express a per-model share of its own. Compaction thresholds apply to that budget. While a model is not available its last limits are kept, marked `stale` and not acted on. `131072` in `config/settings.yaml` is only a placeholder before the first discovery. Images are refused before sending to a model without `image`, and efforts the model does not offer are refused before sending. | `residentCapabilities`, `planRouterProvider`, `routerServices` | `tests/router-model-discovery.test.mjs` (limits recomputed; stale limits), `tests/router-provider-remote.test.mjs` (one model's limits update while another is unhealthy; MTP3 context change), `scripts/verify-router-contract.mjs` (live) |
 | Uses read timeouts that allow for queueing, or streams. Doesn't abandon and resubmit queued requests. | Harness always streams. The router transport has no total or header deadline. The idle timer (`streamIdleTimeoutMs`, 15 min) counts queue keepalives as activity, so a queued request keeps its place. `TIMEOUT` is not a retryable code. | `RouterOpenAI` (`scripts/patch-unrestricted-policy.mjs`), `config/settings.yaml` `retryPolicy` | `scripts/verify-router-client-wire.mjs`, `scripts/verify-unrestricted-wire.mjs` (no SDK deadline; idle expiry only for silent sockets) |
 | Logs model changes and fallbacks, and surfaces refusals from a fallback model instead of retrying them. | Every availability transition and served-model change is logged with its reason, for example `router-model-discovery: nighttime: available → offline (flash-next-solo-128k)`. Limit recomputations are logged too. Logs go to the Harness log buffer and the container log, and the state is shown in the picker. There is no fallback, so there are no fallback refusals. | `ResidentDiscovery.logTransition` | `tests/router-provider-remote.test.mjs` (discovery service) |
 | Reaches the §2 base URL through one stable name, so a router change is an environment change and not a configuration edit. | The resident routes always use `http://ai-router:11434/v1`; **which** router answers that name is the deployment's `REMOTE_OLLAMA_HOST` setting, re-derived into the running configuration by every update rather than carried forward from the address the deployment was installed with. It accepts a host, a host and port, or a router base URL, plus an optional admin base, and refuses an endpoint the container could not use (TLS, another port, an unresolvable name, its own loopback) before writing or deploying anything. External and managed modes resolve the name inside Docker, and an update strips a stale alias there too. `update-and-restart.sh router` reports the decision and its source file; `set-router` writes it and can require the new router to answer first. During a transition the router a consumer left keeps serving, so a move is reversible by the same command with the previous value. An update does not finish until the running container is inspected and found to resolve the canonical name to the address the setting names, so a mapping that was written but never applied fails the update instead of quietly serving the old router. | `maintenance/router.py` (`plan`, `apply`, `configure`, `probe`), `maintenance/engine.py` (`build_candidate`, `report_router`, `verify_router`), `compose.yaml`, `scripts/update-and-restart.sh` | `tests/router-endpoint.test.py` (moves, moves back, stale mapping never forwarded, accepted and refused spellings, mode and source precedence), `tests/router-endpoint-docker.test.py` (a real container resolves the canonical name to the address the setting names, then follows it to another router and back), `tests/compose-topology.test.sh` |
@@ -393,9 +434,10 @@ configuration can take: a service no row declares and no `offline_services` row
 names — the opt-in `trial` today, and `daytime` in a catalog that declares no
 Daytime resident — is reported and skipped, never a failed verification, and a
 document warning `CATALOG_HAS_NO_SERVICE_ID` changes no exit status. What still
-fails is a claim Harness makes about itself: the router offering `trial` while no
-`local-trial` route has been provisioned, configured limits that no longer match
-the document, a stale label, the wrong or a canonical ID configured. The live
+fails is a claim Harness makes about itself: a name the router publishes that no
+model row carries, a route still titled for a router that publishes a name of its
+own, configured limits that no longer match the document, a stale label, the wrong
+or a canonical ID configured. The live
 verifiers state-check the opt-in route and never select it or send inference
 through it: only a non-opt-in resident whose state is `available` is ever picked
 up for a selection or inference check, and when none is left the check is logged
@@ -430,11 +472,13 @@ servable is the router's business and Harness's own routes are still recorded.
   mode, where `local-active` names the one active model and nothing else is
   published; the managed topology always sends that route's traffic to Daytime, so
   a synthesized document reads that active model as the `daytime` service. That is
-  this deployment's choice about which resident the active slot feeds — not a
+  this deployment's choice about which service the active slot feeds — not a
   claim that `local-active` is an alias of `daytime`, and not true of a resident
   catalog, where an undeclared `local-active` is a 404. A `trial` row can never be
   reached this way: the synthesis knows only the two services that existed before
-  the contract, so an opt-in service is never produced by legacy aliasing.
+  the contract, so an opt-in service is never produced by legacy aliasing. The
+  synthesized rows feed the same catalog route as a contract document, and nothing
+  else — a pre-contract router simply offers fewer names.
 - **A configuration with no `daytime` (1.2 §3).** The `daytime` row is not
   guaranteed by every published configuration. A configured service with no
   `models` row and no `offline_services` row is recorded as unavailable with

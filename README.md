@@ -28,18 +28,25 @@ step after an operator updates a selected deployment through Service Portal.
 - Node 22 base pinned to the digest used by the source image.
 - Ollama pinned to
   `sha256:77f1a2a54460f0380f2611e1464233d9b82cb6e58afc8f60abec0061049d2d82`.
-- Three resident OpenAI Responses routes at `http://ai-router:11434/v1` that send
-  the LLM Router's stable service IDs `daytime`, `nighttime` and `trial`. Their
-  context, slots, modalities and efforts come from the serving model, and they
-  follow the [LLM Router client contract](docs/llm-router-contract.md), including
-  its conformance map. The third route is **opt-in**: Harness never selects it,
-  never makes it a default, and never moves a session onto or off it by itself.
-- The model picker includes Daytime and optional Nighttime, the opt-in Trial, and
-  configured external providers. Each resident shows exactly one state (available, offline
-  with its configuration, unavailable, router switching configuration, or
-  incomplete metadata). A trial the router's current configuration does not offer
-  is held with that reason rather than missing or unknown. Saved selections never
-  fall back to another model, and
+- One OpenAI Responses route per router at `http://ai-router:11434/v1`
+  (`local-ollama`), whose model list **is** the catalog that router publishes at
+  `/v1/router/capabilities`: one row per service ID, right now `daytime`,
+  `nighttime` and `daisy`, a service published by a second host. Requests send
+  those stable service IDs, and a row is titled with the name the router
+  publishes for it — Harness invents no model names — with the service ID
+  appended in parentheses only when two offered names would read alike. Context,
+  slots, modalities and efforts come from the serving model, and the route
+  follows the [LLM Router client contract](docs/llm-router-contract.md),
+  including its conformance map. An **opt-in** service such as `trial` is never
+  selected by Harness, never made a default, and never entered or left by
+  itself.
+- The model picker shows one group per router, headed by the name that router
+  publishes for itself (`llm-router` today), with one row per service it
+  currently offers, plus configured external providers. Each model shows exactly
+  one state (available, offline with its configuration, unavailable, router
+  switching configuration, or incomplete metadata). An opt-in service the
+  router's current configuration does not offer is held with that reason rather
+  than missing or unknown. Saved selections never fall back to another model, and
   a model that returns is selectable again without action. Startup never fails
   because of router state. Startup and discovery refresh preserve external
   defaults, credentials, session history and reasoning choices.
@@ -168,10 +175,12 @@ which the updater snapshots with the rest of Harness state. Desktop-browser
 cookie import is unavailable; sign in directly through the ego tab.
 
 `ego_screenshot` returns both a PNG file result and a native Harness image
-attachment. The Daytime resident route declares image input; the router accepts
-image-bearing tool results. The opt-in Trial route is text-only and never takes
-Daytime's image modality. Actual visual interpretation must still pass the
-[visual acceptance procedure](docs/visual-validation-playbook.md) after deployment.
+attachment. The `daytime` service declares image input in the router's catalog
+today, and the router accepts image-bearing tool results. A service the document
+publishes as text-only never takes another service's image modality: each row's
+modalities come from the model that serves it. Actual visual interpretation must
+still pass the [visual acceptance procedure](docs/visual-validation-playbook.md)
+after deployment.
 
 The adapter validates Harness authentication for stream, input and settings
 routes. Chromium uses a local policy proxy for navigation, redirects and
@@ -205,7 +214,7 @@ Remote Ollama mode is the portable default and is intended for deploying
 Harness on another machine on the LAN. Compose maps the canonical `ai-router`
 name directly to `REMOTE_OLLAMA_HOST`. The production router owns the OpenAI
 Responses endpoint, tools, reasoning, vision, capabilities discovery and change
-events, and the `daytime`/`nighttime` service IDs; remote mode does not start a
+events, and the service IDs of the catalog it publishes; remote mode does not start a
 local router service.
 
 ```sh
@@ -352,14 +361,22 @@ ordered per-consumer procedure, and which deployments are on which router today.
 
 ## Persisted settings lifecycle
 
-`config/settings.yaml` seeds **Daytime** as `local-ollama/daytime`,
-**Nighttime** as `local-everyday/nighttime`, and the opt-in **Trial** as
-`local-trial/trial`. Their 128K limits are placeholders
-until the first successful discovery. The former 256K selection is retired.
-Canonical model IDs (which change with every AI Runtime configuration) are never
-configured or stored; they appear only as information in discovery logs.
-The seeded default is Daytime; nothing in a seed, a migration or a verification
-selects the trial, whose seeded profile is text-only.
+`config/settings.yaml` seeds **one route per router**: `local-ollama`, with one
+placeholder model (`daytime`) and placeholder 128K limits until the first
+successful discovery. Discovery replaces that route with the catalog its router
+publishes — one model row per service ID, titled with the names that router
+publishes for them — and rewrites the route's `displayName` to the name the
+router publishes for itself (`llm-router` today). `local-everyday` and
+`local-trial` are **retired provider IDs**: earlier releases gave each service
+its own route, and they now exist only to rewrite persisted selections onto the
+catalog route (a session recorded on `local-everyday` becomes `local-ollama`
+with model `nighttime`); the rewrite runs first and discovery then unsets the
+route itself, on the next sync. The
+former 256K selection is retired. Canonical model IDs (which change with every AI
+Runtime configuration) are never configured or stored; they appear only as
+information in discovery logs. The seeded default is `local-ollama/daytime`;
+nothing in a seed, a migration or a verification selects an opt-in service such
+as `trial`.
 
 Discovery follows the router as the [client contract](docs/llm-router-contract.md)
 requires. At startup it reads `GET /v1/router/capabilities`, then subscribes to
@@ -371,20 +388,40 @@ model is evaluated on its own:
 
 | Router state | Picker | Requests |
 | --- | --- | --- |
-| Listed and `available` with complete metadata | its display name (with an `· NSFW` badge when declared) | sent; context budget = `context_window` − `context_safety_reserve`, concurrency = `slots` |
-| In `offline_services` | `Nighttime — offline (<configuration>)` | fail at once, no retries |
+| Listed and `available` with complete metadata | the name the router publishes for that service (with an `· NSFW` badge when declared) | sent; context budget = `context_window` − `context_safety_reserve` |
+| In `offline_services` | `<published title> — offline (<configuration>)` | fail at once, no retries |
 | Listed with `available: false`, absent, or router unreachable | `… — unavailable` | fail at once, no retries |
 | `accepting_requests: false` (drain or maintenance) | `… — router switching configuration` | wait 2 → 30 s without switching models |
 | Metadata incomplete, invalid or warning-bearing | `… — incomplete metadata` | fail at once, no retries |
 
-The trial uses the same states with `Trial` in place of `Nighttime`. When it is
-available its label is the router's own display name, for example
-`Qwen3.8 Flash-Next (Strata trial) (160K)`, and it is listed text-only. When the
-router's current configuration does not offer the `trial` service, the route is
-still present and shown as `Trial — unavailable` with reason
-`not offered by the router` — held, never missing and never "unknown" — and its
-message says it is an opt-in model Harness never selects and never moves a
-session off.
+Which name is on offer decides the title: `metadata.alias_display_names` for
+that name, otherwise the model's `display_name_qualified`, otherwise its
+`display_name`. Two names of one model share the model's title, which is the
+publisher's own statement that they are one model under two names, so the name
+being chosen is appended in parentheses. Today's router publishes `daytime` and
+`nighttime` both titled `Qwen3.8 Flash-Next (256K)`, so the picker lists
+`Qwen3.8 Flash-Next (256K) (daytime)` and
+`Qwen3.8 Flash-Next (256K) (nighttime)`, alongside
+`Qwen3.8 Flash-Next IQ3_XXS (64K)` — the service a second host publishes as
+`daisy`, whose title is its own and needs no suffix. The labels in the table
+above are that same published title plus the state, and the title is dropped
+while nothing serves the name: a remembered title describes a configuration that
+may no longer exist and reads as a model on offer, so such a row names itself and
+its state, and the title returns with the model.
+
+A service this Harness already carries a row for, which the current
+configuration does not offer, keeps that row and says so. An opt-in service such
+as `trial` on a configuration that does not offer it is shown as
+`trial — unavailable` with reason `not offered by the router` — held,
+never missing and never "unknown" — and its message says it is an opt-in model
+Harness never selects and never moves a session off. A router that has never
+offered it simply has no row for it yet: discovery creates one when it appears.
+
+The state, label and message above are recorded **per model**, in
+`llm-pi-ai.providers.local-ollama.residentStates.<service>`. The route keeps
+`residentUnavailable` and `residentState` only for router-wide facts: a router
+that answers nothing or publishes an unreadable document, its configuration ID,
+the services it offers, and the service its document calls its default.
 
 Limits change only while a model is available. Otherwise its last limits are
 kept, marked stale and not acted on. Request errors are classified by the
@@ -396,18 +433,20 @@ Queue keepalive comments count as stream activity, so a request waiting in the
 router queue is never abandoned by the idle timer. Every router request carries
 `X-Client-Name: deepseek-harness/<instance>`. The instance comes from
 `HARNESS_CLIENT_INSTANCE`, then `HARNESS_TLS_IP`, then the container hostname.
-Transitions are logged, for example
+Transitions are logged per service, for example
 `nighttime: available → offline (flash-next-solo-128k)` and
 `trial: unavailable → available`.
 
-A normal image update atomically migrates repository-owned resident providers
-before Harness launches. The update converts old model IDs to service IDs in
-settings, defaults and compaction policies, and provisions or holds the opt-in
-route. Existing sessions move to the
+A normal image update atomically migrates the repository-owned router route
+before Harness launches. The update rewrites retired route IDs onto the catalog
+route in settings, defaults and compaction policies, and lists and state-checks
+an opt-in service such as `trial` without ever selecting it; which names are
+opt-in is the plugin setting `optInServices`, whose default is `[ trial ]`.
+Existing sessions move to the
 service ID on their next request. It preserves external providers and defaults,
 including Bedrock, credential storage, session history and unrelated settings.
 Only invalid local settings stop startup. An unreachable router starts Harness
-with its stored settings and every resident model unavailable, and discovery recovers
+with its stored settings and every model it carries unavailable, and discovery recovers
 automatically. See [optional residents and override adoption](docs/optional-residents.md)
 for upgrade and rollback guidance, including executable bind mounts that can
 otherwise shadow corrected image files. The router archives every generation;
@@ -417,7 +456,8 @@ service (contract §12).
 `scripts/migrate-resident-models.mjs` uses the same synchronization for explicit
 local maintenance and keeps a private backup when it changes a file.
 
-Both providers seed medium as an explicit DSH preference. Existing agent,
+The router route seeds `reasoning: medium` as an explicit DSH preference.
+Existing agent,
 request and provider choices are preserved; the router's raw `default` remains
 template-defined. Output capability maxima are null under the current
 unrestricted policy, so no positive request allowance, enabled thinking budget
@@ -430,15 +470,20 @@ The discovery plugin and both readiness scripts share one resolver and validator
 They accept the legacy exact alias, canonical entries with alias metadata, and
 explicit alias rows whose metadata agrees with the canonical target. Unknown,
 partial or contradictory output policy fails validation. The remote verifier
-compares persisted context, concurrency, output and effort mappings with current
-router metadata and retains the primary route's vision/tool requirements;
-browser readiness validates the selected route. It does not require the
-text-only secondary to advertise vision or tools.
+compares the persisted context, concurrency, output and effort mappings of every
+model the route carries with current router metadata, requires each row's title
+and recorded state to be the ones the router publishes, and checks the browser
+requirements against the model a browser session would actually use — the saved
+selection, or the service the router calls its default. A model the document
+publishes as text-only is never required to advertise vision or tools.
 
 Automatic and manual compaction and replay-safe tool pruning remain enabled.
-The 70% working-context trigger is 114,688 tokens for Daytime and
-91,750 tokens for Nighttime; the trial uses 70% of its own discovered window as
-soon as a configuration serves it. Summaries have no injected output quota; full original events remain
+The 70% working-context trigger is the compaction service's own
+`thresholdRatio: 0.70`, set once in the managed profile instead of one
+`modelPolicies` row per resident, so every model of the router route — including
+a service the catalog adds later — compacts at 70% of its own discovered context
+budget. Per-model policies left by earlier releases are migrated onto the catalog
+route and keep their ratio. Summaries have no injected output quota; full original events remain
 in durable session storage. Working-context summaries are lossy. The router
 counts actual formatted input and rejects infeasible explicit allowances
 without clipping them. See `scripts/patch-unrestricted-policy.mjs` and
@@ -528,8 +573,13 @@ release but matches inside the outer `ChatView` throws `ReferenceError:
 useChatNode is not defined` while rendering and blanks the whole transcript;
 that now fails the build instead of shipping.
 
-All three providers declare `maxConcurrency: 1`. The adapter keeps provider gates
-independent, and the resident models may run simultaneously. The router queues
+The router route seeds `maxConcurrency: 1`, and discovery sets it to the
+published `slots` summed over the **distinct** models the router offers — aliases
+of one model share that model's slots, so two names of one model are not two
+slots. The router's own per-model queue remains the authority: the client limit
+only guarantees that Harness never admits more than the router could serve at
+once. The adapter keeps provider gates independent, and the models of one route
+may run simultaneously. The router queues
 same-backend contention without disturbing an active generation.
 
 Busy/rate-limit, server, transport, and empty-response failures retain at most
@@ -543,7 +593,7 @@ body, release the provider slot, and preserve the durable task history. A
 stream that continues producing model events resets the inactivity timer.
 Existing installations preserve their provider settings; set each provider's
 `streamIdleTimeoutMs` to `900000` through Harness settings to adopt this allowance.
-Both routes set `cacheRetention: none` so pi-ai omits an unnecessary OpenAI
+The router route sets `cacheRetention: none` so pi-ai omits an unnecessary OpenAI
 `prompt_cache_key` field; the production backend still performs its own
 volatile slot-prefix caching. Reasoning summaries and opaque signatures are
 stored separately in replay state and reconstructed before tool calls on
@@ -563,7 +613,8 @@ may be saved atomically with mode `0600`; `0600`, `0640` and `0644` are accepted
 by verification. The service UID must own the file.
 
 The build applies the maintained compaction and pruning policy inside every
-shipped agent preset: 70% pressure for every resident route, zero extra headroom,
+shipped agent preset: 70% pressure as the compaction service's own default, so
+every model of the router route inherits it, zero extra headroom,
 one overflow recovery, and no injected summary-output quota. Host copies stay
 disabled to avoid duplicate services. Persisted custom preset definitions retain
 precedence over these defaults.

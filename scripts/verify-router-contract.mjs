@@ -23,93 +23,130 @@ export async function loadRouterContract() {
 }
 
 /**
- * Compare configured resident routes with the current capabilities document.
+ * Compare a deployment's router routes with the capabilities documents their
+ * routers publish. Each route must carry one model row per service its router
+ * offers, with that document's titles, limits and state.
  * `allowLegacyIds` accepts settings written by releases that predate service
  * IDs (rollback verification); it checks identity and availability only.
- * An opt-in route (the trial) whose router offers nothing is reported and
+ * An opt-in service (the trial) whose router offers nothing is reported and
  * skipped: the owner's current configuration is never a Harness failure.
- * @returns one row per resident: provider, service, status and notice.
+ * @returns one row per configured model: provider, service, status and notice.
  */
 export async function verifyConfiguredRoutes(settings, { browser = false, primaryBrowser = false, allowLegacyIds = false, log = () => {} } = {}) {
-  const { RESIDENT_SERVICES, residentStatus, fetchCapabilities, routerClientName, residentLabel, residentStateRecord,
-    requireRouterCapabilities, isBlockingStatus, describeStatus, routerBaseOf, isOptInService } = await loadRouterContract();
+  const { ROUTER_PROVIDER, RETIRED_ROUTES, OPT_IN_SERVICES, routerServices, routerRouteState, residentLabel,
+    residentStateRecord, routerModelName, requireRouterCapabilities, describeStatus, routerBaseOf, routerClientName, routerName,
+    resolveProviderList, fetchCapabilities, isOptInService } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
-  assert.ok(providers?.['local-ollama'], 'missing local-ollama provider');
+  assert.ok(providers?.[ROUTER_PROVIDER], `missing ${ROUTER_PROVIDER} provider`);
   const selected = settings['agent-default-model'];
   const discovery = settings['router-model-discovery'];
   const clientName = routerClientName({ instance: discovery?.clientInstance });
+  const optInServices = Array.isArray(discovery?.optInServices) && discovery.optInServices.length
+    ? discovery.optInServices : OPT_IN_SERVICES;
+  // Which routers to follow is the plugin's setting; without it, the one route
+  // this release manages. A deployment's external providers are not routers.
+  const routes = resolveProviderList(discovery?.providers);
+  // Discovery retires these routes by rewriting what selects them and unsetting
+  // the route, so one that is still configured means that migration has not run.
+  // Rollback verification keeps the older answer, where naming a service as its
+  // own route was the deployment's configuration.
+  if (!allowLegacyIds) {
+    for (const retired of Object.keys(RETIRED_ROUTES)) {
+      assert.ok(!providers[retired],
+        `provider ${retired} is retired: one route per router carries its catalog`);
+    }
+  }
   const documents = new Map();
   const rows = [];
-  for (const [name, service] of Object.entries(RESIDENT_SERVICES)) {
+  for (const name of routes) {
     const provider = providers[name];
-    // An opt-in route may not exist yet on a settings tree that discovery has
-    // not written. Its own base URL, else the shared router, still decides.
-    const optional = isOptInService(service);
-    const label = `${name}/${service}`;
-    if (!provider && optional) {
-      const base = routerBaseOf(providers['local-ollama'].baseURL);
-      if (!documents.has(base)) documents.set(base, (await fetchCapabilities(base, { clientName })).document);
-      const state = residentStatus(documents.get(base), service);
-      if (state.status !== 'available') {
-        const notice = `${service}: not offered by the router and no ${name} route is configured; skipped (an opt-in route is created by discovery, not required here).`;
-        log(notice);
-        rows.push({ provider: name, service, status: state.status, notice, configured: false, optIn: true });
-        continue;
-      }
-      assert.fail(`${label}: the router offers it but no ${name} route is configured; discovery has not provisioned it`);
+    const optional = routes.length > 1;
+    if (!provider) {
+      const notice = `${name}: no route is configured; skipped (discovery provisions a route from the router it follows).`;
+      if (optional) { log(notice); continue; }
+      assert.fail(`${name}: no route is configured`);
     }
-    assert.ok(provider && Array.isArray(provider.models) && provider.models.length === 1, `provider ${name} must configure exactly one model`);
-    assert.equal(provider.api, 'openai-responses', `provider ${name} is not using Responses`);
-    const configured = provider.models[0].id;
+    assert.ok(provider.api === 'openai-responses', `provider ${name} is not using Responses`);
+    assert.ok(Array.isArray(provider.models) && provider.models.length > 0, `provider ${name} configures no models`);
     if (!allowLegacyIds) {
-      assert.equal(configured, service, `${name} must send the router service ID "${service}", not "${configured}"`);
       assert.equal(provider.headers?.['X-Client-Name'], clientName, `${name} does not identify itself with X-Client-Name`);
     }
     const base = routerBaseOf(provider.baseURL);
     if (!documents.has(base)) documents.set(base, (await fetchCapabilities(base, { clientName })).document);
     const document = documents.get(base);
-    const state = residentStatus(document, service);
-    if (configured !== service) {
-      // Pre-service-ID releases: the stored ID must still reach the same model.
-      assert.ok(state.status !== 'available' || document.ids?.[configured] === document.ids?.[service],
-        `${label}: legacy ID "${configured}" no longer reaches the ${service} service`);
+    const configured = new Map((provider.models ?? []).map(row => [row.id, row]));
+    const catalog = routerServices(document, { known: [...configured.keys()], optInServices });
+    const route = routerRouteState(document);
+    const states = provider.residentStates ?? {};
+    // The route is gated only by its router as a whole; each model answers for itself.
+    const routeBlocked = route.status === 'unavailable' || route.status === 'incomplete';
+    assert.equal(provider.residentUnavailable === true, routeBlocked,
+      `${name}: route availability is not synchronized (router reports ${route.status}${route.reason ? `: ${route.reason}` : ''})`);
+    assert.equal(provider.residentState?.status, route.status, `${name}: route state is not synchronized`);
+    const capacity = new Map();
+    for (const service of catalog.services) {
+      const label = `${name}/${service.service}`;
+      const model = configured.get(service.service);
+      const state = states[service.service];
+      const optIn = service.optIn === true;
+      if (!model) {
+        if (optIn && service.status !== 'available') {
+          const notice = `${label}: ${describeStatus(service)}; skipped (opt-in service: discovery creates the row when the router offers it).`;
+          log(notice);
+          rows.push({ provider: name, service: service.service, status: service.status, notice, configured: false, optIn: true });
+          continue;
+        }
+        assert.fail(`${label}: the router publishes it but the route configures no such model; discovery has not written it`);
+      }
+      if (!allowLegacyIds) assert.equal(model.id, service.service, `${label}: model id is not the service ID`);
+      assert.equal(model.name, routerModelName(service, model.name), `${label} display name is not the title the router publishes`);
+      assert.equal(state?.status, service.status, `${label} state is not synchronized (router reports ${describeStatus(service)})`);
+      assert.equal(state?.label, residentStateRecord(service, model.name, { optInServices }).label, `${label} picker label is not synchronized`);
+      if (service.status !== 'available') {
+        const notice = `${label}: ${describeStatus(service)}; skipped${optIn ? ' (opt-in service, never selected automatically)' : ''} — the router's current configuration is not a Harness failure.`;
+        log(notice);
+        rows.push({ provider: name, service: service.service, status: service.status, notice, ...(optIn ? { optIn: true } : {}) });
+        continue;
+      }
+      rows.push({ provider: name, service: service.service, status: service.status, ...(optIn ? { optIn: true } : {}) });
+      if (!service.capabilities) {
+        log(`${label}: served by a pre-contract router without published limits; stored limits kept.`);
+        continue;
+      }
+      const capabilities = service.capabilities;
+      assert.equal(model.contextWindow, capabilities.contextWindow, `${label} context is not synchronized`);
+      assert.equal(model.maxTokens, capabilities.maxTokens, `${label} output policy is not synchronized`);
+      assert.deepEqual([...model.input].sort(), [...capabilities.input].sort(), `${label} modalities are not synchronized`);
+      assert.deepEqual(model.reasoningEfforts, capabilities.reasoningEfforts, `${label} effort mapping is not synchronized`);
+      const modelOf = nonEmptyName(service.served) ? service.served : service.service;
+      capacity.set(modelOf, Math.max(capacity.get(modelOf) ?? 0, capabilities.maxConcurrency));
+      // Browser capability is checked for the model a browser session actually
+      // uses: the saved selection, or what the router calls its default.
+      const browserRoute = name === ROUTER_PROVIDER || selected?.provider === name;
+      const browserModel = (selected?.provider === name ? selected.model : undefined) ?? provider.residentState?.default;
+      if (!browserRoute || browserModel !== service.service) continue;
+      requireRouterCapabilities(service.model?.metadata, {
+        browser: browser || primaryBrowser,
+        effort: selected?.provider === name && selected.model === service.service
+          ? selected.reasoningEffort : provider.reasoning,
+      });
     }
-    assert.equal(provider.residentUnavailable === true, isBlockingStatus(state.status),
-      `${label} availability is not synchronized (router reports ${describeStatus(state)})`);
-    if (!allowLegacyIds || provider.residentState !== undefined) {
-      assert.equal(provider.residentState?.status, state.status, `${label} state is not synchronized (router reports ${describeStatus(state)})`);
-      assert.equal(provider.residentState?.label, residentStateRecord(state, provider.models[0].name).label, `${label} picker label is not synchronized`);
+    const slots = [...capacity.values()].reduce((total, count) => total + count, 0);
+    if (slots > 0) {
+      assert.equal(provider.maxConcurrency, slots,
+        `${name}: concurrency is not the slots of the models it offers (offered ${slots})`);
     }
-    if (state.status !== 'available') {
-      const notice = `${service}: ${describeStatus(state)}; skipped${optional ? ' (opt-in route, never selected automatically)' : ''} — the router's current configuration is not a Harness failure.`;
-      log(notice);
-      rows.push({ provider: name, service, status: state.status, notice, ...(optional ? { optIn: true } : {}) });
-      continue;
+    // A router that publishes no name of its own is titled by the address it
+    // answers at; with no document at all there is nothing to compare against.
+    const published = routerName(document, provider.baseURL);
+    if (published !== undefined) {
+      assert.equal(provider.displayName, published, `${name} is not titled with the name the router publishes`);
     }
-    if (!state.capabilities) {
-      const notice = `${service}: served by a pre-contract router without published limits; stored limits kept.`;
-      log(notice);
-      rows.push({ provider: name, service, status: state.status, notice });
-      continue;
-    }
-    requireRouterCapabilities(state.metadata, {
-      browser: (browser && (name === 'local-ollama' || selected?.provider === name)) || (primaryBrowser && name === 'local-ollama'),
-      effort: (browser && selected?.provider === name ? selected.reasoningEffort : undefined) ?? provider.reasoning,
-    });
-    rows.push({ provider: name, service, status: state.status });
-    if (allowLegacyIds && configured !== service) continue;
-    const model = provider.models[0];
-    const capabilities = state.capabilities;
-    assert.equal(model.contextWindow, capabilities.contextWindow, `${label} context is not synchronized`);
-    assert.equal(model.name, residentLabel(state), `${label} display name is not synchronized`);
-    if (capabilities.displayName) assert.equal(provider.displayName, capabilities.displayName, `${label} provider name is not synchronized`);
-    assert.equal(model.maxTokens, capabilities.maxTokens, `${label} output policy is not synchronized`);
-    assert.equal(provider.maxConcurrency, capabilities.maxConcurrency, `${label} concurrency is not synchronized`);
-    assert.deepEqual([...model.input].sort(), [...capabilities.input].sort(), `${label} modalities are not synchronized`);
-    assert.deepEqual(model.reasoningEfforts, capabilities.reasoningEfforts, `${label} effort mapping is not synchronized`);
   }
   return rows;
 }
+
+const nonEmptyName = value => typeof value === 'string' && value.length > 0;
 
 export async function readSettings(file) {
   let text;
@@ -129,35 +166,42 @@ export async function readSettings(file) {
 
 /** Independent expected UI contract: validate live settings against discovery
  * before using them, or use the persisted states during an offline image build.
- * A row is marked `optIn` when only a human may select that route; verification
+ * A row is marked `optIn` when only a human may select that model; verification
  * shows it in the catalog and picker but never selects it or sends inference. */
 export async function residentClientExpectations(settings, { live = true, log } = {}) {
   if (live) await verifyConfiguredRoutes(settings, { primaryBrowser: true, log });
-  const { RESIDENT_SERVICES, serviceLabel, isOptInService } = await loadRouterContract();
+  const { ROUTER_PROVIDER, resolveProviderList, OPT_IN_SERVICES, isOptInService } = await loadRouterContract();
   const providers = settings?.['llm-pi-ai']?.providers;
   assert.ok(providers);
+  const discovery = settings['router-model-discovery'];
+  const optInServices = Array.isArray(discovery?.optInServices) && discovery.optInServices.length
+    ? discovery.optInServices : OPT_IN_SERVICES;
   const rows = [];
-  for (const [provider, model] of Object.entries(RESIDENT_SERVICES)) {
-    const optIn = isOptInService(model);
+  for (const provider of resolveProviderList(discovery?.providers)) {
     const source = providers[provider];
     if (!source) {
-      if (!optIn) assert.fail(`provider ${provider} is missing`);
-      log?.(`${model}: no ${provider} route is configured; skipped (an opt-in route appears only once discovery provisions it).`);
-      continue;
+      assert.fail(`provider ${provider} is missing`);
     }
-    assert.deepEqual(source.models?.map(row => row.id), [model]);
-    const configured = source.models[0];
-    assert.ok(typeof configured.name === 'string' && configured.name.length > 0);
-    const state = source.residentState;
-    if (source.residentUnavailable === true) {
-      rows.push({ provider, model, name: state?.label ?? `${serviceLabel(model)} — unavailable`, available: false,
-        status: state?.status ?? 'unavailable', recorded: state !== undefined, ...(optIn ? { optIn: true } : {}) });
-      continue;
+    const states = source.residentStates ?? {};
+    for (const configured of source.models ?? []) {
+      const model = configured.id;
+      const optIn = isOptInService(model, optInServices);
+      assert.ok(typeof configured.name === 'string' && configured.name.length > 0, `${provider}/${model}: model has no display name`);
+      const state = states[model];
+      const blocked = source.residentUnavailable === true
+        || state?.status === 'offline' || state?.status === 'unavailable' || state?.status === 'incomplete';
+      if (blocked) {
+        rows.push({ provider, model, name: state?.label ?? `${model} — unavailable`, available: false,
+          status: state?.status ?? (source.residentUnavailable ? source.residentState?.status : undefined) ?? 'unavailable',
+          recorded: state !== undefined, ...(optIn ? { optIn: true } : {}) });
+        continue;
+      }
+      assert.ok(Number.isSafeInteger(configured.contextWindow) && configured.contextWindow > 0,
+        `${provider}/${model}: an available model needs a context window`);
+      const name = state?.status && state.status !== 'available' ? state.label : configured.name;
+      rows.push({ provider, model, available: true, status: state?.status ?? 'available', name,
+        contextWindow: configured.contextWindow, reasoningEffort: source.reasoning, ...(optIn ? { optIn: true } : {}) });
     }
-    assert.ok(Number.isSafeInteger(configured.contextWindow) && configured.contextWindow > 0);
-    const name = state?.status && state.status !== 'available' ? state.label : configured.name;
-    rows.push({ provider, model, available: true, status: state?.status ?? 'available', name, contextWindow: configured.contextWindow,
-      reasoningEffort: source.reasoning, ...(optIn ? { optIn: true } : {}) });
   }
   return rows;
 }

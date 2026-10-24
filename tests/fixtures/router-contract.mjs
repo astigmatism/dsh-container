@@ -28,17 +28,25 @@ export function reasoning({ unrestricted = true } = {}) {
   };
 }
 
-/** One `models[]` entry; `metadata` mirrors x_ollama_router schema v2. */
+/** One `models[]` entry; `metadata` mirrors x_ollama_router schema v2.
+ *
+ * `aliasTitles` is the map that titles each name the row declares
+ * (`metadata.alias_display_names`), the only fact that tells two names of one
+ * model apart; a publisher that leaves a name titled with the name itself has
+ * published no title for it, and the model's own title labels the row.
+ * `displayNameQualified` is the qualified label a picker renders, published by
+ * routers that have the field and absent from ones that predate it.
+ */
 export function residentModel({ service = 'daytime', aliases = service === 'daytime' ? ['local-active', 'daytime'] : [service],
   id = service === 'daytime' ? DAYTIME_ID : service === 'trial' ? TRIAL_ID : NIGHTTIME_ID,
   contextWindow = service === 'daytime' || service === 'trial' ? 163840 : 98304, slots = 1, vision = service === 'daytime',
   displayName = service === 'daytime' ? 'Qwen3.8 27B Q6_K (160K)'
     : service === 'trial' ? 'Qwen3.8 Flash-Next (Strata trial) (160K)' : 'Qwen3.8 27B Abliterated Q6_K (96K)',
-  nsfw = service === 'nighttime', available = true, reserve = 1024, unrestricted = true } = {}) {
+  displayNameQualified, aliasTitles, nsfw = service === 'nighttime', available = true, reserve = 1024, unrestricted = true } = {}) {
   const input = vision ? ['text', 'image'] : ['text'];
   const capabilities = vision ? ['completion', 'thinking', 'tools', 'vision'] : ['completion', 'thinking', 'tools'];
   const capabilityScore = service === 'daytime' ? 68.3 : service === 'trial' ? 61.4 : 64.9;
-  return {
+  const row = {
     id, service, display_name: displayName, aliases, available, slots, context_window: contextWindow,
     input_modalities: input, capabilities, nsfw, capability_score: capabilityScore,
     metadata: {
@@ -54,6 +62,14 @@ export function residentModel({ service = 'daytime', aliases = service === 'dayt
       complete: true, warnings: [],
     },
   };
+  if (displayNameQualified !== undefined) row.display_name_qualified = displayNameQualified;
+  // Every name the row declares is titled: with the published title where one was
+  // given, and with the name itself otherwise, which is how a publisher says it
+  // published no title for that name.
+  if (aliasTitles !== undefined) row.metadata.alias_display_names = Object.fromEntries(
+    [...aliases, ...Object.keys(aliasTitles).filter(name => !aliases.includes(name))]
+      .map(name => [name, Object.hasOwn(aliasTitles, name) ? aliasTitles[name] : name]));
+  return row;
 }
 
 /** A catalog entry the configuration gave no service alias (contract 1.2 §4).

@@ -17,15 +17,22 @@ const require = createRequire(`${process.env.DSH_RUNTIME_ROOT ?? '/usr/local/lib
 const YAML = require('yaml');
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** Old persisted IDs of Harness-owned routes, anywhere outside the provider map. */
-export function routeMigrations(state, services) {
+/**
+ * Selections written before a router's catalog drove the model list, anywhere
+ * outside the provider map: a retired route becomes the catalog route, and the
+ * model its own route sent. A route that survived the change is untouched,
+ * because after it one route legitimately serves several models.
+ */
+export function routeMigrations(state, retired) {
   const operations = [];
   const visit = (namespace, value, path) => {
     if (Array.isArray(value)) { value.forEach((child, index) => visit(namespace, child, [...path, index])); return; }
     if (!object(value)) return;
     for (const [providerKey, modelKey] of [['provider', 'model'], ['summarizationProvider', 'summarizationModel']]) {
-      const service = services[value[providerKey]];
-      if (typeof service === 'string' && typeof value[modelKey] === 'string' && value[modelKey].length && value[modelKey] !== service) {
+      const service = retired[value[providerKey]];
+      if (typeof service !== 'string') continue;
+      operations.push({ namespace, operation: { op: 'set', path: [...path, providerKey], value: 'local-ollama' } });
+      if (typeof value[modelKey] === 'string' && value[modelKey].length > 0 && value[modelKey] !== service) {
         operations.push({ namespace, operation: { op: 'set', path: [...path, modelKey], value: service } });
       }
     }
@@ -58,7 +65,7 @@ async function main() {
     state[namespace] ??= {};
     applyOperation(state[namespace], operation);
   };
-  const { synchronizeRouterSettings, applyOperation, RESIDENT_SERVICES, routerClientName, describeStatus, isOptInService } = await loadRouterContract();
+  const { synchronizeRouterSettings, applyOperation, RETIRED_ROUTES, routerClientName, describeStatus, isOptInService } = await loadRouterContract();
   const discovery = state['router-model-discovery'];
   const outcome = await synchronizeRouterSettings({
     get: namespace => state[namespace],
@@ -67,16 +74,17 @@ async function main() {
   }, {
     clientName: routerClientName({ instance: object(discovery) ? discovery.clientInstance : undefined }),
     fetchOptions: { timeoutMs: 10_000 },
-    onFetchError: (_base, error) => console.log(`Router discovery is unavailable at startup (${error.name === 'TimeoutError' ? 'timeout' : error.message}); starting with stored settings and every resident model marked unavailable. Discovery recovers automatically.`),
+    onFetchError: (_base, error) => console.log(`Router discovery is unavailable at startup (${error.name === 'TimeoutError' ? 'timeout' : error.message}); starting with stored settings and every published model marked unavailable. Discovery recovers automatically.`),
   });
   if (outcome.errors.length) throw new Error(outcome.errors.map(({ provider, error }) => `${provider}: ${error.message}`).join('; '));
-  for (const [provider, { state: resident }] of outcome.results) {
-    const service = RESIDENT_SERVICES[provider];
-    // An absent opt-in service is the owner's configuration choice, not a fault.
-    const note = isOptInService(service) && resident.status !== "available" ? " [opt-in route; never selected automatically]" : "";
-    console.log(`${service}: ${describeStatus(resident)}${note}`);
+  for (const { services } of outcome.results.values()) {
+    for (const { service, state } of services) {
+      // An absent opt-in service is the owner's configuration choice, not a fault.
+      const note = isOptInService(service) && state.status !== "available" ? " [opt-in service; never selected automatically]" : "";
+      console.log(`${service}: ${describeStatus(state)}${note}`);
+    }
   }
-  for (const { namespace, operation } of routeMigrations(state, RESIDENT_SERVICES)) record(namespace, operation);
+  for (const { namespace, operation } of routeMigrations(state, RETIRED_ROUTES)) record(namespace, operation);
   if (JSON.stringify(state) === initialState) {
     console.log('Resident model configuration is already current.');
     return;

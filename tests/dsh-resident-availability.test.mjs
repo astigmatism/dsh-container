@@ -6,6 +6,21 @@ import { patchAdapter, patchRegistry, patchCatalog, patchClient, patchCatalogCod
 import { EndpointConcurrencyGate } from '../scripts/patch-dsh-llm-pi-ai.mjs';
 const fixture = JSON.parse(await readFile(new URL('./fixtures/dsh-resident-availability-0.2.1-alpha.5.json', import.meta.url)));
 const clone = value => JSON.parse(JSON.stringify(value));
+// One router is one route: it carries every service the router's capabilities
+// document publishes, and each model row answers to its own recorded state.
+const route = (overrides = {}) => ({ status: 'available', reason: null, configuration: 'solo-128k',
+  services: [{ service: 'day', status: 'available' }, { service: 'night', status: 'available' }], default: 'day', ...overrides });
+const recorded = (service, name, overrides = {}) => ({ service, status: 'available', label: name,
+  configuration: 'solo-128k', reason: null, limits: 'current', nsfw: null, ...overrides });
+const offlineState = (service, configuration = 'flash-next-solo-128k') => recorded(service, `${service} — offline (${configuration})`, {
+  status: 'offline', limits: 'stale', configuration,
+  message: `${service} is offline in router configuration "${configuration}". Select another model, or retry when ${service} returns; Harness reconnects automatically.` });
+const unavailableState = service => recorded(service, `${service} — not offered`, {
+  status: 'unavailable', reason: 'not offered by the router', limits: 'stale', configuration: 'solo-128k',
+  message: `${service} is unavailable: the router does not offer it. Select another model, or retry when ${service} returns; Harness reconnects automatically.` });
+const switchingState = (service, name) => recorded(service, `${name} — router switching configuration`, {
+  status: 'switching', reason: 'draining', limits: 'stale',
+  message: `The router is switching configuration (draining); requests to ${name} wait and retry without changing models.` });
 // Dependency-free stand-in for the installed `yaml` package, faithful to it on
 // the settings shapes this patch reads (verified against it in the container).
 function parseSettingsLite(text) {
@@ -50,18 +65,33 @@ function adapter() {
     describableReasoningLevel: () => undefined, reasoningInfo: () => ({}),
   });
   const profile = { provider: 'local-everyday', baseURL: 'http://fixture', maxConcurrency: 1,
-    modelErrors: new Map(), configuredMaxTokens: new Map() };
-  const model = { id: 'night', name: 'Nighttime', input: ['text'], contextWindow: 128000 };
+    modelErrors: new Map(), configuredMaxTokens: new Map(), residentState: route(),
+    residentStates: { day: recorded('day', 'Daytime'), night: recorded('night', 'Nighttime') } };
+  const models = new Map([
+    ['day', { id: 'day', name: 'Daytime', input: ['text'], contextWindow: 200000 }],
+    ['night', { id: 'night', name: 'Nighttime', input: ['text'], contextWindow: 128000 }],
+  ]);
   let calls = 0;
   const snapshot = { profiles: new Map([['local-everyday', profile]]), models: {
-    getModel: (_provider, id) => id === 'night' ? model : undefined, getModels: () => [model],
-    streamSimple: async function* () { calls++; yield { type: 'text', text: 'night-only' }; },
+    getModel: (_provider, id) => models.get(id), getModels: () => [...models.values()],
+    streamSimple: async function* (model) { calls++; yield { type: 'text', text: `${model.id}-only` }; },
   } };
   const value = new Adapter({ resolveApiKey: async () => 'synthetic' });
   value.current = () => snapshot;
-  return { value, profile, snapshot, calls: () => calls };
+  const state = (id, overrides) => { profile.residentStates[id] = { ...profile.residentStates[id], ...overrides }; };
+  return { value, profile, snapshot, state, calls: () => calls };
 }
 const request = { provider: 'local-everyday', model: 'night', messages: [] };
+const dayRequest = { provider: 'local-everyday', model: 'day', messages: [] };
+// The endpoint gate holds its slot until a stream is closed, so a test that
+// sends more than one request reads one chunk and closes the stream it read.
+const sends = async (f, req = request) => {
+  const stream = f.value.stream(req);
+  const chunk = await stream.next();
+  await stream.return();
+  return chunk.value?.text;
+};
+const row = (models, id) => models.find(model => model.id === id);
 
 test('pinned availability patches are idempotent and fail on source drift', () => {
   for (const [key, patch] of [['adapter', patchAdapter], ['registry', patchRegistry], ['catalog', patchCatalog], ['client', patchClient], ['retry', patchRetry], ['codec', patchCatalogCodec], ['clientCodec', patchCatalogCodec]]) {
@@ -71,21 +101,27 @@ test('pinned availability patches are idempotent and fail on source drift', () =
   }
 });
 
-test('unavailable models remain inspectable but cannot prepare or dispatch; exact model resumes on return', async () => {
+test('one blocked model fails dispatch while its neighbour on the same route keeps working', async () => {
   const f = adapter();
-  f.profile.residentUnavailable = true;
+  f.state('night', offlineState('night'));
   const models = await f.value.listModels('local-everyday');
-  assert.equal(models[0].available, false);
-  assert.equal(models[0].name, 'Nighttime — unavailable');
+  const night = row(models, 'night');
+  assert.equal(night.available, false);
+  assert.equal(night.name, 'night — offline (flash-next-solo-128k)');
+  assert.ok(!('inputModalities' in night), 'a blocked model reports no modalities');
+  const day = row(models, 'day');
+  assert.equal(day.available, true, 'the route still answers for the model the router serves');
+  assert.deepEqual(clone(day.inputModalities), ['text']);
   assert.deepEqual(clone(await f.value.resolveModel('local-everyday', 'night')), {
-    provider: 'local-everyday', id: 'night', name: 'Nighttime — unavailable',
+    provider: 'local-everyday', id: 'night', name: 'night — offline (flash-next-solo-128k)',
   });
   assert.throws(() => f.value.prepareCall('local-everyday', 'night'), e => e.code === 'MODEL_UNAVAILABLE');
-  await assert.rejects(f.value.stream(request).next(), e => e.code === 'MODEL_UNAVAILABLE');
-  assert.equal(f.calls(), 0);
-  f.profile.residentUnavailable = false;
-  assert.equal((await f.value.stream(request).next()).value.text, 'night-only');
-  assert.equal(f.calls(), 1);
+  await assert.rejects(f.value.stream(request).next(), e => e.code === 'MODEL_UNAVAILABLE'
+    && /offline in router configuration "flash-next-solo-128k"/.test(e.message), 'the model states its own advice');
+  assert.equal(f.calls(), 0, 'a blocked model never reaches the router');
+  assert.equal(await sends(f, dayRequest), 'day-only', 'the other model on the route dispatches');
+  f.state('night', { status: 'available', label: 'Nighttime', limits: 'current', configuration: 'solo-128k', message: undefined });
+  assert.equal(await sends(f), 'night-only', 'the exact model resumes when the router offers it again');
 });
 
 test('a request waiting for capacity rechecks availability without cancelling an active stream', async () => {
@@ -95,36 +131,112 @@ test('a request waiting for capacity rechecks availability without cancelling an
   const queued = f.value.stream(request).next();
   // Let credential resolution and the queue admission settle.
   await new Promise(resolve => setImmediate(resolve));
-  f.profile.residentUnavailable = true;
+  f.state('night', unavailableState('night'));
   assert.equal((await active.next()).done, true, "the active stream completes normally");
   await assert.rejects(queued, e => e.code === 'MODEL_UNAVAILABLE');
   assert.equal(f.calls(), 1);
 });
 
+test('a model the router dropped, and one whose metadata is incomplete, fail at once', async () => {
+  for (const state of [unavailableState('night'), recorded('night', 'night — incomplete', {
+    status: 'incomplete', reason: 'router capabilities document has invalid offline_services', limits: 'stale',
+    message: 'night is unavailable: the router published incomplete metadata for it (invalid offline_services).',
+  })]) {
+    const f = adapter();
+    f.state('night', state);
+    assert.equal(row(await f.value.listModels('local-everyday'), 'night').available, false, state.status);
+    assert.throws(() => f.value.prepareCall('local-everyday', 'night'), e => e.code === 'MODEL_UNAVAILABLE' && e.message === state.message);
+    await assert.rejects(f.value.stream(request).next(), e => e.code === 'MODEL_UNAVAILABLE');
+    assert.equal(f.calls(), 0);
+  }
+});
+
+test('a model with no recorded state behaves like any other model', async () => {
+  const f = adapter();
+  delete f.profile.residentStates.day;
+  assert.equal(f.value.residentModelState(f.profile, 'day'), undefined);
+  const day = row(await f.value.listModels('local-everyday'), 'day');
+  assert.equal(day.name, 'Daytime');
+  assert.equal(day.available, true);
+  assert.deepEqual(clone(day.inputModalities), ['text'], 'nothing is dropped from a row discovery never recorded');
+  assert.equal(await sends(f, dayRequest), 'day-only');
+  const plain = adapter();
+  delete plain.profile.residentStates;
+  delete plain.profile.residentState;
+  const listed = await plain.value.listModels('local-everyday');
+  assert.deepEqual(clone(listed.map(model => [model.name, model.available, model.inputModalities])),
+    [['Daytime', true, ['text']], ['Nighttime', true, ['text']]]);
+  assert.equal((await plain.value.stream(request).next()).value.text, 'night-only');
+});
+
+test('a draining router is waited out on its own model row, never blocked', async () => {
+  const f = adapter();
+  f.state('night', switchingState('night', 'Nighttime'));
+  const listed = row(await f.value.listModels('local-everyday'), 'night');
+  assert.equal(listed.available, true, 'a model whose router is switching stays selectable');
+  assert.equal(listed.name, 'Nighttime — router switching configuration');
+  assert.equal((await f.value.stream(request).next()).value.text, 'night-only', 'requests are sent and wait on the router');
+  // The route-level facts say the same thing while the router drains.
+  const draining = adapter();
+  draining.profile.residentState = route({ status: 'switching', reason: 'draining',
+    services: [{ service: 'day', status: 'switching' }, { service: 'night', status: 'switching' }] });
+  assert.deepEqual((await draining.value.listModels('local-everyday')).map(model => model.available), [true, true]);
+  assert.equal((await draining.value.stream(request).next()).value.text, 'night-only');
+});
+
+test('a router that answers nothing blocks every model of its route at once', async () => {
+  const f = adapter();
+  f.profile.residentUnavailable = true;
+  f.profile.residentState = route({ status: 'unavailable', reason: 'router unreachable', configuration: null, default: 'night',
+    services: [{ service: 'day', status: 'unavailable' }, { service: 'night', status: 'unavailable' }],
+    message: 'The router at fixture is unreachable; every model it offers is unavailable.' });
+  // Nothing recorded a state for these rows, so nothing has a label to show.
+  f.profile.residentStates = { day: { service: 'day', status: 'available' }, night: { service: 'night', status: 'available' } };
+  const listed = await f.value.listModels('local-everyday');
+  assert.deepEqual(listed.map(model => model.available), [false, false], 'a router that answers nothing blocks all of its models');
+  assert.deepEqual(listed.map(model => model.name), ['Daytime', 'Nighttime'], 'a row with no label of its own keeps its configured name');
+  assert.ok(listed.every(model => !('inputModalities' in model)));
+  assert.throws(() => f.value.prepareCall('local-everyday', 'night'),
+    e => e.code === 'MODEL_UNAVAILABLE' && /router at fixture is unreachable/.test(e.message), 'the route states the advice its models share');
+  f.state('night', { label: 'night — unreachable', message: 'night is unavailable: the router is unreachable. Select another model.' });
+  assert.equal(row(await f.value.listModels('local-everyday'), 'night').name, 'night — unreachable');
+  assert.throws(() => f.value.prepareCall('local-everyday', 'night'),
+    e => e.code === 'MODEL_UNAVAILABLE' && /^night is unavailable: the router is unreachable\./.test(e.message), 'a model says so itself when it can');
+});
+
 test('registry and catalog preserve unavailable identity, external groups, and an unavailable default', async () => {
-  const f = adapter(); f.profile.residentUnavailable = true;
+  const f = adapter(); f.state('night', offlineState('night'));
   const Registry = vm.runInNewContext('class Registry {' + patchRegistry(fixture.registry) + '}\nRegistry', { LlmError });
   const registry = new Registry();
   registry.registration = () => ({ adapter: f.value }); registry.detachedModalities = value => value;
   const listed = await registry.listModels('local-everyday');
-  assert.equal(listed[0].available, false);
+  assert.equal(row(listed, 'night').available, false, 'the registry carries the blocked model through');
+  assert.ok(!('available' in row(listed, 'day')), 'and drops nothing for the model that answers');
   const catalog = vm.runInNewContext(patchCatalog(fixture.catalog) + '\n({ buildModelCatalog, modelAvailable })', { RemoteError: Error, process: { env: {} }, parseYamlSettings: parseSettingsLite });
-  const selected = { provider: 'local-everyday', model: 'night', reasoningEffort: 'high' };
+  const selected = { provider: 'local-everyday', model: 'day', reasoningEffort: 'high' };
+  const asked = [];
   const ctx = { agentDefaultModel: { currentSelection: () => selected }, llm: {
-    listProviders: () => [{ id: 'local-everyday' }, { id: 'amazon-bedrock' }],
-    listModels: async id => id === 'local-everyday' ? listed : [{ id: 'claude', name: 'Claude' }],
-    resolveModelInfo: async id => { assert.equal(id, 'amazon-bedrock'); return {}; },
+    listProviders: () => [{ id: 'local-everyday' }, { id: 'local-quiet' }, { id: 'amazon-bedrock' }],
+    listModels: async id => id === 'local-everyday' ? listed
+      : id === 'local-quiet' ? [{ id: 'gone', name: 'gone — offline (solo)', available: false }]
+        : [{ id: 'claude', name: 'Claude' }],
+    resolveModelInfo: async (id, model) => { asked.push(`${id}/${model}`); return {}; },
   } };
   const result = await catalog.buildModelCatalog(ctx);
   assert.deepEqual(clone(result.default), selected);
-  assert.deepEqual(clone(result.routableProviders), ['amazon-bedrock']);
-  assert.equal(result.groups.length, 2);
-  assert.equal(await catalog.modelAvailable(ctx, selected), false);
+  assert.deepEqual(clone(result.routableProviders), ['local-everyday', 'amazon-bedrock'],
+    'a route with one available model stays routable; one with none leaves');
+  assert.equal(result.groups.length, 3);
+  assert.equal(row(result.groups[0].models, 'night').available, false, 'the blocked row is still listed, and not described');
+  assert.deepEqual(asked, ['local-everyday/day', 'amazon-bedrock/claude'], 'a blocked model is never resolved');
+  assert.equal(await catalog.modelAvailable(ctx, selected), true, 'the model the router serves is available');
+  assert.equal(await catalog.modelAvailable(ctx, { provider: 'local-everyday', model: 'night' }), false, 'the blocked one is not');
+  assert.equal(await catalog.modelAvailable(ctx, { provider: 'local-quiet', model: 'gone' }), false);
 });
 
 test('client renders unavailable choices disabled and prevents alternate-picker selection', () => {
   const source = patchClient(fixture.client);
-  assert.match(source, /disabled: busy \|\| model.available === false/);
+  assert.match(source, /disabled: busy \|\| model\.available === false/);
   const start = source.indexOf('function selectionOf('), end = source.indexOf('\n\t\t}', start) + 5;
   const selectionOf = vm.runInNewContext(source.slice(start, end) + '\nselectionOf', { rowId: (p, m) => `${p}/${m}` });
   const state = { current: { provider: 'local-everyday', model: 'night' }, groups: [{ id: 'local-everyday', models: [{ id: 'night', available: false }] }] };
@@ -146,16 +258,16 @@ test('host and browser RPC codecs preserve model availability', () => {
 });
 
 test('modelPicker.availableOnly reads the settings document and defaults off', async () => {
-  const row = (value) => ['- id: modelPicker', '  config:', `    availableOnly: ${value}`].join('\n') + '\n';
+  const pickerRow = (value) => ['- id: modelPicker', '  config:', `    availableOnly: ${value}`].join('\n') + '\n';
   const off = (env, files) => modelPickerAvailableOnly(env, settingsFiles(files), parseSettingsLite);
   assert.equal(await off({}, {}), false, 'no directories, no files');
   assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': ['- id: agent-default-model', '  config:', '    provider: local-ollama'].join('\n') }), false, 'a document without the section');
-  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': row('true') }), true, 'list form, exact true');
-  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': row('false') }), false, 'list form, false');
-  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': row('"true"') }), false, 'a quoted string is not true');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': pickerRow('true') }), true, 'list form, exact true');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': pickerRow('false') }), false, 'list form, false');
+  assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': pickerRow('"true"') }), false, 'a quoted string is not true');
   assert.equal(await off({ DSH_HOME: '/h' }, { '/h/settings.yaml': 'modelPicker:\n  availableOnly: true\n' }), true, 'pre-0.2 map form');
-  assert.equal(await off({ DSH_PROFILE_DIR: '/p', DSH_HOME: '/h' }, { '/p/cordis.patch.yml': row('false'), '/h/settings.yaml': 'modelPicker:\n  availableOnly: true\n' }), false, 'the live profile patch wins over the legacy file');
-  assert.equal(await off({ DSH_PROFILE_DIR: '/p', DSH_HOME: '/h' }, { '/h/profiles/web/cordis.patch.yml': row('true') }), true, 'a missing profile patch falls through');
+  assert.equal(await off({ DSH_PROFILE_DIR: '/p', DSH_HOME: '/h' }, { '/p/cordis.patch.yml': pickerRow('false'), '/h/settings.yaml': 'modelPicker:\n  availableOnly: true\n' }), false, 'the live profile patch wins over the legacy file');
+  assert.equal(await off({ DSH_PROFILE_DIR: '/p', DSH_HOME: '/h' }, { '/h/profiles/web/cordis.patch.yml': pickerRow('true') }), true, 'a missing profile patch falls through');
   assert.equal(await modelPickerAvailableOnly({ DSH_HOME: '/h' }, settingsFiles({ '/h/settings.yaml': 'x: [' }), () => { throw new Error('yaml'); }), false, 'an unparsable document leaves the filter off');
 });
 
@@ -198,20 +310,22 @@ test('the availableOnly picker filter hides unavailable and switching rows and s
   const start = source.indexOf('const ROUTER_SWITCHING_SUFFIX'), end = source.indexOf('/** Dictionary namespace owned by this plugin. */', start);
   const helpers = vm.runInNewContext(source.slice(start, end) + '\n({ availableOnlyModel, routerSwitchingActive })');
   assert.equal(helpers.availableOnlyModel({ id: 'day', name: 'Daytime' }), true, 'an available row stays');
-  assert.equal(helpers.availableOnlyModel({ id: 'trial', name: 'Trial', available: false }), false, 'an unavailable row drops out');
-  assert.equal(helpers.availableOnlyModel({ id: 'night', name: 'Nighttime — router switching configuration' }), false, 'a route draining a switch is not offered either');
+  assert.equal(helpers.availableOnlyModel({ id: 'trial', name: 'Trial', available: false }), false, 'a blocked row drops out');
+  // A row whose own state says the router is switching carries the suffix as its
+  // name, and is not offered either.
+  assert.equal(helpers.availableOnlyModel({ id: 'night', name: 'Nighttime — router switching configuration' }), false);
+  assert.equal(helpers.availableOnlyModel({ id: 'night', name: 'Nighttime — router switching configuration', available: true }), false);
   assert.equal(helpers.routerSwitchingActive([{ id: 'p', models: [{ id: 'n', name: 'Nighttime — router switching configuration' }] }]), true);
-  assert.equal(helpers.routerSwitchingActive([{ id: 'p', models: [{ id: 'd', name: 'Daytime' }] }]), false);
+  assert.equal(helpers.routerSwitchingActive([{ id: 'p', models: [{ id: 'd', name: 'Daytime' }, { id: 'n', name: 'Nighttime', available: false }] }]), false);
 });
 
-test('a v2-patched install upgrades in place to the v3 transport', () => {
-  // The v2 release is this patch script with its four catalog hunks only.
-  let v2 = fixture.catalog;
-  v2 = v2.replace('async function buildModelCatalog(ctx, defaultSelection', '// dsh-resident-availability-v2\nasync function buildModelCatalog(ctx, defaultSelection');
-  v2 = v2.replace('\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);', '\t\t\t\tif (model.available === false) return { id: model.id, name: model.name, available: false };\n\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);');
-  v2 = v2.replace('routableProviders: groups.map((group) => group.id)', 'routableProviders: groups.filter(group => group.models.some(model => model.available !== false)).map((group) => group.id)');
-  v2 = v2.replace('return models.some((model) => model.id === selection.model);', 'return models.some((model) => model.id === selection.model && model.available !== false);');
-  assert.equal(patchCatalog(v2), patchCatalog(fixture.catalog), 'in-place lands on the fresh-build state');
+test('a tree built by an earlier revision is left as it was built', () => {
+  for (const [key, patch] of [['adapter', patchAdapter], ['retry', patchRetry]]) {
+    for (const prior of ['dsh-resident-availability-v3', 'dsh-resident-availability-v2']) {
+      const built = `${fixture[key]}\n// ${prior}\n`;
+      assert.equal(patch(built), built, `${key} keeps the state ${prior} built`);
+    }
+  }
   // A release that already patched the codec keeps one declaration per field.
   let v2Codec = fixture.codec.replace("'models': z.array(z.object({", "'models': z.array(z.object({\n'available': z.boolean().optional(),");
   v2Codec = '// dsh-resident-availability-v1-codec\n' + v2Codec;
@@ -221,6 +335,35 @@ test('a v2-patched install upgrades in place to the v3 transport', () => {
   assert.equal(patchCatalogCodec(upgraded), upgraded, 'idempotent after the upgrade');
 });
 
+test('the settings schema declares the per-model states alongside the route record', () => {
+  const patched = patchAdapter(fixture.adapter);
+  const declarations = patched.slice(patched.indexOf('residentUnavailable: z.boolean(),'), patched.indexOf('maxConcurrency: z.number().step(1).min(1),'));
+  assert.match(declarations, /residentStates: z\.any\(\)/, 'the discovery-owned per-model states survive a settings round-trip');
+  assert.match(declarations, /residentState: z\.any\(\)/);
+});
+
+test('a stale selection naming a retired model is served by the router document default', async () => {
+  const f = adapter();
+  const retired = 'qwen3.8-27b-abliterated-q6_k';
+  const resolved = await f.value.resolveModel('local-everyday', retired);
+  assert.equal(resolved.id, retired, 'the requested identity is echoed for dsh-llm validation');
+  assert.equal(resolved.name, 'Daytime', 'the service answering the document default takes the request');
+  assert.equal(await sends(f, { ...request, model: retired }), 'day-only');
+  f.state('day', offlineState('day'));
+  const sent = f.calls();
+  await assert.rejects(f.value.stream({ ...request, model: retired }).next(),
+    e => e.code === 'MODEL_UNAVAILABLE' && /"flash-next-solo-128k"/.test(e.message), 'the default answers on its own state');
+  assert.equal(f.calls(), sent, 'a blocked default is not tried');
+});
+
+test('a stale selection with no default to answer it keeps the ordinary failure', async () => {
+  const f = adapter();
+  f.profile.residentState = { ...route(), default: 'retired-service' };
+  assert.throws(() => f.value.modelOf(f.snapshot, 'local-everyday', 'unrelated'), /no configured model/);
+  delete f.profile.residentState.default;
+  assert.throws(() => f.value.prepareCall('local-everyday', 'unrelated'), e => e.code === 'UNKNOWN_MODEL');
+  assert.throws(() => f.value.modelOf(f.snapshot, 'local-everyday', 'unrelated'), /no configured model/);
+});
 
 test('keyboard selection also blocks unavailable models without submitting an RPC', () => {
   const source = patchClient(fixture.client);
@@ -228,17 +371,20 @@ test('keyboard selection also blocks unavailable models without submitting an RP
   const end = source.indexOf('const chooseEffort', start);
   const submissions = [];
   const choices = [{ selection: { provider: 'local-everyday', model: 'night' }, model: { available: false } },
+    { selection: { provider: 'local-everyday', model: 'day' }, model: { available: true } },
     { selection: { provider: 'amazon-bedrock', model: 'nova' }, model: {} }];
   const choose = vm.runInNewContext(source.slice(start, end) + '\nchoose', {
     choices, state: { current: null }, closeAfterSelection() {}, submit: value => submissions.push(value),
   });
   choose(choices[0].selection);
-  assert.equal(submissions.length, 0);
+  assert.equal(submissions.length, 0, 'a blocked model does not submit');
   choose(choices[1].selection);
-  assert.equal(submissions[0].provider, 'amazon-bedrock');
+  assert.equal(submissions[0].provider, 'local-everyday', 'its neighbour on the same route does');
+  choose(choices[2].selection);
+  assert.equal(submissions[1].provider, 'amazon-bedrock');
   choices[0].model.available = true;
   choose(choices[0].selection);
-  assert.equal(submissions[1].provider, 'local-everyday');
+  assert.equal(submissions[2].provider, 'local-everyday');
 });
 
 
@@ -252,35 +398,6 @@ test('unavailable failures never replay, including a saved always-retry policy',
   let downstream = 0;
   await recover({ failure: { code: 'UNRELATED_ERROR' } }, () => downstream++);
   assert.equal(downstream, 1, 'other failures retain their normal recovery path');
-});
-
-test('discovery state drives the one picker label and the dispatch message; a switching router never blocks', async () => {
-  const f = adapter();
-  f.profile.residentUnavailable = true;
-  f.profile.residentState = { service: 'night', status: 'offline', label: 'Nighttime — offline (flash-next-solo-128k)',
-    message: 'Nighttime is offline in router configuration "flash-next-solo-128k". Switch this session to Daytime.' };
-  assert.equal((await f.value.listModels('local-everyday'))[0].name, 'Nighttime — offline (flash-next-solo-128k)');
-  assert.throws(() => f.value.prepareCall('local-everyday', 'night'), e => e.code === 'MODEL_UNAVAILABLE' && /Switch this session to Daytime/.test(e.message));
-  await assert.rejects(f.value.stream(request).next(), e => e.code === 'MODEL_UNAVAILABLE');
-  f.profile.residentUnavailable = false;
-  f.profile.residentState = { service: 'night', status: 'switching', label: 'Nighttime — router switching configuration' };
-  const listed = (await f.value.listModels('local-everyday'))[0];
-  assert.equal(listed.available, true);
-  assert.equal(listed.name, 'Nighttime — router switching configuration');
-  assert.equal((await f.value.stream(request).next()).value.text, 'night-only', 'requests are sent and wait on the router');
-  f.profile.residentState = { service: 'night', status: 'available', label: 'Nighttime (96K) · NSFW' };
-  assert.equal((await f.value.listModels('local-everyday'))[0].name, 'Nighttime', 'an available model shows its configured name');
-});
-
-test('old persisted model IDs of a resident route resolve to its service model', async () => {
-  const f = adapter();
-  f.profile.residentState = { service: 'night', status: 'available', label: 'Nighttime' };
-  const resolved = await f.value.resolveModel('local-everyday', 'qwen3.8-27b-abliterated-q6_k');
-  assert.equal(resolved.id, 'qwen3.8-27b-abliterated-q6_k', 'the requested identity is echoed for dsh-llm validation');
-  assert.equal(resolved.name, 'Nighttime');
-  assert.equal((await f.value.stream({ ...request, model: 'qwen3.8-27b-abliterated-q6_k' }).next()).value.text, 'night-only');
-  delete f.profile.residentState;
-  assert.throws(() => f.value.modelOf(f.snapshot, 'local-everyday', 'unrelated'), /no configured model|getModel|undefined/i);
 });
 
 test('a draining router is waited out 2 → 30 s on its own chain without consuming the retry budget', async () => {

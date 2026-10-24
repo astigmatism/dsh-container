@@ -48,5 +48,8 @@ test('legacy namespace preferences migrate before retired browser and Token rows
   const source = fs.readFileSync(home + '/profiles/web/cordis.patch.yml', 'utf8');
   assert.doesNotMatch(source, /dsh-playwright|dsh-token/);
   assert.match(source, /reasoningEffort: off/);
+  // The saved selection is copied as it stands: this migration owns the settings
+  // document, not which route or service a model choice names.
+  assert.match(source, /provider: local-everyday/);
   assert.ok(fs.existsSync(home + '/settings.yaml.imported'));
 });

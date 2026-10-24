@@ -7,64 +7,58 @@ import { readFile } from "node:fs/promises";
 const path = process.argv[2] ?? "/data/dsh/settings.yaml";
 const settings = await readFile(path, "utf8");
 
-function providerBlock(name, nextName) {
-  const start = settings.indexOf(`    ${name}:\n`);
+// One route per router, and that route's model list is the catalog its router
+// publishes: discovery writes one row per service ID, titled with the router's
+// own names. The seed therefore carries only the placeholder the seeded default
+// names, and every number in it stands in until the first document answers.
+const providersAt = settings.indexOf("llm-pi-ai:\n  providers:\n");
+assert.notEqual(providersAt, -1, "the seed has no provider map");
+const providers = settings.slice(providersAt);
+const routes = [...providers.matchAll(/^    ([\w-]+):$/gm)].map(([, name]) => name);
+assert.deepEqual(routes, ["local-ollama"], "the seed writes one route, to this deployment's router");
+
+function routeBlock(name) {
+  const start = providers.indexOf(`    ${name}:\n`);
   assert.notEqual(start, -1, `missing provider ${name}`);
-  const end = nextName === undefined ? settings.length : settings.indexOf(`    ${nextName}:\n`, start + 1);
-  assert.notEqual(end, -1, `missing following provider ${nextName}`);
-  return settings.slice(start, end);
+  const rest = providers.slice(start + 1);
+  const next = rest.search(/^ {4}[\w-]+:$/m);
+  return next === -1 ? providers.slice(start) : providers.slice(start, start + 1 + next);
 }
+const route = routeBlock("local-ollama");
 
-const profiles = [
-  {
-    provider: "local-ollama",
-    next: "local-everyday",
-    service: "daytime",
-    displayName: "Daytime (128K)",
-    modelName: "Daytime (128K)",
-    contextWindow: 131072,
-    maxConcurrency: 1,
-  },
-  {
-    provider: "local-everyday",
-    next: "local-trial",
-    service: "nighttime",
-    displayName: "Nighttime (128K)",
-    modelName: "Nighttime (128K)",
-    contextWindow: 131072,
-    maxConcurrency: 1,
-  },
-  {
-    // The opt-in third resident: seeded text-only, because the trial profile
-    // offloads no multimodal projector. Never a default, never a fallback.
-    provider: "local-trial",
-    service: "trial",
-    displayName: "Trial (128K)",
-    modelName: "Trial (128K)",
-    contextWindow: 131072,
-    maxConcurrency: 1,
-  },
-];
+// Contract §3: send stable service IDs only; never persist a canonical ID. A row
+// is titled by its service ID because the title a person chooses between is the
+// router's, not this seed's, and a name written here would outlive the model
+// that earned it.
+assert.match(route, /- id: daytime\n/, "the placeholder row must send the router service ID daytime");
+assert.doesNotMatch(route, /- id: (?!daytime\n)/, "the seed writes no model row beyond the placeholder");
+assert.doesNotMatch(settings, /local-active|qwen3\.8/, "a canonical model ID is seeded");
+assert.match(route, /- id: daytime\n\s+name: daytime\n/, "a placeholder row is titled by its service ID");
+assert.doesNotMatch(route, /displayName: .*(?:Daytime|Nighttime|Trial)/, "a route is named for its router, not for a model");
+assert.doesNotMatch(route, /name: .*(?:Daytime|Nighttime|Trial)/, "a model row is titled by the router, not by this seed");
 
-for (const profile of profiles) {
-  const block = providerBlock(profile.provider, profile.next);
-  assert.ok(block.includes(`displayName: ${profile.displayName}`), `${profile.provider} has the wrong display name`);
-  // Contract §3: send stable service IDs only; never persist canonical IDs.
-  const service = profile.service;
-  assert.ok(block.includes(`- id: ${service}\n`), `${profile.provider} must send the router service ID ${service}`);
-  assert.ok(!/- id: (?!daytime\n|nighttime\n|trial\n)/.test(block), `${profile.provider} configures a non-service model ID`);
-  assert.ok(block.includes(`name: ${profile.modelName}`), `${profile.provider} has the wrong model name`);
-  assert.ok(block.includes(`contextWindow: ${profile.contextWindow}`), `${profile.provider} has the wrong context window`);
-  assert.ok(block.includes(`maxConcurrency: ${profile.maxConcurrency}`), `${profile.provider} has the wrong concurrency`);
-  assert.ok(block.includes("reasoning: medium"), `${profile.provider} is missing the deliberate medium seed`);
-  assert.ok(block.includes("maxTokens: null"), `${profile.provider} invents an output allowance`);
-  assert.ok(!/^      timeoutMs:/m.test(block), `${profile.provider} sets a generation deadline`);
-}
+assert.match(route, /api: openai-responses/, "the router route speaks the router's own protocol");
+assert.match(route, /baseURL: http:\/\/ai-router:11434\/v1/, "the router route addresses this deployment's router");
+assert.match(route, /apiKeyEnv: OLLAMA_DSH_API_KEY/);
+assert.match(route, /contextWindow: 131072/, "the seed carries a placeholder context budget");
+assert.match(route, /maxConcurrency: 1/, "the seed carries a placeholder concurrency");
+assert.match(route, /maxTokens: null/, "the seed invents an output allowance");
+assert.match(route, /reasoning: medium/, "the seed is missing the deliberate medium default");
+assert.match(route, /off: none/);
+assert.match(route, /high: xhigh/);
+assert.match(route, /max: xhigh/);
+assert.match(route, /streamIdleTimeoutMs: 900000/);
+assert.doesNotMatch(route, /^      timeoutMs:/m, "the seed sets a generation deadline");
+assert.match(route, /maxRetries: 2/);
+assert.match(route, /retryableCodes: \[\s*EMPTY_RESPONSE, RATE_LIMIT, SERVER, TRANSPORT\s*\]/);
+assert.doesNotMatch(route.match(/retryableCodes: \[([^\]]+)\]/)?.[1] ?? "", /TIMEOUT|CONTEXT_WINDOW_EXCEEDED/);
 
 assert.match(settings, /^agent-default-model:\n(?:#.*\n)?  provider: local-ollama\n  model: daytime\n/m, "the seeded default must use the daytime service ID");
-// The opt-in trial is reachable only through a human selection, so no seed,
-// restore or offline-Daytime state may name it as the default.
+// The opt-in service is offered by discovery and reached only through a human
+// selection, so no seed, restore or router-offline state may name it as the
+// default — and no service the router offers is seeded as a route of its own.
 const defaultBlock = settings.match(/^agent-default-model:\n((?:[ \t]+.*\n)*)/m)?.[1] ?? "";
 assert.match(defaultBlock, /provider: local-ollama/, "the seeded default block was not found");
-assert.doesNotMatch(defaultBlock, /trial/i, "the seeded default must not select the opt-in trial route");
-console.log("Verified seeded Daytime, Nighttime and opt-in Trial placeholders: service IDs only, unrestricted output and an explicit DSH medium default.");
+assert.doesNotMatch(defaultBlock, /trial/i, "the seeded default must not select the opt-in trial service");
+assert.doesNotMatch(settings, /- id: trial\n|local-everyday|local-trial/, "a service the router offers is seeded as a route of its own");
+console.log("Verified the seeded router route: one route, service IDs only, placeholder limits, unrestricted output and an explicit DSH medium default.");

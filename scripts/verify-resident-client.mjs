@@ -62,14 +62,28 @@ function compareExtras(extras, catalog, expected) {
   if (verifyExtras) assert.equal(catalog.groups.length, expected.length + extras.length, 'no unconfigured provider groups');
 }
 function compareCatalog(expected, catalog) {
+  // One router route carries every model that router publishes, so the
+  // comparison is one group with N rows, not N groups of one.
+  const routes = new Map();
   for (const row of expected) {
-    const group = catalog.groups.find(group => group.id === row.provider);
-    assert.ok(group, `${row.provider} is represented`);
-    assert.equal(catalog.failures.some(f => f.id === row.provider), false);
-    assert.equal(catalog.routableProviders.includes(row.provider), row.available);
+    if (!routes.has(row.provider)) routes.set(row.provider, []);
+    routes.get(row.provider).push(row);
+  }
+  for (const [provider, rows] of routes) {
+    const group = catalog.groups.find(candidate => candidate.id === provider);
+    assert.ok(group, `${provider} is represented`);
+    assert.equal(catalog.failures.some(f => f.id === provider), false);
+    // A route stays routable while any one of its models can serve (§4, §5).
+    assert.equal(catalog.routableProviders.includes(provider), rows.some(row => row.available),
+      `${provider} routable only while a model of it can serve`);
     assert.deepEqual(group.models.map(model => ({ id: model.id, name: model.name, available: model.available !== false })),
-      [{ id: row.model, name: row.name, available: row.available }]);
-    if (row.available) assert.equal(group.models[0].reasoning?.defaultEffort, row.reasoningEffort);
+      rows.map(row => ({ id: row.model, name: row.name, available: row.available })),
+      `${provider} picker models match the catalog the router publishes`);
+    for (const row of rows) {
+      if (!row.available) continue;
+      const model = group.models.find(candidate => candidate.id === row.model);
+      assert.equal(model.reasoning?.defaultEffort, row.reasoningEffort, `${provider}/${row.model} default effort`);
+    }
   }
 }
 /** The router may change state while this runs (docs/llm-router-contract.md):
@@ -81,7 +95,7 @@ async function settledExpectations() {
     try {
       const settings = await readSettings(settingsPath);
       const expected = await residentClientExpectations(settings, { live, log: notice => notices.add(notice) });
-      // Offline fixtures have no router: discovery must still record a state for both models.
+      // Offline fixtures have no router: discovery must still record a state for every model.
       if (!live) assert.ok(expected.every(row => row.recorded), 'discovery has recorded each resident state');
       const catalog = await rpc('modelCatalog');
       compareCatalog(expected, catalog);
@@ -103,16 +117,16 @@ try {
   originalDefault = catalog.default;
   defaultSnapshot = (await rpc('settings/describe')).namespaces.find(row => row.ns === 'agent-default-model');
   const available = expected.filter(row => row.available);
-  // An opt-in route (the trial) is listed in the catalog and picker and its
+  // An opt-in service (`trial` by default) is listed in the catalog and picker and its
   // recorded state is checked, but verification never selects it: selecting a
   // model saves the next-request default, and only a human may put a session on
-  // an opt-in route. It is never a default and never a fallback target.
+  // an opt-in service. It is never a default and never a fallback target.
   const selectable = available.filter(row => !row.optIn);
   const optInRows = available.filter(row => row.optIn);
   // A switching router accepts selection but makes requests wait; only
   // available models answer the live inference check.
   const servable = selectable.filter(row => row.status === 'available');
-  if (optInRows.length) console.log(`${optInRows.map(row => `${row.model} (${row.name})`).join(', ')}: opt-in route is listed and state-checked above; verification never selects it or sends inference through it.`);
+  if (optInRows.length) console.log(`${optInRows.map(row => `${row.model} (${row.name})`).join(', ')}: opt-in service is listed and state-checked above; verification never selects it or sends inference through it.`);
   if (!selectable.length) console.log(`No resident model is available for verification to select (${expected.map(row => row.name).join(', ')}); selection, effort and inference checks are skipped.`);
   else if (live && servable.length < selectable.length) console.log('A switching router is not asked for inference; its requests would wait.');
   fixture = await mkdtemp('/tmp/dsh-resident-verification-');

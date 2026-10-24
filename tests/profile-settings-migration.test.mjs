@@ -20,7 +20,12 @@ test('legacy settings preserve explicit values, archive inputs and leave future 
   const baseline = fs.readFileSync(`${defaults}/legacy-profile-alpha1.yaml`, 'utf8');
   const settings = {
     'agent-default-model': { provider: 'local-everyday', model: 'qwen3.8-27b-abliterated-q6_k', reasoningEffort: 'off' },
-    'llm-pi-ai': { providers: { 'local-everyday': { apiKeyEnv: 'FIXTURE_KEY', maxConcurrency: 1, models: [{ id: 'fixture', maxTokens: null }] } } },
+    // A route the catalog keeps and a route it retires are both settings: this
+    // migration copies them, and only the router plugin rewrites a selection.
+    'llm-pi-ai': { providers: {
+      'local-ollama': { apiKeyEnv: 'FIXTURE_KEY', maxConcurrency: 1, models: [{ id: 'daytime', maxTokens: null }] },
+      'local-everyday': { apiKeyEnv: 'FIXTURE_KEY', maxConcurrency: 1, models: [{ id: 'qwen3.8-27b-abliterated-q6_k', maxTokens: null }] },
+    } },
     'dsh-better-sidebar': { agentTerminalTools: true, autoOpenJobs: false, tabsEnabled: { terminal: true, browser: false, subagent: false } },
     'session-pin': { pins: [] },
     'ui-onboarding': { welcomeNoticeVersion: 'fixture' },

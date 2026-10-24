@@ -16,11 +16,20 @@ const { BasicCompactionEngine } = await import(
 
 const CONTEXT_WINDOW = 131072;
 const EVERYDAY_CONTEXT_WINDOW = 131072;
+// The router route is one provider serving several models, so the fixtures pick
+// a pressure target by model; the window behind each is what differs.
+const ROUTER_ROUTE = "local-ollama";
 const INCIDENT_MEASUREMENT = 99735;
 
+/**
+ * The managed profile sets the compact threshold once, for the whole service:
+ * every model of the router route, including ones its catalog adds later,
+ * resolves to it. Exact provider/model rows stay available as overrides, which
+ * the last fixture below exercises.
+ */
 function config(thresholdRatio = 0.70) {
   return {
-    thresholdRatio: 0.8,
+    thresholdRatio,
     retainRatio: 0.16,
     summarizationProvider: "",
     summarizationModel: "",
@@ -28,11 +37,7 @@ function config(thresholdRatio = 0.70) {
     headroomTokens: 0,
     compactionRetries: 1,
     maxOverflowRetries: 1,
-    modelPolicies: [
-      { provider: "local-ollama", model: "daytime", thresholdRatio },
-      { provider: "local-everyday", model: "nighttime", thresholdRatio },
-      { provider: "local-trial", model: "trial", thresholdRatio },
-    ],
+    modelPolicies: [],
     auto: true,
   };
 }
@@ -64,10 +69,11 @@ function userEvent(seq) {
   };
 }
 
-function pressureAgent(provider) {
+function pressureAgent(model) {
+  const provider = ROUTER_ROUTE;
   const events = [userEvent(0), userEvent(1), userEvent(2)];
   return {
-    options: { provider, model: provider === "local-everyday" ? "nighttime" : "daytime" },
+    options: { provider, model },
     session: {
       events,
       surface: { nodes: [0, 1, 2], replaceGeneration: 0 },
@@ -75,14 +81,14 @@ function pressureAgent(provider) {
         return events[seq];
       },
       requestHeader() {
-        return { config: { provider, model: provider === "local-everyday" ? "nighttime" : "daytime" } };
+        return { config: { provider, model } };
       },
     },
   };
 }
 
-function pressureEngine(provider, thresholdRatio = 0.70, measurement = INCIDENT_MEASUREMENT) {
-  const agent = pressureAgent(provider);
+function pressureEngine(model, thresholdRatio = 0.70, measurement = INCIDENT_MEASUREMENT) {
+  const agent = pressureAgent(model);
   let compactCalls = 0;
   const high = {
     totalTokens: measurement,
@@ -102,7 +108,7 @@ function pressureEngine(provider, thresholdRatio = 0.70, measurement = INCIDENT_
         async resolveModelInfo() {
           return {
             context: {
-              contextWindow: provider === "local-everyday"
+              contextWindow: model === "nighttime"
                 ? EVERYDAY_CONTEXT_WINDOW
                 : CONTEXT_WINDOW,
             },
@@ -130,7 +136,7 @@ function pressureEngine(provider, thresholdRatio = 0.70, measurement = INCIDENT_
   return { agent, engine, compactCalls: () => compactCalls };
 }
 
-const canonicalPressure = pressureEngine("local-ollama");
+const canonicalPressure = pressureEngine("daytime");
 assert.notEqual(
   await canonicalPressure.engine.compactIfNeeded(
     canonicalPressure.agent,
@@ -142,7 +148,7 @@ assert.notEqual(
 );
 assert.equal(canonicalPressure.compactCalls(), 1);
 
-const expandedBelowPressure = pressureEngine("local-everyday", 0.70, 90000);
+const expandedBelowPressure = pressureEngine("nighttime", 0.70, 90000);
 assert.equal(
   await expandedBelowPressure.engine.compactIfNeeded(
     expandedBelowPressure.agent,
@@ -154,7 +160,7 @@ assert.equal(
 );
 assert.equal(expandedBelowPressure.compactCalls(), 0);
 
-const expandedPressure = pressureEngine("local-everyday", 0.70, 95000);
+const expandedPressure = pressureEngine("nighttime", 0.70, 95000);
 assert.notEqual(
   await expandedPressure.engine.compactIfNeeded(
     expandedPressure.agent,
@@ -166,7 +172,7 @@ assert.notEqual(
 );
 assert.equal(expandedPressure.compactCalls(), 1);
 
-const oldDefault = pressureEngine("local-ollama", 0.8);
+const oldDefault = pressureEngine("daytime", 0.8);
 assert.equal(
   await oldDefault.engine.compactIfNeeded(
     oldDefault.agent,
@@ -283,11 +289,11 @@ if (mode === "--effective-config") {
     assert.equal(config.maxTokens, null);
     assert.equal(config.compactionRetries, 1);
     assert.equal(config.maxOverflowRetries, 1);
-    assert.deepEqual(config.modelPolicies, [
-      { provider: 'local-ollama', model: 'daytime', thresholdRatio: 0.7 },
-      { provider: 'local-everyday', model: 'nighttime', thresholdRatio: 0.7 },
-      { provider: 'local-trial', model: 'trial', thresholdRatio: 0.7 },
-    ]);
+    // One router route serves whatever its router publishes, so the threshold is
+    // the service value and no exact provider/model row can list its models: a
+    // policy row written for one service would miss every model its catalog adds.
+    assert.equal(config.thresholdRatio, 0.7);
+    assert.deepEqual(config.modelPolicies ?? [], [], 'no per-service compact policy is seeded');
     for (const row of stack) assert.equal(row.disabled, false);
     assert.deepEqual(stack.find(row => row.id === 'tool-result-pruner').config,
       { thresholdChars: 8192, headChars: 4096, tailChars: 1024 });

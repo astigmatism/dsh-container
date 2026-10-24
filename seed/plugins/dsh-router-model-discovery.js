@@ -1,59 +1,77 @@
 /** Resident model discovery under the LLM Router client contract, version 1.2.
  *
- * docs/llm-router-contract.md is authoritative. Harness sends only the stable
- * service IDs `daytime`, `nighttime` and `trial`, reads `/v1/router/capabilities`
- * at startup, follows `/v1/router/events` for its lifetime and polls while the
- * stream is down. Each service is evaluated on its own; one model's state never
- * blocks updates to the other. Fallback is deliberately disabled (§5): an
- * unusable model stays visible, is labelled with exactly one state and fails
- * fast at dispatch, while a draining router makes requests wait.
+ * docs/llm-router-contract.md is authoritative, and it is data-driven: the
+ * router publishes its catalog of services in `/v1/router/capabilities`, and
+ * that document — not a list written in Harness — decides which models a person
+ * may choose and what each of them is called. Harness reads the document at
+ * startup, follows `/v1/router/events` for its lifetime and polls while the
+ * stream is down, and writes one provider per router whose models are exactly
+ * the service IDs that router currently offers (§3, §4). Names come from what
+ * the publisher published: `metadata.alias_display_names` for the name being
+ * offered, and the model's own `display_name`/`display_name_qualified`
+ * otherwise. Harness invents no model names and keeps no service list of its
+ * own; a service the runtime adds appears in the picker on the next revision,
+ * and one it retires stays visible only as its recorded state.
  *
- * `trial` is opt-in (OPT_IN_SERVICES): the owner added it on 2026-10-13 for a
- * temporary AI Runtime configuration. It is never a default, never inherited
- * when another resident is offline, and never a fallback target. A session
- * reaches it only when a human selects it, and then stays there or fails.
+ * Each service is evaluated on its own; one model's state never blocks updates
+ * to another. Fallback is deliberately disabled (§5): an unusable model stays
+ * visible, is labelled with exactly one state and fails fast at dispatch, while
+ * a draining router makes requests wait.
+ *
+ * `trial` is opt-in (§3: "it is never the configuration the operator falls
+ * into"). The contract names it, so the list is configuration with that default
+ * rather than a Harness concept: `optInServices` in the plugin settings. An
+ * opt-in service is never a default, never inherits another service's state,
+ * and is never a fallback target; a session reaches it only when a human
+ * selects it, and then stays there or fails.
  */
 import { hostname } from "node:os";
 
 export const name = "router-model-discovery";
 
-/** Provider routes Harness owns, and the stable router service each one sends. */
-export const RESIDENT_SERVICES = Object.freeze({ "local-ollama": "daytime", "local-everyday": "nighttime", "local-trial": "trial" });
-const DEFAULT_PROVIDERS = Object.keys(RESIDENT_SERVICES);
-export const SERVICE_LABELS = Object.freeze({ daytime: "Daytime", nighttime: "Nighttime", trial: "Trial" });
 /**
- * Services no automated path may select (the owner's rule, 2026-10-13). They
- * are never a default, never inherit another resident's state, never a fallback
- * target, and never picked by migration or verification. A human selects them,
- * or they stay unused.
+ * The provider route that carries a router's published catalog. The id is
+ * persisted in every session, default and compaction policy from before the
+ * contract existed, so it stays; what it offers is written from the document.
+ */
+export const ROUTER_PROVIDER = "local-ollama";
+const DEFAULT_PROVIDERS = Object.freeze([ROUTER_PROVIDER]);
+/**
+ * Provider routes written before a router's catalog drove the model list — one
+ * route per service, each with one model. They exist only to rewrite persisted
+ * selections onto the catalog route, which settings drops once nothing selects
+ * it. `local-ollama` is not one of them: it survived as the catalog route, and
+ * after the change it legitimately serves several models, so its selections
+ * must be left alone.
+ */
+export const RETIRED_ROUTES = Object.freeze({ "local-everyday": "nighttime", "local-trial": "trial" });
+/**
+ * Services no automated path may select (§3). `trial` is the one the contract
+ * names; the list is configuration so a future opt-in name is a settings edit,
+ * not a Harness release. They are never a default, never inherit another
+ * service's state, never a fallback target, and never picked by migration or
+ * verification. A human selects them, or they stay unused.
  */
 export const OPT_IN_SERVICES = Object.freeze(["trial"]);
-/** Providers whose service is opt-in, in RESIDENT_SERVICES order. */
-export const OPT_IN_PROVIDERS = Object.freeze(DEFAULT_PROVIDERS.filter(provider => OPT_IN_SERVICES.includes(RESIDENT_SERVICES[provider])));
-/** The opt-in route, named here so its special cases read clearly. */
-const TRIAL_PROVIDER = "local-trial";
-/** The residents every release since service IDs managed, before the trial existed. */
-const LEGACY_RESIDENT_PROVIDERS = Object.freeze(["local-ollama", "local-everyday"]);
+/** The reserved compatibility alias: §3 says it is not a service — never offer it. */
+const COMPATIBILITY_ALIAS = "local-active";
+
 /** Whether only a human selection may put a session on this service. */
-export function isOptInService(service) { return OPT_IN_SERVICES.includes(service); }
-/** The picker's fixed name for a service, used when the router publishes none. */
-export function serviceLabel(service) { return SERVICE_LABELS[service] ?? service; }
+export function isOptInService(service, optInServices = OPT_IN_SERVICES) {
+  return (Array.isArray(optInServices) ? optInServices : OPT_IN_SERVICES).includes(service);
+}
 /**
- * The providers this release manages, given the plugin's `providers` config.
- * A list written before the opt-in route existed names exactly the two residents
- * that release shipped; such a deployment gains the route without a settings
- * edit, which is the point of the release. A genuine subset, or a list that
- * already names the trial, is obeyed exactly. Managing a route only discovers
- * and labels it: an opt-in service stays unreachable until a human selects it.
+ * The router routes this release manages, from the plugin's `providers` config.
+ * A list written for one-route-per-service releases names the retired routes;
+ * every one of those carried the same router base URL, so such a list is read
+ * as the single catalog route those releases pointed at. Anything else is
+ * obeyed: a deployment that names a second route gets it discovered too.
  */
 export function resolveProviderList(configuredProviders) {
   const configured = Array.isArray(configuredProviders) ? configuredProviders.filter(nonEmptyString) : [];
-  let providers = configured.length ? configured.filter(provider => Object.hasOwn(RESIDENT_SERVICES, provider)) : DEFAULT_PROVIDERS;
-  if (configured.length && providers.length === LEGACY_RESIDENT_PROVIDERS.length &&
-      providers.every(provider => LEGACY_RESIDENT_PROVIDERS.includes(provider)) && !providers.includes(TRIAL_PROVIDER)) {
-    providers = [...providers, TRIAL_PROVIDER];
-  }
-  return providers;
+  const extra = configured.filter(provider => !Object.hasOwn(RETIRED_ROUTES, provider));
+  if (extra.length === 0) return [...DEFAULT_PROVIDERS];
+  return [...new Set([ROUTER_PROVIDER, ...extra])];
 }
 /** Exactly one of these is shown for each resident model. */
 export const RESIDENT_STATUSES = Object.freeze(["available", "offline", "unavailable", "switching", "incomplete"]);
@@ -84,6 +102,11 @@ const BACKEND_FAILURE_THRESHOLD = 3;
 const BACKEND_FAILURE_WINDOW_MS = 5 * 60_000;
 /** Process-wide channel used by the patched pi-ai adapter to report router error codes. */
 export const ROUTER_CONTRACT_HUB = Symbol.for("dsh-container.router-contract.v1");
+/** Request-failure accounting is per service of a route. */
+function failureKey(provider, model) {
+  return nonEmptyString(model) ? `${provider}\u0000${model}` : provider;
+}
+
 /** A watcher that has not finished its first read: leave that model's state as it is. */
 export const DOCUMENT_PENDING = Symbol("router document pending");
 
@@ -184,10 +207,10 @@ export async function fetchCapabilities(baseURL, { etag, clientName = routerClie
  * Synthesize a capabilities document from a pre-contract `/v1/models` listing.
  * Such a router runs the legacy single-marker mode, where the reserved alias
  * `local-active` is not a service but names the one model the router has active
- * (§3, 1.2). This deployment sends that traffic to its Daytime route, so the
- * active model is read as the `daytime` service — a choice about the managed
- * topology, not a claim that the alias is an alias of `daytime`; in a published
- * resident catalog an undeclared `local-active` is a 404. The result is marked
+ * (§3, 1.2). This deployment reads that active model as its `daytime` service —
+ * a choice about the managed topology, not a claim that the alias is an alias of
+ * `daytime`; in a published resident catalog an undeclared `local-active` is a 404.
+ * The result is marked
  * `legacy`: such a router publishes no admission state or offline services.
  */
 export function legacyCapabilities(body) {
@@ -346,76 +369,214 @@ function serviceMatches(row, service) {
     (Array.isArray(row.aliases) && row.aliases.includes(service)));
 }
 
+/** Two published titles are the same title when a renderer cannot tell them apart. */
+function labelKey(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * The names of one published row that a person may send (§3, §4). A canonical
+ * model ID is not a choice, and neither is the reserved compatibility alias; a
+ * row the catalog gives no alias offers nothing at all, and a conformant client
+ * MUST NOT surface it as a model someone can choose.
+ */
+function offeredNames(row) {
+  const names = [row.service, ...(Array.isArray(row.aliases) ? row.aliases : [])];
+  return [...new Set(names.filter(nonEmptyString))].filter(name => name !== row.id && name !== COMPATIBILITY_ALIAS);
+}
+
+/**
+ * The title a person sees for one offered name. A publisher may title each name
+ * it declares (`metadata.alias_display_names`), which is how two names of one
+ * model are kept tellable apart; that map always exists, and where a publisher
+ * left a name titled with the name itself it published no title, so the model's
+ * own published title is the next fact — `display_name_qualified`, the label a
+ * picker renders, then the plain `display_name` a router older than that field
+ * still publishes. Harness composes nothing of its own here.
+ */
+function publishedTitle(row, name) {
+  const metadata = plainObject(row.metadata) ? row.metadata : {};
+  const aliasTitle = plainObject(metadata.alias_display_names) ? metadata.alias_display_names[name] : undefined;
+  if (nonEmptyString(aliasTitle) && labelKey(aliasTitle) !== labelKey(name)) return aliasTitle;
+  for (const title of [row.display_name_qualified, row.display_name, metadata.display_name]) {
+    if (nonEmptyString(title)) return title;
+  }
+  return undefined;
+}
+
+/** Names a stopped service answers, in published order, minus what is not a choice. */
+function offlineNames(row) {
+  const names = [...(Array.isArray(row.aliases) ? row.aliases : [])];
+  return [...new Set(names.filter(nonEmptyString))].filter(name => name !== row.model && name !== COMPATIBILITY_ALIAS);
+}
+
+/**
+ * Every service the deployment offers, in publication order, each with the state
+ * of the one that answers it: the models the document lists, then the services
+ * its active configuration deliberately stops, then any name this Harness
+ * already carries a model row for. A name the document stopped mentioning keeps
+ * a row and says so, because §5 asks for a stated failure rather than a model
+ * that silently vanishes from under a session.
+ *
+ * `known` is the names already recorded in settings; `serviceStates` applies
+ * request-time contradictions to the result (§10), newest document winning.
+ */
+export function routerServices(document, { known = [], optInServices = OPT_IN_SERVICES, routerState = null } = {}) {
+  const configuration = nonEmptyString(document?.configuration?.id) ? document.configuration.id : null;
+  const services = new Map();
+  const admitting = document ? document.router?.accepting_requests !== false : false;
+  const admit = (service, record) => {
+    if (!services.has(service)) services.set(service, record);
+    return services.get(service);
+  };
+  const unavailableReason = routerState?.status === "unavailable" ? routerState.reason : "router unreachable";
+  if (document === null || document === undefined) {
+    // Nothing can be read from a router that is not answering: every recorded
+    // name is unavailable, and the router-level state says why.
+    for (const service of known) {
+      // §3: the reserved compatibility alias is not a service, so a route that
+      // still carries it does not keep it as a model even while the router is down.
+      if (service === COMPATIBILITY_ALIAS) continue;
+      services.set(service, { service, status: "unavailable", reason: unavailableReason, configuration: null, served: null,
+        nsfw: null, label: service, optIn: isOptInService(service, optInServices) });
+    }
+    return { services: [...services.values()], configuration: null, problem: undefined, document: null,
+      route: routerState ?? routerRouteState(null) };
+  }
+  const problem = documentProblem(document);
+  if (problem) return { services: [], configuration, problem, document, route: routerRouteState(document) };
+  const rows = Array.isArray(document.models) ? document.models.filter(plainObject) : [];
+  const titles = new Map();
+  for (const row of rows) {
+    for (const name of offeredNames(row)) {
+      titles.set(name, publishedTitle(row, name));
+    }
+  }
+  // Two names of one model share the model's title, which is the router's own
+  // statement that they are the same model under different names. Separate them
+  // by the name the person is choosing, the same way the router qualifies a
+  // label it would otherwise be unable to pick out of its own list.
+  const collisions = new Map();
+  for (const [name, title] of titles) {
+    if (!nonEmptyString(title)) continue;
+    const key = labelKey(title);
+    if (!collisions.has(key)) collisions.set(key, []);
+    collisions.get(key).push(name);
+  }
+  const offline = new Map((Array.isArray(document.offline_services) ? document.offline_services : [])
+    .filter(plainObject).flatMap(row => offlineNames(row).map(name => [name, row])));
+  const labelFor = (name) => {
+    const title = titles.get(name);
+    const shared = nonEmptyString(title) && (collisions.get(labelKey(title)) ?? []).length > 1;
+    const base = nonEmptyString(title) ? (shared ? `${title} (${name})` : title) : name;
+    return base;
+  };
+  for (const row of rows) {
+    for (const name of offeredNames(row)) {
+      const nsfw = row.nsfw === true ? true : row.nsfw === false ? false : null;
+      const record = admit(name, { service: name, configuration, nsfw, served: nonEmptyString(row.id) ? row.id : null,
+        label: labelFor(name), aliases: offeredNames(row), optIn: isOptInService(name, optInServices) });
+      record.model = row;
+      // A draining or maintained router accepts nothing. Wait, never switch (§5, §7).
+      if (!admitting) {
+        Object.assign(record, { status: "switching", reason: document.router?.maintenance === true ? "maintenance" : "draining" });
+        continue;
+      }
+      const duplicates = rows.filter(candidate => serviceMatches(candidate, name));
+      if (duplicates.length > 1) {
+        Object.assign(record, { status: "incomplete", reason: `ambiguous router service "${name}"` });
+        continue;
+      }
+      if (offline.has(name)) {
+        const stopped = offline.get(name);
+        const stoppedTitle = nonEmptyString(stopped.display_name) ? stopped.display_name : undefined;
+        Object.assign(record, { status: "offline", served: null,
+          reason: nonEmptyString(stopped.reason) ? stopped.reason : "offline_service",
+          label: nonEmptyString(stoppedTitle) && labelKey(stoppedTitle) !== labelKey(name) ? stoppedTitle : name });
+        continue;
+      }
+      if (!serviceMatches(row, name)) {
+        Object.assign(record, { status: "unavailable", reason: "not offered by the router", served: null });
+        continue;
+      }
+      if (row.available !== true) {
+        Object.assign(record, { status: "unavailable", reason: "backend unavailable" });
+        continue;
+      }
+      try {
+        record.capabilities = residentCapabilities({ model: row, metadata: row.metadata, service: name });
+        record.status = "available";
+        record.reason = null;
+      } catch (error) {
+        // A pre-contract router publishes no complete metadata; its service
+        // stays usable with the stored limits, as before discovery existed.
+        if (document.legacy === true) {
+          Object.assign(record, { status: "available", reason: "legacy router without published limits", legacy: true });
+        } else {
+          Object.assign(record, { status: "incomplete", reason: errorText(error) });
+        }
+      }
+    }
+  }
+  for (const [name, stopped] of offline) {
+    if (services.has(name)) continue;
+    const stoppedTitle = nonEmptyString(stopped.display_name) ? stopped.display_name : undefined;
+    services.set(name, { service: name, status: admitting ? "offline" : "switching", served: null, configuration,
+      nsfw: null, reason: admitting && nonEmptyString(stopped.reason) ? stopped.reason : admitting ? "offline_service"
+        : document.router?.maintenance === true ? "maintenance" : "draining",
+      label: nonEmptyString(stoppedTitle) && labelKey(stoppedTitle) !== labelKey(name) ? stoppedTitle : name,
+      aliases: offlineNames(stopped), optIn: isOptInService(name, optInServices) });
+  }
+  for (const name of known) {
+    if (services.has(name)) continue;
+    // A route written before service IDs can still carry the reserved
+    // compatibility alias. §3 says it is not a service, so it is not a model
+    // either: it is dropped rather than recorded as a name the router no longer
+    // offers, and a selection naming it is answered by the document's own
+    // default service.
+    if (name === COMPATIBILITY_ALIAS) continue;
+    // A disappeared ID with no offline entry is a configuration change.
+    services.set(name, { service: name, status: admitting ? "unavailable" : "switching", reason: admitting
+      ? "not offered by the router" : document.router?.maintenance === true ? "maintenance" : "draining",
+      configuration, served: null, nsfw: null, label: name, optIn: isOptInService(name, optInServices) });
+  }
+  return { services: [...services.values()], configuration, problem: undefined, document, route: routerRouteState(document) };
+}
+
 /**
  * Evaluate one service from the current document, independently of every other
  * service. `document === null` means the router is unreachable. The result
  * carries the canonical model only as information; it is never persisted.
  */
-export function residentStatus(document, service) {
-  const unavailable = (reason) => ({ service, status: "unavailable", reason, configuration: null, nsfw: null });
-  if (document === null || document === undefined) return unavailable("router unreachable");
-  const problem = documentProblem(document);
-  if (problem) return { service, status: "incomplete", reason: problem, configuration: null, nsfw: null };
-  const configuration = nonEmptyString(document.configuration?.id) ? document.configuration.id : null;
-  const base = { service, configuration, nsfw: null };
-  const matches = document.models.filter(row => serviceMatches(row, service));
-  const model = matches.length === 1 ? matches[0] : undefined;
-  const served = nonEmptyString(model?.id) ? model.id : null;
-  // A draining or maintained router accepts nothing. Wait, never switch (§5, §7).
-  if (document.router.accepting_requests !== true) {
-    const reason = document.router.maintenance === true ? "maintenance" : "draining";
-    return { ...base, status: "switching", reason, served, nsfw: model?.nsfw ?? null };
+export function residentStatus(document, service, options = {}) {
+  const catalog = routerServices(document, { ...options, known: options.known ?? [service] });
+  const found = catalog.services.find(row => row.service === service);
+  if (found) {
+    if (catalog.problem) return { service, status: "incomplete", reason: catalog.problem, configuration: null, nsfw: null };
+    return found;
   }
-  if (matches.length > 1) return { ...base, status: "incomplete", reason: `ambiguous router service "${service}"` };
-  if (!model) {
-    const offline = (document.offline_services ?? []).find(row => plainObject(row) &&
-      (row.model === service || (Array.isArray(row.aliases) && row.aliases.includes(service))));
-    if (offline) {
-      return { ...base, status: "offline", reason: nonEmptyString(offline.reason) ? offline.reason : "offline_service" };
-    }
-    // A disappeared ID with no offline entry is a configuration change.
-    return { ...base, status: "unavailable", reason: "not offered by the router" };
-  }
-  const nsfw = model.nsfw === true ? true : model.nsfw === false ? false : null;
-  if (model.available !== true) {
-    return { ...base, status: "unavailable", reason: "backend unavailable", served, nsfw };
-  }
-  let metadata;
-  let capabilities;
-  try {
-    if (!positiveInteger(model.slots)) throw new Error("router model has no valid slots");
-    if (!positiveInteger(model.context_window)) throw new Error("router model has no valid context_window");
-    metadata = validateRouterMetadata(model.metadata);
-    if (metadata.context_window !== model.context_window) throw new Error("router model context_window disagrees with its metadata");
-    if (metadata.active_request_limit !== model.slots) throw new Error("router model slots disagree with its metadata");
-    capabilities = residentCapabilities({ model, metadata, service });
-  } catch (error) {
-    // A pre-contract router publishes no complete metadata; its route stays
-    // usable with the stored limits, as before discovery existed.
-    if (document.legacy === true) return { ...base, status: "available", reason: "legacy router without published limits", served, nsfw, legacy: true };
-    return { ...base, status: "incomplete", reason: errorText(error), served, nsfw };
-  }
-  return { ...base, status: "available", reason: null, served, nsfw, model, metadata, capabilities };
+  if (catalog.problem) return { service, status: "incomplete", reason: catalog.problem, configuration: null, nsfw: null };
+  return { service, status: "unavailable", reason: "not offered by the router", configuration: catalog.configuration,
+    nsfw: null, served: null, label: service, optIn: isOptInService(service, options.optInServices) };
 }
+
 
 /** Limits and features of the model that will actually serve the service. */
 export function residentCapabilities({ model, metadata, service }) {
+  // §6: everything the router publishes about a model is validated before any of
+  // it reaches settings, and it must agree with the catalog row it belongs to.
+  // A disagreement is reported as incomplete metadata, never resolved by guess.
+  validateRouterMetadata(metadata);
+  if (metadata.context_window !== model.context_window) {
+    throw new Error(`router metadata context_window (${metadata.context_window}) disagrees with the model listing (${model.context_window})`);
+  }
+  if (metadata.active_request_limit !== model.slots) {
+    throw new Error(`router metadata active_request_limit (${metadata.active_request_limit}) disagrees with the model listing slots (${model.slots})`);
+  }
   const input = metadata.input_modalities.filter(value => DSH_INPUT_MODALITIES.has(value));
   if (!input.includes("text")) throw new Error("router advertises no input modality Harness can represent");
   const reserve = metadata.context_safety_reserve ?? 0;
-  // A picker lists one option per service, and one model may answer several names: a solo
-  // configuration serves `daytime` and `nighttime` from the same weights. The model's title
-  // identifies the model, so both rows read identically and the human in front of the picker is
-  // choosing between two options that say the same thing. When the router publishes a title for
-  // the exact name this row answers, that title is the label — it is the publisher's own name for
-  // what this service is, and it is the only fact in the document that separates the two rows.
-  const aliasTitle = service === undefined || !plainObject(metadata.alias_display_names)
-    ? undefined : metadata.alias_display_names[service];
-  const displayName = nonEmptyString(aliasTitle) ? aliasTitle
-    : nonEmptyString(metadata.display_name) ? metadata.display_name
-    : nonEmptyString(model.display_name) ? model.display_name : undefined;
   return {
-    displayName,
     // Admission requires input + output + reserve <= context_window (§8), so
     // the Harness budget and compaction thresholds use the remainder.
     contextWindow: model.context_window - reserve,
@@ -423,32 +584,41 @@ export function residentCapabilities({ model, metadata, service }) {
     maxConcurrency: model.slots,
     maxTokens: metadata.max_output_tokens,
     input,
+    service,
     reasoningEfforts: dshReasoningEfforts(metadata.reasoning),
   };
 }
 
-/** The single picker label for a resident in its current state. */
-export function residentLabel(state, capabilities = state?.capabilities) {
-  const label = serviceLabel(state?.service) ?? "Model";
-  if (state?.status === "available") {
-    const name = capabilities?.displayName ?? label;
-    return state.nsfw === true ? `${name} · NSFW` : name;
-  }
+/** The single picker label for one service in its current state. */
+export function residentLabel(state) {
+  const label = nonEmptyString(state?.label) ? state.label : nonEmptyString(state?.service) ? state.service : "Model";
+  if (state?.status === "available") return state.nsfw === true ? `${label} · NSFW` : label;
   if (state?.status === "offline") return state.configuration ? `${label} — offline (${state.configuration})` : `${label} — offline`;
   return `${label} — ${STATUS_TEXT[state?.status] ?? STATUS_TEXT.unavailable}`;
 }
 
-/** The dispatch failure shown when a blocked resident is asked to serve. */
-export function residentMessage(state) {
-  const label = serviceLabel(state.service);
-  // The opt-in trial is chosen deliberately, so its advice never suggests
-  // moving to another resident: the session stays on it or fails, and only a
+/**
+ * The name a route carries for one service, and the only rule for it: while a
+ * model still answers the name the row keeps the title it was given, because the
+ * service's own state belongs to its recorded state; when nothing answers it,
+ * the name carries the state, because a remembered title describes a
+ * configuration that may already be gone (§5).
+ */
+export function routerModelName(service, storedName) {
+  if (service.status === "available" && service.capabilities !== undefined) return residentLabel(service);
+  if (!nonEmptyString(service.served) || !nonEmptyString(storedName)) return residentLabel(service);
+  return storedName;
+}
+
+/** The dispatch failure shown when a blocked service is asked to serve. */
+export function residentMessage(state, { optInServices = OPT_IN_SERVICES } = {}) {
+  const label = nonEmptyString(state.label) ? state.label : state.service;
+  // An opt-in service is chosen deliberately, so its advice never suggests
+  // moving to another model: the session stays on it or fails, and only a
   // human may move it off. §5 deviation: nothing falls back in either direction.
-  const advice = isOptInService(state.service)
+  const advice = isOptInService(state.service, optInServices)
     ? `${label} is an opt-in model: Harness never selects it and never moves a session off it. Select another model yourself, or retry when it returns.`
-    : state.service === "nighttime"
-      ? "Switch this session to Daytime; Nighttime becomes selectable again automatically when it returns."
-      : `Select another model, or retry when ${label} returns; Harness reconnects automatically.`;
+    : `Select another model, or retry when ${label} returns; Harness reconnects automatically.`;
   switch (state.status) {
     case "offline":
       return `${label} is offline in router configuration ${state.configuration ? `"${state.configuration}"` : "(unknown)"}${state.reason ? ` (${state.reason})` : ""}. ${advice}`;
@@ -457,11 +627,11 @@ export function residentMessage(state) {
     case "switching":
       return `The router is switching configuration (${state.reason}); requests to ${label} wait and retry without changing models.`;
     case "unavailable":
-      if (state.reason === "not offered by the router" && isOptInService(state.service)) {
+      if (state.reason === "not offered by the router" && isOptInService(state.service, optInServices)) {
         return `${label} is unavailable: the router's current configuration does not offer it. ${advice}`;
       }
-      return state.reason === "router unreachable"
-        ? `${label} is unavailable: the router is unreachable. ${advice}`
+      return state.reason === "router unreachable" || state.reason === "not offered by the router"
+        ? `${label} is unavailable: the ${state.reason === "router unreachable" ? "router is unreachable" : "router does not offer it"}. ${advice}`
         : `${label} is unavailable: ${state.reason}. ${advice}`;
     default:
       return `${label} is available.`;
@@ -469,19 +639,135 @@ export function residentMessage(state) {
 }
 
 /** Persisted, canonical-ID-free summary that the adapter and picker read. */
-export function residentStateRecord(state, storedName) {
+export function residentStateRecord(state, storedName, { optInServices = OPT_IN_SERVICES } = {}) {
   const published = state.status === "available" && state.capabilities !== undefined;
   return {
     service: state.service,
     status: state.status,
     label: state.status === "available" && !published && nonEmptyString(storedName) ? storedName : residentLabel(state),
-    ...(state.status === "available" ? {} : { message: residentMessage(state) }),
+    ...(state.status === "available" ? {} : { message: residentMessage(state, { optInServices }) }),
     configuration: state.configuration ?? null,
     reason: state.reason ?? null,
     limits: published ? "current" : state.status === "available" ? "stored" : "stale",
     nsfw: state.nsfw ?? null,
   };
 }
+
+/**
+ * The router-level state of one provider: whether its router is answering,
+ * admitting, and publishing a usable document. It gates every model the router
+ * offers, which is why it lives on the route and not on a model row.
+ */
+export function routerRouteState(document) {
+  if (document === null || document === undefined) return { status: "unavailable", reason: "router unreachable", configuration: null };
+  const problem = documentProblem(document);
+  if (problem) return { status: "incomplete", reason: problem, configuration: null };
+  if (document.router?.accepting_requests !== true) {
+    return { status: "switching", reason: document.router?.maintenance === true ? "maintenance" : "draining",
+      configuration: nonEmptyString(document.configuration?.id) ? document.configuration.id : null };
+  }
+  return { status: "available", reason: null, configuration: nonEmptyString(document.configuration?.id) ? document.configuration.id : null };
+}
+
+/** The service the document names as its default, or the first one it offers. */
+function defaultService(document, catalog) {
+  const models = Array.isArray(document?.models) ? document.models : [];
+  const preferred = nonEmptyString(document?.default_model) ? models.find(row => row?.id === document.default_model) : undefined;
+  const names = nonEmptyString(preferred?.service) ? [preferred.service, ...(Array.isArray(preferred.aliases) ? preferred.aliases : [])] : [];
+  for (const service of catalog.services) if (names.includes(service.service) || service.service === preferred?.service) return service.service;
+  return catalog.services.find(service => service.status === "available")?.service ?? catalog.services[0]?.service;
+}
+
+/** The name a router publishes for itself, or the address it answers at. */
+/**
+ * The name a route is titled with: the name the router publishes for itself, or
+ * the address it answers at when it publishes none. Undefined only when there is
+ * no document to read either, where a stored title is kept.
+ */
+export function routerName(document, baseURL) {
+  if (nonEmptyString(document?.router?.name)) return document.router.name;
+  if (!document) return undefined;
+  try { return new URL(baseURL).hostname; } catch { return undefined; }
+}
+
+/**
+ * Bring one Harness route in line with the catalog one router published: the
+ * models it offers, each with the limits, label and state of the service that
+ * answers it, and the route's own admission state. Explicit preferences,
+ * credential references and unrelated fields survive, on the route and on every
+ * model row a person or an override has touched.
+ *
+ * `catalog` is the `routerServices` result for this route's document, with the
+ * request-time holds already applied.
+ */
+export function planRouterProvider({ name: provider, catalog, stored, resolved, clientName, optInServices = OPT_IN_SERVICES }) {
+  const source = plainObject(stored) ? stored : plainObject(resolved) ? resolved : undefined;
+  if (!source) throw new Error(`cannot manage router route "${provider}" without stored or resolved settings`);
+  const document = catalog.document;
+  const route = catalog.route;
+  const rows = Array.isArray(source.models) ? source.models : [];
+  const states = {};
+  const models = catalog.services.map((service) => {
+    const row = rows.find(candidate => candidate?.id === service.service) ?? { name: service.service };
+    const next = clone(row);
+    next.id = service.service;
+    const published = service.status === "available" && service.capabilities !== undefined;
+    // The name follows the router: its published title while a model answers the
+    // service, its own name and state when nothing does (§5).
+    next.name = routerModelName(service, next.name);
+    if (published) {
+      const capabilities = service.capabilities;
+      Object.assign(next, {
+        contextWindow: capabilities.contextWindow,
+        maxTokens: capabilities.maxTokens,
+        input: capabilities.input,
+        reasoningEfforts: capabilities.reasoningEfforts,
+      });
+    }
+    // Where nothing serves the name, limits stay as they were, marked stale.
+    states[service.service] = {
+      ...residentStateRecord(service, next.name, { optInServices }),
+      ...(service.legacy === true ? { legacy: true } : {}),
+    };
+    return next;
+  });
+  const next = {
+    ...clone(source),
+    api: "openai-responses",
+    baseURL: source.baseURL ?? resolved?.baseURL,
+    headers: withClientName(source.headers, clientName),
+    models,
+    residentUnavailable: route.status === "unavailable" || route.status === "incomplete",
+    residentState: {
+      status: route.status, reason: route.reason ?? null, configuration: route.configuration,
+      services: catalog.services.map(service => ({ service: service.service, status: service.status })),
+      // A request that names no configured model is served by what the router
+      // itself calls its default, which is data from the document.
+      default: defaultService(document, catalog),
+    },
+    residentStates: states,
+  };
+  const publishedName = routerName(document, next.baseURL);
+  if (nonEmptyString(publishedName)) next.displayName = publishedName;
+  // A Harness route is limited as a whole, so it is set to the slots of every
+  // distinct model the router offers — aliases of one model share its slots, and
+  // the router's own queue per model remains the authority (§8).
+  const capacity = new Map();
+  for (const service of catalog.services) {
+    if (!service.capabilities) continue;
+    const model = nonEmptyString(service.served) ? service.served : service.service;
+    capacity.set(model, Math.max(capacity.get(model) ?? 0, service.capabilities.maxConcurrency));
+  }
+  const slots = [...capacity.values()].reduce((total, count) => total + count, 0);
+  if (slots > 0) next.maxConcurrency = slots;
+  else if (!Number.isSafeInteger(next.maxConcurrency) || next.maxConcurrency < 1) next.maxConcurrency = 1;
+  // Keep explicit client policy separate from the router's raw default.
+  if (next.reasoning === undefined && catalog.services.some(service => service.capabilities?.reasoningEfforts?.medium)) {
+    next.reasoning = "medium";
+  }
+  return next;
+}
+
 
 export function isBlockingStatus(status) {
   return BLOCKING_STATUSES.has(status);
@@ -494,12 +780,17 @@ export function describeStatus(state) {
   return detail ? `${text} (${detail})` : text;
 }
 
-/** Route old persisted IDs of Harness-owned providers to their service IDs. */
-export function migrateResidentRoute(config, providers = DEFAULT_PROVIDERS) {
-  if (!plainObject(config) || !providers.includes(config.provider)) return config;
-  const service = RESIDENT_SERVICES[config.provider];
-  if (!nonEmptyString(service) || !nonEmptyString(config.model) || config.model === service) return config;
-  return { ...config, model: service };
+/**
+ * Rewrite a persisted selection written before a router's catalog drove the
+ * model list. Those releases kept one provider route per service, so a stored
+ * `{provider: "local-everyday", model: "nighttime"}` is the catalog model
+ * `nighttime` of the single router route. A route that survived the change is
+ * never rewritten: after it, one route legitimately serves several models.
+ */
+export function migrateResidentRoute(config) {
+  if (!plainObject(config) || !Object.hasOwn(RETIRED_ROUTES, config.provider)) return config;
+  const service = RETIRED_ROUTES[config.provider];
+  return { ...config, provider: ROUTER_PROVIDER, ...(!nonEmptyString(config.model) || config.model !== service ? { model: service } : {}) };
 }
 
 function withClientName(headers, clientName) {
@@ -510,65 +801,24 @@ function withClientName(headers, clientName) {
 }
 
 /**
- * Converge one Harness-owned provider on its service ID, client identity and
- * current state. Explicit preferences, credentials references and unrelated
- * fields survive. Limits change only while the model is available; otherwise
- * the last limits are kept and marked stale.
+ * The service names a route already carries a model row for, plus the names of
+ * the retired one-route-per-service releases still in settings. A name listed
+ * here keeps its row and its recorded state when a router stops publishing it
+ * (§5: a stated failure, not a vanished model); on a deployment that never had
+ * those routes nothing is inherited, and the catalog offers exactly what the
+ * router publishes.
  */
-export function planResidentProvider({ name: provider, state, stored, resolved, daytime, clientName }) {
-  const service = RESIDENT_SERVICES[provider];
-  let source = plainObject(stored) ? stored : plainObject(resolved) ? resolved : undefined;
-  if (!source) {
-    // Provision a missing route from the working Daytime route: the client
-    // policy (credential reference, headers, timeouts, cache, retry, effort and
-    // base URL) only. No limits and no input modalities are inherited, so a new
-    // opt-in trial route never borrows Daytime's image modality or context; the
-    // trial's own serving profile is text-only. The serving model's metadata
-    // sets them on the first available revision; until then the route is blocked.
-    if (!plainObject(daytime)) throw new Error(`cannot provision "${provider}" without local-ollama`);
-    source = Object.fromEntries(["apiKeyEnv", "headers", "streamIdleTimeoutMs", "cacheRetention", "retryPolicy", "reasoning", "baseURL"]
-      .filter(key => daytime[key] !== undefined).map(key => [key, clone(daytime[key])]));
-    source.displayName = SERVICE_LABELS[service];
-    source.models = [{ id: service, name: SERVICE_LABELS[service] }];
+function knownServices(providers, provider) {
+  const all = plainObject(providers) ? providers : {};
+  // The names this route already carries, plus — for the catalog route alone —
+  // the names of the one-route-per-service releases it replaces. Another router's
+  // route keeps its own names, so its models are not offered as missing here.
+  const sources = [provider, ...(provider === ROUTER_PROVIDER ? Object.keys(RETIRED_ROUTES) : [])];
+  const names = new Set();
+  for (const id of sources) {
+    for (const row of Array.isArray(all[id]?.models) ? all[id].models : []) if (nonEmptyString(row?.id)) names.add(row.id);
   }
-  const rows = Array.isArray(source.models) ? source.models : [];
-  const row = rows.find(candidate => candidate?.id === service) ?? rows[0] ?? { name: SERVICE_LABELS[service] };
-  const next = {
-    ...clone(source),
-    api: "openai-responses",
-    baseURL: source.baseURL ?? resolved?.baseURL ?? daytime?.baseURL,
-    headers: withClientName(source.headers, clientName),
-    models: [{ ...clone(row), id: service }],
-  };
-  if (state.status === "available" && state.capabilities) {
-    const capabilities = state.capabilities;
-    const label = residentLabel(state, capabilities);
-    if (capabilities.displayName) next.displayName = capabilities.displayName;
-    next.maxConcurrency = capabilities.maxConcurrency;
-    // Keep explicit client policy separate from the router's raw default.
-    if (next.reasoning === undefined && capabilities.reasoningEfforts?.medium) next.reasoning = "medium";
-    Object.assign(next.models[0], {
-      name: label,
-      contextWindow: capabilities.contextWindow,
-      maxTokens: capabilities.maxTokens,
-      input: capabilities.input,
-      reasoningEfforts: capabilities.reasoningEfforts,
-    });
-  } else if (!nonEmptyString(state.served)) {
-    // The document attributes no serving model to this route right now: the current
-    // configuration dropped its name, the router lists it offline, or the router is
-    // unreachable. The remembered title then describes a configuration that may no
-    // longer exist, and a picker section headed by a model the router does not offer
-    // reads as a model on offer. Name such a route after itself and let its state
-    // say why; the title returns with the model.
-    next.displayName = SERVICE_LABELS[service];
-    next.models[0].name = SERVICE_LABELS[service];
-  } else if (!nonEmptyString(next.models[0].name)) {
-    next.models[0].name = SERVICE_LABELS[service];
-  }
-  next.residentUnavailable = BLOCKING_STATUSES.has(state.status);
-  next.residentState = residentStateRecord(state, next.models[0].name);
-  return next;
+  return [...names];
 }
 
 function readNamespace(service, namespace) {
@@ -586,6 +836,16 @@ export function applyOperation(settings, operation) {
   else parent[operation.path.at(-1)] = structuredClone(operation.value);
 }
 
+/** Request-time contradictions of the document, applied to every service of one route. */
+function applyHolds(catalog, provider, holds, revision, now) {
+  if (!holds || holds.size === 0 || catalog.services.length === 0) return catalog;
+  const route = holds.get(provider);
+  catalog.services = catalog.services.map(service =>
+    effectiveState(service, holds.get(`${provider}\u0000${service.service}`) ?? (service.status === "available" ? route : undefined),
+      revision, now));
+  return catalog;
+}
+
 function effectiveState(state, hold, revision, now) {
   if (!hold || state.status !== "available") return state;
   if (hold.until <= now || (hold.revision !== undefined && hold.revision !== revision)) return state;
@@ -601,13 +861,13 @@ function effectiveState(state, hold, revision, now) {
  */
 export async function synchronizeRouterSettings(settingsService, {
   providers = DEFAULT_PROVIDERS, document, clientName = routerClientName(), holds = new Map(),
-  now = Date.now(), fetchOptions = {}, onFetchError,
+  now = Date.now(), fetchOptions = {}, onFetchError, optInServices = OPT_IN_SERVICES,
 } = {}) {
   const initial = readNamespace(settingsService, "llm-pi-ai");
   if (!plainObject(initial)) throw new Error('Harness settings namespace "llm-pi-ai" is not registered yet');
-  const daytimeResolved = initial.providers?.["local-ollama"];
-  if (!plainObject(daytimeResolved)) throw new Error("Missing local-ollama provider");
-  const managed = providers.filter(provider => Object.hasOwn(RESIDENT_SERVICES, provider));
+  const seed = initial.providers?.[ROUTER_PROVIDER];
+  if (!plainObject(seed)) throw new Error(`Missing the ${ROUTER_PROVIDER} router route`);
+  const managed = [...new Set(providers.filter(nonEmptyString))];
   const fetched = new Map();
   const documentFor = async (baseURL) => {
     if (typeof document === "function") return document(baseURL);
@@ -626,20 +886,23 @@ export async function synchronizeRouterSettings(settingsService, {
       const before = readNamespace(settingsService, "llm-pi-ai");
       const stored = storedNamespace(settingsService, "llm-pi-ai") ?? before;
       const resolved = before.providers?.[provider];
-      const daytime = stored.providers?.["local-ollama"] ?? before.providers?.["local-ollama"];
-      const baseURL = resolved?.baseURL ?? stored.providers?.[provider]?.baseURL ?? daytime?.baseURL;
+      const baseURL = resolved?.baseURL ?? stored.providers?.[provider]?.baseURL ?? seed?.baseURL;
       if (!nonEmptyString(baseURL)) throw new Error(`provider ${provider} has no baseURL`);
       routerBaseOf(baseURL);
       const current = await documentFor(baseURL);
       if (current === DOCUMENT_PENDING) continue;
-      const state = effectiveState(residentStatus(current, RESIDENT_SERVICES[provider]), holds.get(provider),
-        current?.revision, now);
-      const next = planResidentProvider({ name: provider, state, stored: stored.providers?.[provider], resolved, daytime, clientName });
+      const catalog = applyHolds(routerServices(current, { known: knownServices(stored.providers, provider), optInServices }),
+        provider, holds, current?.revision, now);
+      const next = planRouterProvider({ name: provider, catalog, stored: stored.providers?.[provider], resolved,
+        clientName, optInServices });
       const latest = readNamespace(settingsService, "llm-pi-ai");
       if (!sameJson(latest.providers?.[provider], resolved)) {
-        throw new Error("resident settings changed during discovery; retrying on the next refresh");
+        throw new Error("router settings changed during discovery; retrying on the next refresh");
       }
-      results.set(provider, { state, next, recorded: plainObject(resolved?.residentState) ? resolved.residentState : undefined });
+      const recorded = plainObject(resolved?.residentStates) ? resolved.residentStates : {};
+      results.set(provider, { catalog, route: catalog.route, next, changed: false,
+        services: catalog.services.map(entry => ({ service: entry.service, state: entry,
+          recorded: recorded[entry.service] })) });
       const previous = storedNamespace(settingsService, "llm-pi-ai")?.providers?.[provider];
       if (!sameJson(previous, next)) {
         await settingsService.mutate("llm-pi-ai", [{ op: "set", path: ["providers", provider], value: next }]);
@@ -649,34 +912,39 @@ export async function synchronizeRouterSettings(settingsService, {
       errors.push({ provider, error });
     }
   }
-  try {
-    await migrateDefaultSelection(settingsService, managed);
-  } catch (error) {
-    errors.push({ provider: "agent-default-model", error });
+  for (const [step, name] of [[migrateDefaultSelection, "agent-default-model"], [retireLegacyRoutes, "legacy-router-routes"]]) {
+    try {
+      await step(settingsService, optInServices);
+    } catch (error) {
+      errors.push({ provider: name, error });
+    }
   }
   return { results, errors };
 }
 
-/** Retire the old 256K Daytime route and move saved defaults to service IDs. */
-async function migrateDefaultSelection(settingsService, managed) {
+/**
+ * Move a saved default off a route that no longer exists. It never changes
+ * which service the default names, and it never moves onto an opt-in one: a
+ * session reaches an opt-in service only when a human selects it, and no fresh
+ * install, settings restore or unreachable-router state may select it here.
+ */
+async function migrateDefaultSelection(settingsService, optInServices = OPT_IN_SERVICES) {
   const settings = readNamespace(settingsService, "llm-pi-ai");
   const retired = settings.providers?.["local-ollama-256k"];
-  const ownedRetired = plainObject(retired) && retired.baseURL === settings.providers?.["local-ollama"]?.baseURL &&
+  const ownedRetired = plainObject(retired) && retired.baseURL === settings.providers?.[ROUTER_PROVIDER]?.baseURL &&
     retired.models?.length === 1 && ["local-active", "daytime"].includes(retired.models[0]?.id);
   const selected = readNamespace(settingsService, "agent-default-model");
   let nextSelection;
   if (ownedRetired && selected?.provider === "local-ollama-256k") {
-    nextSelection = { ...selected, provider: "local-ollama", model: RESIDENT_SERVICES["local-ollama"] };
+    // The retired route sent the service the surviving route still answers that name with.
+    nextSelection = { ...selected, provider: ROUTER_PROVIDER, model: "daytime" };
   } else if (plainObject(selected)) {
-    const migrated = migrateResidentRoute(selected, managed);
+    const migrated = migrateResidentRoute(selected);
     if (migrated !== selected) nextSelection = migrated;
   }
-  // A migration only ever rewrites the model of the stored provider, or retires
-  // a route onto Daytime. It must never introduce an opt-in route: a session
-  // reaches the trial only when a human selects it, and no fresh install,
-  // settings restore or offline-Daytime state may select it here.
-  if (nextSelection && isOptInService(RESIDENT_SERVICES[nextSelection.provider]) && nextSelection.provider !== selected?.provider) {
-    throw new Error(`refusing to move the default selection onto opt-in provider ${nextSelection.provider}`);
+  if (nextSelection && isOptInService(nextSelection.model, optInServices) &&
+      !isOptInService(selected?.model, optInServices)) {
+    throw new Error(`refusing to move the default selection onto opt-in service ${nextSelection.model}`);
   }
   if (ownedRetired) await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", "local-ollama-256k"] }]);
   if (nextSelection) {
@@ -687,6 +955,18 @@ async function migrateDefaultSelection(settingsService, managed) {
 }
 
 /**
+ * Drop the one-route-per-service routes. Each carries no state of its own once
+ * the catalog route lists its service, and leaving it behind would leave a
+ * second copy of the same router in the picker.
+ */
+async function retireLegacyRoutes(settingsService) {
+  const settings = readNamespace(settingsService, "llm-pi-ai");
+  for (const provider of Object.keys(RETIRED_ROUTES)) {
+    if (plainObject(settings.providers?.[provider])) {
+      await settingsService.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", provider] }]);
+    }
+  }
+}/**
  * Follow one router: read the document, subscribe to `/v1/router/events`,
  * replace the copy whenever `revision` changes, and poll with `If-None-Match`
  * while disconnected. Adapted from the reference client `watchRouter`
@@ -832,7 +1112,8 @@ export class RouterWatch {
 /** In-process discovery service: one watcher per router, settings convergence and logging. */
 export class ResidentDiscovery {
   constructor({ settings, logger, providers = DEFAULT_PROVIDERS, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
-    clientName = routerClientName(), watchOptions = {}, now = () => Date.now(), echo = true }) {
+    clientName = routerClientName(), watchOptions = {}, now = () => Date.now(), echo = true,
+    optInServices = OPT_IN_SERVICES }) {
     // Harness keeps plugin logs in its in-process buffer; transitions are also
     // echoed to the container log so operators see them in `docker logs`.
     const sink = logger;
@@ -841,7 +1122,7 @@ export class ResidentDiscovery {
       if (echo) (level === "warn" ? console.warn : console.log)(`[${new Date().toISOString()}] ${message}`);
     };
     logger = { info: message => write("info", message), warn: message => write("warn", message) };
-    Object.assign(this, { settings, logger, providers, pollIntervalMs, clientName, watchOptions, now });
+    Object.assign(this, { settings, logger, providers, pollIntervalMs, clientName, watchOptions, now, optInServices });
     this.watches = new Map();
     this.holds = new Map();
     this.failures = new Map();
@@ -866,8 +1147,8 @@ export class ResidentDiscovery {
     this.timer = setInterval(() => { this.ensureWatches(); void this.synchronize("reconcile"); }, this.pollIntervalMs);
     globalThis[ROUTER_CONTRACT_HUB] = this.hub = {
       report: (provider, event) => this.report(provider, event),
-      success: (provider) => this.failures.delete(provider),
-      state: (provider) => this.previous.get(provider),
+      success: (provider, model) => this.failures.delete(failureKey(provider, model)),
+      state: (provider, model) => this.previous.get(`${provider}\u0000${model}`),
     };
     return this;
   }
@@ -884,11 +1165,17 @@ export class ResidentDiscovery {
   loadPersistedStates() {
     let providers = {};
     try { providers = readNamespace(this.settings, "llm-pi-ai")?.providers ?? {}; } catch { return; }
-    for (const provider of this.providers) {
-      const record = providers[provider]?.residentState;
-      if (!this.previous.has(provider) && plainObject(record) && RESIDENT_STATUSES.includes(record.status)) {
-        this.previous.set(provider, { service: RESIDENT_SERVICES[provider], status: record.status,
-          configuration: record.configuration ?? null, reason: record.reason ?? null });
+    for (const [provider, entry] of Object.entries(providers)) {
+      if (![...this.providers, ...Object.keys(RETIRED_ROUTES)].includes(provider)) continue;
+      // States are recorded per model on the route, which is where the plan
+      // writes them; a restart resumes from them instead of announcing every
+      // service as newly recorded.
+      for (const [service, record] of Object.entries(plainObject(entry?.residentStates) ? entry.residentStates : {})) {
+        const key = `${provider}\u0000${service}`;
+        if (!nonEmptyString(service) || this.previous.has(key) || !plainObject(record) ||
+            !RESIDENT_STATUSES.includes(record.status)) continue;
+        this.previous.set(key, { service, status: record.status, configuration: record.configuration ?? null,
+          reason: record.reason ?? null });
       }
     }
   }
@@ -960,12 +1247,12 @@ export class ResidentDiscovery {
 
   async synchronizeOnce(reason) {
     const now = this.now();
-    for (const [provider, hold] of this.holds) if (hold.until <= now) this.holds.delete(provider);
+    for (const [key, hold] of this.holds) if (hold.until <= now) this.holds.delete(key);
     let outcome;
     try {
       outcome = await synchronizeRouterSettings(this.settings, {
         providers: this.providers, document: (baseURL) => this.documentFor(baseURL),
-        clientName: this.clientName, holds: this.holds, now,
+        clientName: this.clientName, holds: this.holds, now, optInServices: this.optInServices,
       });
     } catch (error) {
       this.warnOnce("sync", `router-model-discovery: ${errorText(error)}`);
@@ -974,24 +1261,33 @@ export class ResidentDiscovery {
     // Flush settings/document-updated so open pickers refresh without reload.
     try { this.settings.describe(); } catch { /* best effort */ }
     for (const { provider, error } of outcome.errors) this.warnOnce(`provider:${provider}`, `router-model-discovery: ${provider}: ${errorText(error)}`);
-    for (const [provider, { state, recorded }] of outcome.results) {
+    for (const [provider, { services, route }] of outcome.results) {
       this.lastErrors.delete(`provider:${provider}`);
-      const hold = this.holds.get(provider);
-      if (hold && hold.revision !== undefined && state.status !== hold.status) this.holds.delete(provider);
-      if (!this.previous.has(provider) && recorded && RESIDENT_STATUSES.includes(recorded.status)) {
-        this.previous.set(provider, { service: RESIDENT_SERVICES[provider], status: recorded.status,
-          configuration: recorded.configuration ?? null, reason: recorded.reason ?? null });
+      const routeHold = this.holds.get(provider);
+      if (routeHold && routeHold.revision !== undefined && route.status !== routeHold.status) this.holds.delete(provider);
+      for (const { service, state, recorded } of services) {
+        const key = `${provider}\u0000${service}`;
+        const hold = this.holds.get(key);
+        if (hold && hold.revision !== undefined && state.status !== hold.status) this.holds.delete(key);
+        if (!this.previous.has(key) && plainObject(recorded) && RESIDENT_STATUSES.includes(recorded.status)) {
+          this.previous.set(key, { service, status: recorded.status, configuration: recorded.configuration ?? null,
+            reason: recorded.reason ?? null });
+        }
+        this.logTransition(provider, service, state, reason);
       }
-      this.logTransition(provider, state, reason);
     }
   }
 
-  logTransition(provider, state, reason) {
-    const service = RESIDENT_SERVICES[provider];
-    const before = this.previous.get(provider);
+  logTransition(provider, service, state, reason) {
+    const key = `${provider}\u0000${service}`;
+    const before = this.previous.get(key);
     const signature = (value) => value && JSON.stringify([value.status, value.status === "offline" ? value.configuration : value.reason]);
     if (signature(before) !== signature(state)) {
       this.logger?.info?.(`router-model-discovery: ${service}: ${before ? describeStatus(before) : "unknown"} → ${describeStatus(state)}`);
+    }
+    // A catalog can gain or lose a service without anything else changing.
+    if (before === undefined && state.status !== "available") {
+      this.logger?.info?.(`router-model-discovery: ${service}: recorded as ${describeStatus(state)}`);
     }
     if (state.served && before?.served && before.served !== state.served) {
       // Canonical IDs are information only; they are never stored or compared for routing.
@@ -1002,7 +1298,7 @@ export class ResidentDiscovery {
     if (limits && previousLimits && (limits.contextWindow !== previousLimits.contextWindow || limits.maxConcurrency !== previousLimits.maxConcurrency)) {
       this.logger?.info?.(`router-model-discovery: ${service}: limits recomputed: context budget ${previousLimits.contextWindow} → ${limits.contextWindow}, slots ${previousLimits.maxConcurrency} → ${limits.maxConcurrency}`);
     }
-    this.previous.set(provider, { service, status: state.status, configuration: state.configuration, reason: state.reason,
+    this.previous.set(key, { service, status: state.status, configuration: state.configuration, reason: state.reason,
       served: state.served ?? before?.served, capabilities: limits ?? previousLimits });
   }
 
@@ -1014,20 +1310,23 @@ export class ResidentDiscovery {
     const watch = base ? this.watches.get(base) : undefined;
     const revision = watch?.current?.revision;
     const now = this.now();
-    const service = RESIDENT_SERVICES[provider];
+    // The adapter names the model its request was for, which is the service a
+    // hold applies to. Without one the evidence is about the router as a whole.
+    const service = nonEmptyString(event.model) ? event.model : undefined;
+    const key = failureKey(provider, event.model);
     if (code === "SERVICE_OFFLINE" || code === "MODEL_NOT_FOUND") {
       const configuration = /configuration "([^"]+)"/.exec(event.message ?? "")?.[1] ?? watch?.current?.configuration?.id ?? null;
-      this.holds.set(provider, code === "SERVICE_OFFLINE"
+      this.holds.set(key, code === "SERVICE_OFFLINE"
         ? { status: "offline", reason: "SERVICE_OFFLINE", configuration, revision, until: now + REQUEST_HOLD_MS }
         : { status: "unavailable", reason: "not offered by the router (MODEL_NOT_FOUND)", revision, until: now + REQUEST_HOLD_MS });
-      if (code === "MODEL_NOT_FOUND") this.logger?.warn?.(`router-model-discovery: ${service}: router answered MODEL_NOT_FOUND; the service ID may be stale`);
+      if (code === "MODEL_NOT_FOUND") this.logger?.warn?.(`router-model-discovery: ${service ?? "a service"}: router answered MODEL_NOT_FOUND; the service ID may be stale`);
     } else if (code === "BACKEND_UNAVAILABLE") {
-      const entry = this.failures.get(provider);
+      const entry = this.failures.get(key);
       const failures = entry && now - entry.first < BACKEND_FAILURE_WINDOW_MS ? { first: entry.first, count: entry.count + 1 } : { first: now, count: 1 };
-      this.failures.set(provider, failures);
+      this.failures.set(key, failures);
       if (failures.count >= BACKEND_FAILURE_THRESHOLD) {
-        this.holds.set(provider, { status: "unavailable", reason: "backend unavailable (BACKEND_UNAVAILABLE)", revision, until: now + REQUEST_HOLD_MS });
-        this.failures.delete(provider);
+        this.holds.set(key, { status: "unavailable", reason: "backend unavailable (BACKEND_UNAVAILABLE)", revision, until: now + REQUEST_HOLD_MS });
+        this.failures.delete(key);
       }
     } else if (code !== "BACKEND_DRAINING" && code !== "MAINTENANCE_MODE") {
       return;
@@ -1045,6 +1344,10 @@ export function apply(ctx, config = {}) {
     ? Math.max(MIN_POLL_INTERVAL_MS, Math.trunc(configuredInterval))
     : DEFAULT_POLL_INTERVAL_MS;
   const clientName = routerClientName({ instance: config.clientInstance });
+  // §3 names `trial` as the service an operator opts into; the setting lets a
+  // deployment name another without a Harness release.
+  const optInServices = Array.isArray(config.optInServices) && config.optInServices.length
+    ? config.optInServices.filter(nonEmptyString) : [...OPT_IN_SERVICES];
   // Existing sessions recorded their route with old IDs. Rewrite each outgoing
   // request to the service ID so its durable request header migrates too.
   if (typeof ctx.on === "function") {
@@ -1055,7 +1358,7 @@ export function apply(ctx, config = {}) {
   // the settings provider is available and owns all timer cleanup.
   ctx.inject(["settings"], (sctx) => {
     const discovery = new ResidentDiscovery({ settings: sctx.settings, logger: sctx.logger, providers, pollIntervalMs,
-      clientName, watchOptions: plainObject(config.watch) ? config.watch : {} });
+      clientName, watchOptions: plainObject(config.watch) ? config.watch : {}, optInServices });
     sctx.effect(() => {
       discovery.start();
       return () => discovery.stop();

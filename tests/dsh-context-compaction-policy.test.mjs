@@ -6,7 +6,8 @@ const profile = await readFile(new URL("../seed/profile/managed/cordis.patch.yml
 const settings = await readFile(new URL("../config/settings.yaml", import.meta.url), "utf8");
 
 const CONTEXT_WINDOW = 131072;
-const EVERYDAY_CONTEXT_WINDOW = 131072;
+/** The seeded placeholder budget of the router route, before any discovery. */
+const PLACEHOLDER_CONTEXT_WINDOW = 131072;
 const REQUESTED_OUTPUT = 32768;
 const ROUTER_RESERVE = 1024;
 const INCIDENT_ROUTER_INPUT = 101165;
@@ -35,21 +36,27 @@ test("Host keeps preset policy templates without mounting duplicate compaction s
   assert.match(pruner, /thresholdChars: 8192/);
 });
 
-test("every resident route uses the 70 percent request budget policy", () => {
+test("every model of the router route compacts on the 70 percent request budget", () => {
   const compact = block("compaction-basic", "command-compact");
-  // The opt-in trial is included: a session a human selects there compacts on
-  // the same budget as the other residents, and no other policy is seeded.
-  for (const [provider, model] of [["local-ollama", "daytime"], ["local-everyday", "nighttime"], ["local-trial", "trial"]]) {
-    assert.match(
-      compact,
-      new RegExp(`provider: ${provider.replaceAll("-", "\\-")}\\n\\s+model: ${model}\\n\\s+thresholdRatio: 0\\.70`),
-    );
-  }
-  assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 3);
+  // A router route serves whatever models its router publishes, so the seeded
+  // threshold is the route default: every model the catalog adds, including an
+  // opt-in service a human selects, compacts on the same budget, and no model is
+  // seeded with a policy of its own.
+  assert.match(compact, /thresholdRatio: 0\.70/);
+  assert.equal((compact.match(/thresholdRatio: 0\.70/g) ?? []).length, 1);
+  assert.doesNotMatch(compact, /modelPolicies|provider:|model: /, "a policy that names one model pins a catalog entry the seed cannot know");
 });
 
-test("Nighttime compaction follows its 128K working context without a summary quota", () => {
-  assert.equal(Math.floor(EVERYDAY_CONTEXT_WINDOW * 0.70), 91750);
+test("the seed follows one router route, which is the route the budget covers", () => {
+  // Discovery writes the model list of the route it is given, so a policy that
+  // covers the route covers every model it will ever list.
+  assert.match(profile, /- id: router-model-discovery[\s\S]{0,400}?providers: \[ local-ollama \]/);
+  assert.match(profile, /optInServices: \[ trial \]/, "the opt-in service is named as a service, and stays opt-in");
+  assert.doesNotMatch(profile, /local-everyday|local-trial/, "a service is never seeded as a route of its own");
+});
+
+test("a 128K service compacts on its working context without a summary quota", () => {
+  assert.equal(Math.floor(PLACEHOLDER_CONTEXT_WINDOW * 0.70), 91750);
   assert.match(block("compaction-basic", "command-compact"), /maxTokens: null/);
 });
 
@@ -91,11 +98,9 @@ test("captured tool-result pruning returns far below the policy threshold", () =
 });
 
 test("context overflow remains outside the ordinary retry set", () => {
-  for (const [provider, model] of [["local-ollama", "daytime"], ["local-everyday", "nighttime"]]) {
-    const start = settings.indexOf(`    ${provider}:\n`);
-    assert.notEqual(start, -1);
-    const retryLine = settings.slice(start).match(/retryableCodes: \[([^\]]+)\]/)?.[1] ?? "";
-    assert.match(retryLine, /EMPTY_RESPONSE/);
-    assert.doesNotMatch(retryLine, /CONTEXT|TIMEOUT/);
-  }
+  const start = settings.indexOf("    local-ollama:\n");
+  assert.notEqual(start, -1);
+  const retryLine = settings.slice(start).match(/retryableCodes: \[([^\]]+)\]/)?.[1] ?? "";
+  assert.match(retryLine, /EMPTY_RESPONSE/);
+  assert.doesNotMatch(retryLine, /CONTEXT|TIMEOUT/);
 });

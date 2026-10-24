@@ -3,40 +3,57 @@
 Historical release notes: the current availability, external-provider preservation,
 and portable update procedures are documented in [optional residents](optional-residents.md)
 and [portable maintenance](portable-maintenance.md). The two-model-only migration
-and destination-specific rollout below describe the earlier release.
+and destination-specific rollout below describe the earlier release, and a route
+that carried exactly one service is no longer how a router's models are
+configured.
 
 **Superseded on 2026-10-07** by the [LLM Router client contract](llm-router-contract.md)
-release. Resident routes now send the service IDs `daytime` and `nighttime`.
-Discovery reads `/v1/router/capabilities` and `/v1/router/events` instead of
+release. Resident routes then sent the service IDs `daytime` and `nighttime`.
+Discovery read `/v1/router/capabilities` and `/v1/router/events` instead of
 `/v1/models`. Each model is evaluated independently, so router state never stops
 startup or verification. The IDs and the all-or-nothing validation described
 below are no longer current.
 
-**A third resident route was added on 2026-10-13**: provider `local-trial`,
-service `trial`. It is opt-in — never a default, never a fallback target, never
-selected by a migration or a verifier, and never left automatically — it is
-text-only with limits from its own router metadata, and a human selection is the
-only way onto it. Discovery and the startup migration provision and hold the
-route, pickers and deployment verification list and state-check it, and no
-request is ever sent through it by an automated check. A router configuration
-that does not offer it leaves the route held with its reason recorded; the
-update still succeeds. [optional residents](optional-residents.md) is the
-current reference for all three residents.
+**Superseded again by the catalog-driven route.** Harness now configures one
+provider route per router, and that route's model list is the catalog the router
+publishes: one row per service ID, titled with the names the router publishes for
+them, under a group headed by the name the router publishes for itself. The
+one-route-per-service shape described below — a route per service, each titled
+with a word Harness invented — is gone: `local-everyday` and `local-trial` are
+retired provider IDs used only to rewrite persisted selections onto the catalog
+route. [optional residents](optional-residents.md) is the current reference.
+
+**A third resident service was added on 2026-10-13**, then as provider
+`local-trial` with service `trial`. It is opt-in — never a default, never a
+fallback target, never selected by a migration or a verifier, and never left
+automatically — it is text-only with limits from its own router metadata, and a
+human selection is the only way onto it. Which names are opt-in is the plugin
+setting `optInServices`, default `[ trial ]`. Discovery and the startup
+migration list and hold the row when the router offers the service, pickers and
+deployment verification list and state-check it, and no request is ever sent
+through it by an automated check. A router configuration that does not offer it
+leaves it held with its reason recorded; the update still succeeds.
+[optional residents](optional-residents.md) is the current reference for the
+route and every model it carries.
 
 This Harness change replaces historical router-profile assertions with shared,
 validated discovery and preserves explicit DSH reasoning choices. It supports
 legacy alias-only catalogs, canonical model IDs with alias metadata, and the
 router's repaired explicit alias row. The configured local provider contracts
-must match complete schema-v2 metadata; ambiguous aliases, warnings, unavailable
-backends and inconsistent output policies still fail verification.
+must match complete schema-v2 metadata; ambiguous aliases, warnings and
+inconsistent output policies still fail validation, while an unavailable backend
+is a recorded state that stops neither startup nor verification.
 
-Current resident defaults are Daytime (`local-ollama/local-active`, 163840
-context, one active request) and Nighttime
-(`local-everyday/qwen3.8-27b-abliterated-q6_k`, 131072 context, one active request).
+The resident defaults of that release were the `daytime` service of
+`local-ollama` (then addressed as `local-active`, 163840 context, one active
+request) and the `nighttime` service of the now-retired `local-everyday` route
+(`qwen3.8-27b-abliterated-q6_k`, 131072 context, one active request).
 Capabilities for both models, including image/tool support, come from discovery.
-Those values are discovered, not required as historical constants. The remote
-verifier retains the primary route's vision/tool requirement; browser readiness
-checks the selected route.
+Those values are discovered, not required as historical constants, and today
+each model of the catalog route is provisioned the same way, from the model that
+actually serves it. The remote verifier retains the vision/tool requirement for
+the model a browser session would really use — the saved selection, or the
+service the router calls its default — and browser readiness checks that model.
 
 The router's raw reasoning default is template-defined. Harness deliberately
 seeds medium, while retaining explicit provider/agent/request effort choices.
@@ -62,26 +79,32 @@ workflow; a separate GHCR tag is not required.
 The versioned entrypoint reconciles the local providers atomically before DSH
 launches, preserving file ownership/mode and creating no backup artifacts. It
 refreshes the repository-owned plugin, which continues to use DSH's settings
-service for subsequent capability refresh. It validates all discovered targets and any
-inherited effort before writing, provisions the secondary with its own metadata
-atomically, and preserves unrelated settings and explicit effort choices.
-The selectable catalog is restricted to `local-ollama/local-active` and
-`local-everyday/qwen3.8-27b-abliterated-q6_k`. Obsolete providers, Swift model
-choices, and duplicate alias rows are removed in the same provider-map mutation.
-Defaults pointing to a removed choice move to Daytime and keep any supported
-reasoning effort; unsupported efforts fall back to medium. Credential storage,
-conversation history, and unrelated settings remain intact. The versioned web
+service for subsequent capability refresh. It validates all discovered targets
+and any inherited effort before writing, provisions each offered service with
+the metadata of the model that serves it, and preserves unrelated settings and
+explicit effort choices. At that release the selectable catalog was restricted to
+`local-ollama/local-active` and `local-everyday/qwen3.8-27b-abliterated-q6_k`;
+a router route now offers the catalog its router publishes, one model row per
+published service, titled as that router titles it. Obsolete providers, Swift
+model choices, and duplicate alias rows were removed in the same provider-map
+mutation. Defaults pointing to a removed choice moved to the `daytime` service
+and kept any supported reasoning effort; unsupported efforts fell back to medium.
+Credential storage, conversation history, and unrelated settings remain intact.
+The versioned web
 composition disables `llm-deepseek`, preventing its upstream default catalog
 from entering the picker. Repeated synchronization is a no-op once current.
 
 Image tests inspect the real application catalog, rendered model picker, and
 separate reasoning menu. Deployment verification repeats those checks and sends
-one short text-only request through each resident in an isolated session. It
-restores the original default selection and archives the verification session.
+one short text-only request through an available model of the route in an
+isolated session, never through an opt-in service. It restores the original
+default selection and archives the verification session.
 Require a successful `.21` update before requesting the `.5` update.
 
-If discovery fails, startup leaves the file unchanged and starts the application;
-provider verification remains blocking until synchronization succeeds. The
+If discovery failed, that release left the file unchanged and started the
+application, and provider verification remained blocking until synchronization
+succeeded; today an unreachable router is recorded as the state of each model the
+route carries and startup still succeeds. The
 deployment verifier allows startup synchronization to finish, then runs
 `/opt/dsh-build/verify-router-contract.mjs` against persisted settings and current
 router discovery. Remote mode independently confirms the `ai-router` DNS mapping
@@ -95,15 +118,23 @@ backup; startup mode does not create such a backup.
 
 `tests/router-provider-remote.test.mjs` executes the exact remote-mode block
 extracted from `verify.sh`, using the real shared verification CLI and local HTTP
-fixtures after startup synchronization. Cases cover canonical-only and repaired
-alias discovery, legacy bounded output, actual IDs, idempotent migration, explicit
-effort/settings preservation, inherited-effort rejection before mutation,
-truthful secondary capabilities, stale concurrency and malformed policy failures.
+fixtures after startup synchronization. Cases cover startup migration onto one
+catalog route with limits taken from each serving model, an opt-in service
+offered when its router publishes it and held when it stops, a solo
+configuration leaving one service offline without blocking the others, a
+draining router, an unreachable router, a new canonical model behind a service,
+explicit effort/settings preservation, the live verifier rejecting stale limits,
+titles, states, identity and an unpublished model, a concurrent edit to the
+route, the event stream with backoff and `If-None-Match` revalidation, and a
+pre-contract router read from its model listing.
 
 `verify-router-startup.mjs` additionally runs the real entrypoint against legacy
 settings with controlled discovery, before any browser/agent activation. It
 checks atomic migration, file mode, no leftover migration artifacts, null limits,
-secondary capabilities and preserved unrelated settings/explicit effort.
+the catalog rows and per-model states the document publishes, the route titled
+with the name its router publishes for itself, and preserved unrelated
+settings/explicit effort. Its `--daytime-only` qualification boots the shape
+where the router stops offering the other services.
 
 The image build runs actual installed SDK wire and compaction checks. The normal
 repository `scripts/check.sh --build` includes updater/self-reexec, persisted

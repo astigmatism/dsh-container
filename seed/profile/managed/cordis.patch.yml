@@ -61,17 +61,10 @@
     maxTokens: null
     compactionRetries: 1
     maxOverflowRetries: 1
-    # Policies match the router service IDs that resident routes send.
-    modelPolicies:
-      - provider: local-ollama
-        model: daytime
-        thresholdRatio: 0.70
-      - provider: local-everyday
-        model: nighttime
-        thresholdRatio: 0.70
-      - provider: local-trial
-        model: trial
-        thresholdRatio: 0.70
+    # A router route serves whatever models its router publishes, so the compact
+    # threshold is the service default rather than one exact provider/model row per
+    # service: every model the catalog adds inherits it, as does every model it drops.
+    thresholdRatio: 0.70
 
 - id: command-compact
   disabled: true
@@ -129,13 +122,17 @@
 # If-None-Match while the stream is down. Requests identify themselves as
 # deepseek-harness/<HARNESS_CLIENT_INSTANCE or hostname>; set clientInstance
 # here to override the instance name.
-# local-trial is the opt-in third resident: it is discovered and shown in the
-# picker, but never selected, defaulted to or fallen back onto automatically.
+# `providers` lists the router routes to follow; each is one router, and its
+# model list is that router's published catalog. `optInServices` names the
+# services that are discovered and shown in the picker but never selected,
+# defaulted to or fallen back onto automatically; `trial` is the contract's own
+# example of one, and it is the default of this setting.
 - insert:
     - id: router-model-discovery
       name: '../../../../.dsh-plugins/dsh-router-model-discovery.js'
       config:
-        providers: [ local-ollama, local-everyday, local-trial ]
+        providers: [ local-ollama ]
+        optInServices: [ trial ]
         pollIntervalMs: 30000
 
 # Suggested follow-up prompts beneath the latest completed answer. The live

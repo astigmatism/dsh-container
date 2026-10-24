@@ -7,7 +7,16 @@
  * router make requests wait, and accepts pre-service-ID model IDs of a
  * resident route during migration (docs/llm-router-contract.md §3, §5, §7).
  *
- * v3 adds the opt-in `modelPicker.availableOnly` picker filter, read from the
+ * v4 puts that state on each model instead of on the route. A router publishes
+ * a catalog, so one route carries every service that router offers and each
+ * model row answers to its own entry in `residentStates`: a blocked model fails
+ * dispatch at once and leaves `routableProviders`, while the route is blocked
+ * only when its router cannot answer at all. `residentState` keeps the
+ * route-level facts — the router's admission state, its configuration, the
+ * services it currently offers, and the service that answers the document's own
+ * default model, which is what a stale selection falls back to.
+ *
+ * v3 added the opt-in `modelPicker.availableOnly` picker filter, read from the
  * harness settings document (the profile patch, then the pre-0.2 settings
  * file). The flag rides the `modelCatalog` result as `availableOnly`; the
  * server catalog keeps reporting every model, and only the picker view
@@ -21,8 +30,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const marker = 'dsh-resident-availability-v3';
-const previousMarker = 'dsh-resident-availability-v2';
+const marker = 'dsh-resident-availability-v4';
+const previousMarkers = ['dsh-resident-availability-v3', 'dsh-resident-availability-v2'];
+/** A tree that already carries an older revision is left as it was built. */
+const patchedAlready = (source) => source.includes(marker) || previousMarkers.some((value) => source.includes(value));
 function replace(source, before, after) {
   if (!source.includes(before) || source.indexOf(before) !== source.lastIndexOf(before)) {
     throw new Error(`Resident availability source drift: ${before.slice(0, 100)}`);
@@ -73,34 +84,55 @@ export async function modelPickerAvailableOnly(env = process.env, readText = (fi
   return false;
 }
 export function patchAdapter(input) {
-  if (input.includes(marker) || input.includes(previousMarker)) return input;
+  if (patchedAlready(input)) return input;
   let s = input;
   // Settings forms project only declared fields; declare the discovery-owned state.
-  s = replace(s, '\tmaxConcurrency: z.number().step(1).min(1),', '\tresidentUnavailable: z.boolean(),\n\tresidentState: z.any(),\n\tmaxConcurrency: z.number().step(1).min(1),');
+  s = replace(s, '\tmaxConcurrency: z.number().step(1).min(1),', '\tresidentUnavailable: z.boolean(),\n\tresidentState: z.any(),\n\tresidentStates: z.any(),\n\tmaxConcurrency: z.number().step(1).min(1),');
   s = replace(s, '\tproviderInfo(provider) {', `\t// ${marker}
 \tassertResidentAvailable(provider, model) {
-\t\tconst profile = this.profileOf(this.current(), provider);
-\t\tif (profile.residentUnavailable === true) {
-\t\t\tconst message = profile.residentState?.message;
-\t\t\tthrow new LlmError(typeof message === 'string' && message.length > 0 ? message : 'Nighttime is unavailable: the router does not offer it. Select another model or wait for Nighttime to return.', 'MODEL_UNAVAILABLE');
-\t\t}
+\t\tconst snapshot = this.current();
+\t\tconst profile = this.profileOf(snapshot, provider);
+\t\tconst id = this.residentModelId(snapshot, profile, provider, model);
+\t\tif (!this.residentModelBlocked(profile, id)) return;
+\t\tconst message = [this.residentModelState(profile, id)?.message, profile.residentState?.message].find(value => typeof value === 'string' && value.length > 0);
+\t\tthrow new LlmError(message ?? 'The selected router model is unavailable. Select another model.', 'MODEL_UNAVAILABLE');
 \t}
-\tresidentName(profile, name) {
-\t\tconst label = profile?.residentState?.label;
-\t\tif (profile?.residentUnavailable === true) return typeof label === 'string' && label.length > 0 ? label : 'Nighttime — unavailable';
-\t\treturn typeof label === 'string' && label.length > 0 && profile.residentState.status !== 'available' ? label : name;
+\t/** A route is blocked only when its router answers nothing; a model is blocked on its own state (§4, §5). */
+\tresidentModelBlocked(profile, model) {
+\t\tif (profile?.residentUnavailable === true) return true;
+\t\tconst status = this.residentModelState(profile, model)?.status;
+\t\treturn status === 'offline' || status === 'unavailable' || status === 'incomplete';
 \t}
+\t/** The state discovery recorded for one model of this route. */
+\tresidentModelState(profile, model) {
+\t\tconst states = profile?.residentStates;
+\t\tif (states === null || typeof states !== 'object') return undefined;
+\t\tconst state = states[model];
+\t\treturn state !== null && typeof state === 'object' ? state : undefined;
+\t}
+\tresidentName(profile, model, name) {
+\t\tconst state = this.residentModelState(profile, model);
+\t\tconst label = typeof state?.label === 'string' && state.label.length > 0 ? state.label : undefined;
+\t\tif (label === undefined || (profile?.residentUnavailable !== true && state?.status === 'available')) return name;
+\t\treturn label;
+\t}
+\t/**
+\t * A selection written before a catalog drove the model list names a model this
+\t * route no longer configures. The document states which service answers its own
+\t * default model, so that service serves the request rather than the dispatch
+\t * failing on a name the runtime retired.
+\t */
 \tresidentModelId(snapshot, profile, provider, model) {
-\t\tconst service = profile?.residentState?.service;
-\t\tif (typeof service !== 'string' || model === service || snapshot.models.getModel(provider, model) !== void 0) return model;
-\t\treturn snapshot.models.getModel(provider, service) !== void 0 ? service : model;
+\t\tif (snapshot.models.getModel(provider, model) !== void 0) return model;
+\t\tconst fallback = profile?.residentState?.default;
+\t\treturn typeof fallback === 'string' && snapshot.models.getModel(provider, fallback) !== void 0 ? fallback : model;
 \t}
 \tproviderInfo(provider) {`);
   s = replace(s, '\tmodelOf(snapshot, provider, model) {\n\t\tconst profile = this.profileOf(snapshot, provider);', '\tmodelOf(snapshot, provider, model) {\n\t\tconst profile = this.profileOf(snapshot, provider);\n\t\tmodel = this.residentModelId(snapshot, profile, provider, model);');
-  s = replace(s, '\t\t\t\tname: model.name,\n\t\t\t\tinputModalities: [...model.input]', '\t\t\t\tname: this.residentName(snapshot.profiles.get(provider), model.name),\n\t\t\t\tavailable: snapshot.profiles.get(provider).residentUnavailable !== true,\n\t\t\t\t...(snapshot.profiles.get(provider).residentUnavailable ? {} : { inputModalities: [...model.input] })');
-  s = replace(s, '\t\tconst resolvedModel = this.modelOf(snapshot, provider, model);', '\t\tconst resolvedModel = this.modelOf(snapshot, provider, model);\n\t\tif (profile.residentUnavailable === true) return { provider, id: model, name: this.residentName(profile, resolvedModel.name) };');
+  s = replace(s, '\t\t\t\tname: model.name,\n\t\t\t\tinputModalities: [...model.input]', '\t\t\t\tname: this.residentName(snapshot.profiles.get(provider), model.id, model.name),\n\t\t\t\tavailable: !this.residentModelBlocked(snapshot.profiles.get(provider), model.id),\n\t\t\t\t...(this.residentModelBlocked(snapshot.profiles.get(provider), model.id) ? {} : { inputModalities: [...model.input] })');
+  s = replace(s, '\t\tconst resolvedModel = this.modelOf(snapshot, provider, model);', '\t\tconst resolvedModel = this.modelOf(snapshot, provider, model);\n\t\tif (this.residentModelBlocked(profile, resolvedModel.id ?? model)) return { provider, id: model, name: this.residentName(profile, resolvedModel.id ?? model, resolvedModel.name) };');
   s = replace(s, 'const configuredMaxTokens = profile.configuredMaxTokens.get(model);', 'const configuredMaxTokens = profile.configuredMaxTokens.get(resolvedModel.id ?? model);');
-  s = replace(s, '\t\t\tname: resolvedModel.name,', '\t\t\tname: this.residentName(profile, resolvedModel.name),');
+  s = replace(s, '\t\t\tname: resolvedModel.name,', '\t\t\tname: this.residentName(profile, resolvedModel.id ?? model, resolvedModel.name),');
   s = replace(s, '\tprepareCall(provider, model, _signal) {\n\t\tconst snapshot = this.current();', '\tprepareCall(provider, model, _signal) {\n\t\tthis.assertResidentAvailable(provider, model);\n\t\tconst snapshot = this.current();');
   s = replace(s, '\t\t\tconst profile = this.profileOf(snapshot, options.provider);', '\t\t\tthis.assertResidentAvailable(options.provider, options.model);\n\t\t\tconst profile = this.profileOf(snapshot, options.provider);');
   s = replace(s, '\t\t\t\treleaseConcurrency = await this.concurrency.acquire(profile, upstream);', '\t\t\t\treleaseConcurrency = await this.concurrency.acquire(profile, upstream);\n\t\t\t\tthis.assertResidentAvailable(options.provider, options.model);');
@@ -112,7 +144,7 @@ export function routerSwitchingDelay(retry) {
   return Math.min(ROUTER_SWITCHING_POLICY.initialDelayMs * 2 ** Math.min(Math.max(retry - 1, 0), 16), ROUTER_SWITCHING_POLICY.maxDelayMs);
 }
 export function patchRetry(input) {
-  if (input.includes(marker) || input.includes(previousMarker)) return input;
+  if (patchedAlready(input)) return input;
   return replace(input, 'async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {', `async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {
         // ${marker}: an unavailable selection is terminal, even under always-retry.
         if (failure.code === 'MODEL_UNAVAILABLE') return;
@@ -129,15 +161,17 @@ export function patchRetry(input) {
         }`);
 }
 export function patchRegistry(input) {
-  if (input.includes(marker) || input.includes(previousMarker) || input.includes('dsh-resident-availability-v1')) return input;
+  if (patchedAlready(input) || input.includes('dsh-resident-availability-v1')) return input;
   return replace(input, '\t\t\t\t\tname: model.name,', `\t\t\t\t\tname: model.name,
 \t\t\t\t\t// ${marker}: preserve descriptive availability through the registry.
 \t\t\t\t\t...(model.available === false ? { available: false } : {}),`);
 }
 export function patchCatalog(input) {
-  if (input.includes(marker)) return input;
+  // A tree carrying an earlier revision of this patch is left as it was built:
+  // production installs patch a pristine runtime, where each hunk applies once.
+  if (patchedAlready(input)) return input;
   let s = input;
-  if (!input.includes(previousMarker)) {
+  {
     s = replace(s, 'async function buildModelCatalog(ctx, defaultSelection', `// ${marker}\nasync function buildModelCatalog(ctx, defaultSelection`);
     s = replace(s, '\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);', '\t\t\t\tif (model.available === false) return { id: model.id, name: model.name, available: false };\n\t\t\t\tconst resolved = await ctx.llm.resolveModelInfo(provider.id, model.id);');
     s = replace(s, 'routableProviders: groups.map((group) => group.id)', 'routableProviders: groups.filter(group => group.models.some(model => model.available !== false)).map((group) => group.id)');
@@ -147,9 +181,6 @@ export function patchCatalog(input) {
   // model, the client decides the view. The settings document is the same
   // surface the resident state is persisted to, read here because the
   // standalone section is not a registered settings entry.
-  if (s.includes(`// ${previousMarker}\nasync function buildModelCatalog`)) {
-    s = s.replace(`// ${previousMarker}\nasync function buildModelCatalog`, `// ${marker}\nasync function buildModelCatalog`);
-  }
   if (s.includes('import { mkdir } from "node:fs/promises";')) {
     s = replace(s, 'import { mkdir } from "node:fs/promises";', 'import { mkdir, readFile } from "node:fs/promises";\nimport { parse as parseYamlSettings } from "yaml";');
   }
@@ -188,9 +219,9 @@ export function patchCatalogCodec(input) {
   return input.slice(0, start) + '// ' + codecMarker + '\n' + section + input.slice(end);
 }
 export function patchClient(input) {
-  if (input.includes(marker)) return input;
+  if (patchedAlready(input)) return input;
   let s = input;
-  if (!input.includes(previousMarker)) {
+  {
     s = replace(s, 'var ModelCatalogDirectory = class {', `// ${marker}\n\t\tvar ModelCatalogDirectory = class {`);
     // Opening a picker re-reads the catalog; discovery pushes every state change
     // through settings/document-updated, so no client-side polling is needed.
@@ -204,9 +235,6 @@ export function patchClient(input) {
   }
   // v3: the opt-in availableOnly filter, transported on the catalog result.
   // The raw groups keep every model; only this view changes.
-  if (s.includes(`// ${previousMarker}\n\t\tvar ModelCatalogDirectory = class {`)) {
-    s = s.replace(`// ${previousMarker}\n\t\tvar ModelCatalogDirectory = class {`, `// ${marker}\n\t\tvar ModelCatalogDirectory = class {`);
-  }
   s = replace(s, 'routable: null,\n\t\t\t\t\t\tgroups: catalog.value?.groups ?? [],', 'routable: null,\n\t\t\t\t\t\tavailableOnly: catalog.value?.availableOnly === true,\n\t\t\t\t\t\tgroups: catalog.value?.groups ?? [],');
   s = replace(s, 'routable,\n\t\t\t\t\tgroups: catalog.value.groups,', 'routable,\n\t\t\t\t\tavailableOnly: catalog.value.availableOnly === true,\n\t\t\t\t\tgroups: catalog.value.groups,');
   s = replace(s, 'const groups = (0, react.useMemo)(() => orderModelProviders(state.groups).map((group) => ({', 'const groups = (0, react.useMemo)(() => orderModelProviders(state.availableOnly === true ? state.groups.map((group) => ({ ...group, models: group.models.filter(availableOnlyModel) })).filter((group) => group.models.length > 0) : state.groups).map((group) => ({');
@@ -233,6 +261,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     await writeFile(file, patchRegistry(await readFile(file, 'utf8')));
   } else {
   const root = process.argv[2] ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai';
+  // A tree that already carries an earlier revision is left as it was built, which
+  // for this release means it does not yet know about per-model state. That is a
+  // build problem, not something to discover at runtime.
+  const stale = [];
   for (const [file, patch] of [
     ['dsh-llm-pi-ai/lib/index.js', patchAdapter],
     ['dsh-llm/lib/index.js', patchRegistry],
@@ -244,7 +276,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ['dsh-api-remotes/lib/client.js', patchCatalogCodec],
   ]) {
     const path = `${root}/${file}`;
-    await writeFile(path, patch(await readFile(path, 'utf8')));
+    const source = await readFile(path, 'utf8');
+    const patched = patch(source);
+    if (patched === source && previousMarkers.some(value => source.includes(value))) stale.push(file);
+    await writeFile(path, patched);
+  }
+  if (stale.length > 0) {
+    console.error(`dsh-resident-availability: left ${stale.join(', ')} at an earlier revision; `
+      + `${marker} patches a pristine runtime, so build the image from one`);
+    process.exitCode = 23;
   }
 }
 }

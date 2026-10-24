@@ -106,9 +106,11 @@ export function routerErrorOf(message, text) {
 export function routerFailureOf(message, text) {
   const error = routerErrorOf(message, text);
   if (error === undefined) return undefined;
-  try { globalThis[ROUTER_CONTRACT_HUB]?.report?.(message?.provider, { code: error.code, status: error.status, message: error.detail }); } catch {}
+  try { globalThis[ROUTER_CONTRACT_HUB]?.report?.(message?.provider, { code: error.code, status: error.status, message: error.detail, model: message?.model }); } catch {}
+  // The service ID is the router's own name for what failed; Harness adds no
+  // friendlier one here, because it owns no vocabulary for a published catalog.
   const service = typeof message?.model === "string" ? message.model : "model";
-  const label = { daytime: "Daytime", nighttime: "Nighttime", trial: "Trial" }[service] ?? JSON.stringify(service);
+  const label = JSON.stringify(service);
   const status = error.status === undefined ? {} : { status: error.status };
   const detail = typeof error.detail === "string" && error.detail.length > 0 && error.detail !== text ? ` Router: ${error.detail}` : "";
   switch (error.code) {
@@ -270,7 +272,7 @@ export function patchSource(input) {
   source = replaceOnce(
     source,
     `\tswitch (message.stopReason) {`,
-    `\tif (message.stopReason !== "error" && message.stopReason !== "aborted") try { globalThis[ROUTER_CONTRACT_HUB]?.success?.(message.provider); } catch {}\n\tswitch (message.stopReason) {`,
+    `\tif (message.stopReason !== "error" && message.stopReason !== "aborted") try { globalThis[ROUTER_CONTRACT_HUB]?.success?.(message.provider, message.model); } catch {}\n\tswitch (message.stopReason) {`,
     "router success reporting",
   );
 

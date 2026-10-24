@@ -107,6 +107,15 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
     }
     const catalog = routerServices(document, { known: [...configured.keys()], optInServices });
     const route = routerRouteState(document);
+    if (!allowLegacyIds) {
+      // The document is the whole list. A row for a name it does not publish — an
+      // alias kept as a model, or one it never published — is Harness offering a
+      // model of its own, and no state recorded on it makes that any truer.
+      const published = new Set(catalog.services.map(service => service.service));
+      for (const id of configured.keys()) {
+        assert.ok(published.has(id), `${name}/${id}: the route offers a model the router publishes no service for`);
+      }
+    }
     // The route is gated only by its router as a whole; each model answers for itself.
     const routeBlocked = route.status === 'unavailable' || route.status === 'incomplete';
     assert.equal(provider.residentUnavailable === true, routeBlocked,
@@ -154,7 +163,7 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
       const browserRoute = name === ROUTER_PROVIDER || selected?.provider === name;
       const browserModel = (selected?.provider === name ? selected.model : undefined) ?? provider.residentState?.default;
       if (!browserRoute || browserModel !== service.service) continue;
-      requireRouterCapabilities(service.model?.metadata, {
+      requireRouterCapabilities(service.row?.metadata, {
         browser: browser || primaryBrowser,
         effort: selected?.provider === name && selected.model === service.service
           ? selected.reasoningEffort : provider.reasoning,

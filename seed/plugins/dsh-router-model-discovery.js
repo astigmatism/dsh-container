@@ -369,76 +369,84 @@ function serviceMatches(row, service) {
     (Array.isArray(row.aliases) && row.aliases.includes(service)));
 }
 
-/** Two published titles are the same title when a renderer cannot tell them apart. */
-function labelKey(value) {
-  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+/**
+ * The one name a published row is chosen by (§3, §4): its service ID. A canonical
+ * model ID is not a choice, and neither is the reserved compatibility alias, so a
+ * row the catalog gives no service ID of its own is never surfaced as a model
+ * someone can choose. The aliases a row carries are other names for that same
+ * model: they address it, and they are never a second row of their own.
+ */
+function serviceName(row) {
+  if (!plainObject(row)) return undefined;
+  for (const name of [row.service, ...(Array.isArray(row.aliases) ? row.aliases : [])]) {
+    if (nonEmptyString(name) && name !== row.id && name !== COMPATIBILITY_ALIAS) return name;
+  }
+  return undefined;
+}
+
+/** Every name one published row answers to, in published order. */
+function rowNames(row) {
+  return [...new Set([row.service, ...(Array.isArray(row.aliases) ? row.aliases : [])].filter(nonEmptyString))];
 }
 
 /**
- * The names of one published row that a person may send (§3, §4). A canonical
- * model ID is not a choice, and neither is the reserved compatibility alias; a
- * row the catalog gives no alias offers nothing at all, and a conformant client
- * MUST NOT surface it as a model someone can choose.
+ * The service a name addresses (§3): a request may name a model by its service ID
+ * or by any alias, and every one of those names is the same model. A name this
+ * document gives no model for addresses nothing.
  */
-function offeredNames(row) {
-  const names = [row.service, ...(Array.isArray(row.aliases) ? row.aliases : [])];
-  return [...new Set(names.filter(nonEmptyString))].filter(name => name !== row.id && name !== COMPATIBILITY_ALIAS);
+export function resolveServiceName(document, name) {
+  if (!nonEmptyString(name)) return undefined;
+  for (const row of Array.isArray(document?.models) ? document.models : []) {
+    const service = serviceName(row);
+    if (service !== undefined && rowNames(row).includes(name)) return service;
+  }
+  return undefined;
 }
 
 /**
- * The title a person sees for one offered name. A publisher may title each name
- * it declares (`metadata.alias_display_names`), which is how two names of one
- * model are kept tellable apart; that map always exists, and where a publisher
- * left a name titled with the name itself it published no title, so the model's
- * own published title is the next fact — `display_name_qualified`, the label a
- * picker renders, then the plain `display_name` a router older than that field
- * still publishes. Harness composes nothing of its own here.
+ * The title a published row gives its model, taken verbatim: `display_name_qualified`
+ * is the label a router says a picker renders, `display_name` the title a router
+ * older than that field publishes. Harness composes nothing of its own here — no
+ * state, no marker, no qualifier — because the list of models is the router's own
+ * naming of them.
  */
-function publishedTitle(row, name) {
-  const metadata = plainObject(row.metadata) ? row.metadata : {};
-  const aliasTitle = plainObject(metadata.alias_display_names) ? metadata.alias_display_names[name] : undefined;
-  if (nonEmptyString(aliasTitle) && labelKey(aliasTitle) !== labelKey(name)) return aliasTitle;
-  for (const title of [row.display_name_qualified, row.display_name, metadata.display_name]) {
+function publishedTitle(row) {
+  const metadata = plainObject(row?.metadata) ? row.metadata : {};
+  for (const title of [row?.display_name_qualified, row?.display_name, metadata.display_name]) {
     if (nonEmptyString(title)) return title;
   }
   return undefined;
 }
 
-/** Names a stopped service answers, in published order, minus what is not a choice. */
+/** The names a stopped service answers, in published order, minus what is not a choice. */
 function offlineNames(row) {
   const names = [...(Array.isArray(row.aliases) ? row.aliases : [])];
   return [...new Set(names.filter(nonEmptyString))].filter(name => name !== row.model && name !== COMPATIBILITY_ALIAS);
 }
 
 /**
- * Every service the deployment offers, in publication order, each with the state
- * of the one that answers it: the models the document lists, then the services
- * its active configuration deliberately stops, then any name this Harness
- * already carries a model row for. A name the document stopped mentioning keeps
- * a row and says so, because §5 asks for a stated failure rather than a model
- * that silently vanishes from under a session.
- *
- * `known` is the names already recorded in settings; `serviceStates` applies
- * request-time contradictions to the result (§10), newest document winning.
+ * What one router publishes, in publication order: one entry per model its
+ * document lists, then the services its active configuration deliberately stops.
+ * Aliases are not entries (§3), and neither is a name the document has stopped
+ * mentioning — a row for that would be a model of Harness's own, which is what
+ * this contract forbids. Remembered names appear only while the router is not
+ * answering at all, where nothing can be read (§7: keep the last catalog and
+ * mark it stale).
  */
 export function routerServices(document, { known = [], optInServices = OPT_IN_SERVICES, routerState = null } = {}) {
   const configuration = nonEmptyString(document?.configuration?.id) ? document.configuration.id : null;
   const services = new Map();
   const admitting = document ? document.router?.accepting_requests !== false : false;
-  const admit = (service, record) => {
-    if (!services.has(service)) services.set(service, record);
-    return services.get(service);
-  };
   const unavailableReason = routerState?.status === "unavailable" ? routerState.reason : "router unreachable";
   if (document === null || document === undefined) {
-    // Nothing can be read from a router that is not answering: every recorded
-    // name is unavailable, and the router-level state says why.
+    // Nothing can be read from a router that is not answering: every name this
+    // route already carries is unavailable, and the route-level state says why.
     for (const service of known) {
       // §3: the reserved compatibility alias is not a service, so a route that
       // still carries it does not keep it as a model even while the router is down.
       if (service === COMPATIBILITY_ALIAS) continue;
       services.set(service, { service, status: "unavailable", reason: unavailableReason, configuration: null, served: null,
-        nsfw: null, label: service, optIn: isOptInService(service, optInServices) });
+        nsfw: null, label: undefined, optIn: isOptInService(service, optInServices) });
     }
     return { services: [...services.values()], configuration: null, problem: undefined, document: null,
       route: routerState ?? routerRouteState(null) };
@@ -446,102 +454,75 @@ export function routerServices(document, { known = [], optInServices = OPT_IN_SE
   const problem = documentProblem(document);
   if (problem) return { services: [], configuration, problem, document, route: routerRouteState(document) };
   const rows = Array.isArray(document.models) ? document.models.filter(plainObject) : [];
-  const titles = new Map();
+  const owners = new Map();
   for (const row of rows) {
-    for (const name of offeredNames(row)) {
-      titles.set(name, publishedTitle(row, name));
-    }
-  }
-  // Two names of one model share the model's title, which is the router's own
-  // statement that they are the same model under different names. Separate them
-  // by the name the person is choosing, the same way the router qualifies a
-  // label it would otherwise be unable to pick out of its own list.
-  const collisions = new Map();
-  for (const [name, title] of titles) {
-    if (!nonEmptyString(title)) continue;
-    const key = labelKey(title);
-    if (!collisions.has(key)) collisions.set(key, []);
-    collisions.get(key).push(name);
+    const service = serviceName(row);
+    // §3: a row the catalog gives no service ID for offers nothing to choose.
+    if (service === undefined) continue;
+    if (owners.has(service)) owners.get(service).push(row);
+    else owners.set(service, [row]);
   }
   const offline = new Map((Array.isArray(document.offline_services) ? document.offline_services : [])
     .filter(plainObject).flatMap(row => offlineNames(row).map(name => [name, row])));
-  const labelFor = (name) => {
-    const title = titles.get(name);
-    const shared = nonEmptyString(title) && (collisions.get(labelKey(title)) ?? []).length > 1;
-    const base = nonEmptyString(title) ? (shared ? `${title} (${name})` : title) : name;
-    return base;
-  };
-  for (const row of rows) {
-    for (const name of offeredNames(row)) {
-      const nsfw = row.nsfw === true ? true : row.nsfw === false ? false : null;
-      const record = admit(name, { service: name, configuration, nsfw, served: nonEmptyString(row.id) ? row.id : null,
-        label: labelFor(name), aliases: offeredNames(row), optIn: isOptInService(name, optInServices) });
-      record.model = row;
-      // A draining or maintained router accepts nothing. Wait, never switch (§5, §7).
-      if (!admitting) {
-        Object.assign(record, { status: "switching", reason: document.router?.maintenance === true ? "maintenance" : "draining" });
-        continue;
-      }
-      const duplicates = rows.filter(candidate => serviceMatches(candidate, name));
-      if (duplicates.length > 1) {
-        Object.assign(record, { status: "incomplete", reason: `ambiguous router service "${name}"` });
-        continue;
-      }
-      if (offline.has(name)) {
-        const stopped = offline.get(name);
-        const stoppedTitle = nonEmptyString(stopped.display_name) ? stopped.display_name : undefined;
-        Object.assign(record, { status: "offline", served: null,
-          reason: nonEmptyString(stopped.reason) ? stopped.reason : "offline_service",
-          label: nonEmptyString(stoppedTitle) && labelKey(stoppedTitle) !== labelKey(name) ? stoppedTitle : name });
-        continue;
-      }
-      if (!serviceMatches(row, name)) {
-        Object.assign(record, { status: "unavailable", reason: "not offered by the router", served: null });
-        continue;
-      }
-      if (row.available !== true) {
-        Object.assign(record, { status: "unavailable", reason: "backend unavailable" });
-        continue;
-      }
-      try {
-        record.capabilities = residentCapabilities({ model: row, metadata: row.metadata, service: name });
-        record.status = "available";
-        record.reason = null;
-      } catch (error) {
-        // A pre-contract router publishes no complete metadata; its service
-        // stays usable with the stored limits, as before discovery existed.
-        if (document.legacy === true) {
-          Object.assign(record, { status: "available", reason: "legacy router without published limits", legacy: true });
-        } else {
-          Object.assign(record, { status: "incomplete", reason: errorText(error) });
-        }
+  for (const [service, published] of owners) {
+    const row = published[0];
+    const nsfw = row.nsfw === true ? true : row.nsfw === false ? false : null;
+    const record = { service, configuration, nsfw, served: nonEmptyString(row.id) ? row.id : null,
+      label: publishedTitle(row), aliases: rowNames(row), optIn: isOptInService(service, optInServices),
+      // The document row this service was read from. Verification reads it to
+      // check what a browser may send; nothing here is persisted as settings.
+      row };
+    services.set(service, record);
+    // A draining or maintained router accepts nothing. Wait, never switch (§5, §7).
+    if (!admitting) {
+      Object.assign(record, { status: "switching", reason: document.router?.maintenance === true ? "maintenance" : "draining" });
+      continue;
+    }
+    // Two rows offering one service ID contradict each other about what choosing
+    // it means, and which one answers is not Harness's to guess.
+    if (published.length > 1) {
+      Object.assign(record, { status: "incomplete", reason: `ambiguous router service "${service}"` });
+      continue;
+    }
+    const stopped = offline.get(service);
+    if (stopped) {
+      Object.assign(record, { status: "offline", served: null,
+        reason: nonEmptyString(stopped.reason) ? stopped.reason : "offline_service",
+        label: nonEmptyString(stopped.display_name) ? stopped.display_name : record.label });
+      continue;
+    }
+    if (row.available !== true) {
+      Object.assign(record, { status: "unavailable", reason: "backend unavailable", served: null });
+      continue;
+    }
+    try {
+      record.capabilities = residentCapabilities({ model: row, metadata: row.metadata, service });
+      record.status = "available";
+      record.reason = null;
+    } catch (error) {
+      // A pre-contract router publishes no complete metadata; its service
+      // stays usable with the stored limits, as before discovery existed.
+      if (document.legacy === true) {
+        Object.assign(record, { status: "available", reason: "legacy router without published limits", legacy: true });
+      } else {
+        Object.assign(record, { status: "incomplete", reason: errorText(error) });
       }
     }
   }
-  for (const [name, stopped] of offline) {
-    if (services.has(name)) continue;
-    const stoppedTitle = nonEmptyString(stopped.display_name) ? stopped.display_name : undefined;
-    services.set(name, { service: name, status: admitting ? "offline" : "switching", served: null, configuration,
+  // A service the configuration stops without listing it as a model is still the
+  // router naming one, so it appears as the router names it: with its published
+  // title where it has one, and no title of Harness's invention.
+  for (const [service, stopped] of offline) {
+    if (services.has(service)) continue;
+    services.set(service, { service, status: admitting ? "offline" : "switching", served: null, configuration,
       nsfw: null, reason: admitting && nonEmptyString(stopped.reason) ? stopped.reason : admitting ? "offline_service"
         : document.router?.maintenance === true ? "maintenance" : "draining",
-      label: nonEmptyString(stoppedTitle) && labelKey(stoppedTitle) !== labelKey(name) ? stoppedTitle : name,
-      aliases: offlineNames(stopped), optIn: isOptInService(name, optInServices) });
-  }
-  for (const name of known) {
-    if (services.has(name)) continue;
-    // A route written before service IDs can still carry the reserved
-    // compatibility alias. §3 says it is not a service, so it is not a model
-    // either: it is dropped rather than recorded as a name the router no longer
-    // offers, and a selection naming it is answered by the document's own
-    // default service.
-    if (name === COMPATIBILITY_ALIAS) continue;
-    // A disappeared ID with no offline entry is a configuration change.
-    services.set(name, { service: name, status: admitting ? "unavailable" : "switching", reason: admitting
-      ? "not offered by the router" : document.router?.maintenance === true ? "maintenance" : "draining",
-      configuration, served: null, nsfw: null, label: name, optIn: isOptInService(name, optInServices) });
+      label: nonEmptyString(stopped.display_name) ? stopped.display_name : undefined,
+      aliases: offlineNames(stopped), optIn: isOptInService(service, optInServices) });
   }
   return { services: [...services.values()], configuration, problem: undefined, document, route: routerRouteState(document) };
 }
+
 
 /**
  * Evaluate one service from the current document, independently of every other
@@ -549,8 +530,11 @@ export function routerServices(document, { known = [], optInServices = OPT_IN_SE
  * carries the canonical model only as information; it is never persisted.
  */
 export function residentStatus(document, service, options = {}) {
-  const catalog = routerServices(document, { ...options, known: options.known ?? [service] });
-  const found = catalog.services.find(row => row.service === service);
+  // §3: a name may be the service ID or an alias of it, and both are one model,
+  // so the state of the service the name addresses is the state of that request.
+  const addressed = resolveServiceName(document, service) ?? service;
+  const catalog = routerServices(document, { ...options, known: options.known ?? [addressed] });
+  const found = catalog.services.find(row => row.service === addressed);
   if (found) {
     if (catalog.problem) return { service, status: "incomplete", reason: catalog.problem, configuration: null, nsfw: null };
     return found;
@@ -591,23 +575,26 @@ export function residentCapabilities({ model, metadata, service }) {
 
 /** The single picker label for one service in its current state. */
 export function residentLabel(state) {
-  const label = nonEmptyString(state?.label) ? state.label : nonEmptyString(state?.service) ? state.service : "Model";
-  if (state?.status === "available") return state.nsfw === true ? `${label} · NSFW` : label;
-  if (state?.status === "offline") return state.configuration ? `${label} — offline (${state.configuration})` : `${label} — offline`;
-  return `${label} — ${STATUS_TEXT[state?.status] ?? STATUS_TEXT.unavailable}`;
+  // The router's title, verbatim. Availability is not part of a name: the route's
+  // gating and the model's recorded state say what a title cannot, and a title
+  // Harness had to edit would be a model the router did not publish.
+  if (nonEmptyString(state?.label)) return state.label;
+  return nonEmptyString(state?.service) ? state.service : "Model";
 }
 
 /**
- * The name a route carries for one service, and the only rule for it: while a
- * model still answers the name the row keeps the title it was given, because the
- * service's own state belongs to its recorded state; when nothing answers it,
- * the name carries the state, because a remembered title describes a
- * configuration that may already be gone (§5).
+ * The name a route carries for one service, and the only rule for it: the title
+ * the router publishes for the model that answers that service, verbatim, for as
+ * long as the router publishes one. Where it publishes no title — a router older
+ * than the field, or no document at all — the row keeps the name it was given.
+ * Nothing is ever appended: a state, a marker or a qualifier written into a title
+ * is a model the router did not publish, and a remembered title staying one round
+ * longer while the router is unreachable is the last catalog §7 asks for, not a
+ * claim that the model is answering.
  */
 export function routerModelName(service, storedName) {
-  if (service.status === "available" && service.capabilities !== undefined) return residentLabel(service);
-  if (!nonEmptyString(service.served) || !nonEmptyString(storedName)) return residentLabel(service);
-  return storedName;
+  if (nonEmptyString(service.label)) return service.label;
+  return nonEmptyString(storedName) ? storedName : service.service;
 }
 
 /** The dispatch failure shown when a blocked service is asked to serve. */
@@ -644,7 +631,8 @@ export function residentStateRecord(state, storedName, { optInServices = OPT_IN_
   return {
     service: state.service,
     status: state.status,
-    label: state.status === "available" && !published && nonEmptyString(storedName) ? storedName : residentLabel(state),
+    label: nonEmptyString(state.label) ? state.label
+      : nonEmptyString(storedName) ? storedName : residentLabel(state),
     ...(state.status === "available" ? {} : { message: residentMessage(state, { optInServices }) }),
     configuration: state.configuration ?? null,
     reason: state.reason ?? null,
@@ -908,6 +896,11 @@ export async function synchronizeRouterSettings(settingsService, {
         await settingsService.mutate("llm-pi-ai", [{ op: "set", path: ["providers", provider], value: next }]);
         results.get(provider).changed = true;
       }
+      // §3: an alias and a service ID name one model, so a default selection that
+      // names an alias keeps naming that model under the name the router publishes
+      // as its service. This is the same model under its published name, never a
+      // move to another one (§5).
+      await retargetAliasSelection(settingsService, provider, current);
     } catch (error) {
       errors.push({ provider, error });
     }
@@ -952,6 +945,20 @@ async function migrateDefaultSelection(settingsService, optInServices = OPT_IN_S
       .map(([key, value]) => ({ op: "set", path: [key], value }));
     if (ops.length) await settingsService.mutate("agent-default-model", ops);
   }
+}
+
+/**
+ * Write a default selection that names an alias under the service the router
+ * publishes for that same model. A picker row exists for the service (§3), and a
+ * selection naming a name that is not a row would leave the session pointing at a
+ * model the picker does not show.
+ */
+async function retargetAliasSelection(settingsService, provider, document) {
+  const selected = readNamespace(settingsService, "agent-default-model");
+  if (selected?.provider !== provider || !nonEmptyString(selected.model)) return;
+  const service = resolveServiceName(document, selected.model);
+  if (service === undefined || service === selected.model) return;
+  await settingsService.mutate("agent-default-model", [{ op: "set", path: ["model"], value: service }]);
 }
 
 /**

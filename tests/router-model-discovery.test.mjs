@@ -10,6 +10,7 @@ const {
   ROUTER_PROVIDER, RETIRED_ROUTES, OPT_IN_SERVICES, isOptInService, resolveProviderList,
   synchronizeRouterSettings, applyOperation, routerServices, routerRouteState, validateRouterMetadata,
   residentStatus, residentLabel, residentMessage, residentStateRecord, planRouterProvider,
+  resolveServiceName,
   dshReasoningEfforts, routerClientName, routerBaseOf, routerName, migrateResidentRoute,
   isBlockingStatus, describeStatus,
 } = plugin;
@@ -23,14 +24,11 @@ const planOf = (document, { known = [], stored = { baseURL: "http://router.inval
 
 /** The reserved compatibility alias of §3: a marker, never a service to choose. */
 const RESERVED = "local-active";
-/** The model IDs a settings tree written before a router's catalog drove the
- * model list carries rows for (see `legacySettings`). Such a name keeps its row,
- * with the state the current document gives it, when the router stops publishing
- * it — §5 asks for a stated failure rather than a model vanishing. */
+/** The names a settings tree written before a router's catalog drove the model
+ * list carries rows for (see `legacySettings`). While a document can be read the
+ * rows are exactly what that document mentions, so these names keep a row only
+ * while the router is not answering at all and nothing can be read. */
 const RECORDED_NAMES = ["local-active", "qwen3.8-27b-abliterated-q6_k"];
-/** §3: the reserved alias is not a service, so a router that answers and does not
- * publish it takes the row away rather than keeping a name no model is behind. */
-const KEPT_NAMES = ["qwen3.8-27b-abliterated-q6_k"];
 
 test("one provider route carries the catalog the router publishes", () => {
   assert.equal(ROUTER_PROVIDER, "local-ollama");
@@ -76,11 +74,13 @@ test("opt-in is configuration the contract names, and its advice names no other 
   assert.equal(row(catalog, "beta").optIn, false, "an ordinary name is opt-in only where the settings list says so");
   assert.equal(row(catalogOf(document, { optInServices: ["beta"] }), "beta").optIn, true);
   // Nothing in the advice points a session at another model: it stays or fails.
-  const stuck = row(catalogOf(solo(), { known: ["trial"] }), "trial");
+  // This document does not mention the trial, so it has no row; a session that
+  // names it is still answered by its own state.
+  const stuck = residentStatus(solo(), "trial");
   assert.equal(residentMessage(stuck, { optInServices: ["trial"] }).includes("Daytime"), false);
-  assert.match(residentMessage(stuck), /opt-in model/);
-  assert.match(residentMessage(stuck), /never moves a session off it/);
-  assert.match(residentMessage(row(catalogOf(solo(), { known: ["nighttime"] }), "nighttime")),
+  assert.match(residentMessage(stuck, { optInServices: ["trial"] }), /opt-in model/);
+  assert.match(residentMessage(stuck, { optInServices: ["trial"] }), /never moves a session off it/);
+  assert.match(residentMessage(row(catalogOf(solo()), "nighttime")),
     /Select another model, or retry when .* returns; Harness reconnects automatically\./);
 });
 
@@ -100,9 +100,12 @@ test("paired: the two services the router publishes are offered with the serving
   assert.equal(day.capabilities.maxConcurrency, 1);
   assert.deepEqual(day.capabilities.input, ["text", "image"]);
   assert.deepEqual(night.capabilities.input, ["text"]);
-  // The picker label is what the publisher published, never a canonical ID.
+  // The picker label is what the publisher published, never a canonical ID and
+  // never a marker Harness added: NSFW is recorded on the state, not in the title.
   assert.equal(residentLabel(day), "Qwen3.8 27B Q6_K (160K)");
-  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated Q6_K (96K) · NSFW", "a row the document marks nsfw says so");
+  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated Q6_K (96K)");
+  assert.equal(day.nsfw, false);
+  assert.equal(night.nsfw, true, "a row the document marks nsfw says so in its state, not its title");
   assert.deepEqual(catalog.route, { status: "available", reason: null, configuration: "qwen27b-q6k-with-nighttime" });
 });
 
@@ -112,8 +115,9 @@ test("solo: Nighttime is offline with the configuration ID; Daytime is unaffecte
   assert.equal(night.status, "offline");
   assert.equal(night.configuration, "flash-next-solo-128k");
   assert.equal(night.reason, "exclusive_configuration");
-  // The row reads the display name the router published for the stopped service.
-  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated Q6_K (96K) — offline (flash-next-solo-128k)");
+  // The row reads the display name the router published for the stopped service,
+  // verbatim: the state is recorded on the state, not written into the title.
+  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated Q6_K (96K)");
   assert.equal(describeStatus(night), "offline (flash-next-solo-128k)");
   // The advice is generic: it names no other model, because no other model owns it.
   assert.match(residentMessage(night), /offline in router configuration "flash-next-solo-128k".*Select another model, or retry when/);
@@ -122,54 +126,67 @@ test("solo: Nighttime is offline with the configuration ID; Daytime is unaffecte
   assert.equal(row(catalogOf(document), "daytime").capabilities.contextWindow, 131072 - 1024);
 });
 
-test("one model answering two service names is two rows a person can tell apart", () => {
+test("one model answering two service names is one row addressable by either name", () => {
   // A configuration runs `daytime` and `nighttime` from one set of weights, which
-  // is honest: one model, two names. The catalog lists a row per name, so two rows
-  // titled identically are not a warning but a failure — a picker cannot offer two
-  // options a person cannot tell apart. Where the publisher titles each name, that
-  // title is used verbatim; where it titles nothing, the name a person is choosing
-  // is appended, the same way the router qualifies a label it could not pick out of
-  // its own list.
+  // is honest: one model, two names. The aliases a row declares (§3) are other
+  // names for that same model: they address it, and they never become rows of
+  // their own — whatever titles `metadata.alias_display_names` gives them, a name
+  // for one model is not a second model.
   const shared = (aliasTitles) => residentModel({ service: "daytime", contextWindow: 262144,
     displayName: "Qwen3.8 Flash-Next (256K)", aliases: ["local-active", "daytime", "nighttime"], aliasTitles });
   const titled = capabilitiesDocument({ models: [shared({ daytime: "Qwen3.8 Flash-Next (256K) Daytime",
     nighttime: "Qwen3.8 Flash-Next (256K) Nighttime" })] });
   const catalog = catalogOf(titled);
+  assert.deepEqual(catalog.services.map(entry => entry.service), ["daytime"],
+    "one row for one model, however many names it answers to");
   const day = row(catalog, "daytime");
-  const night = row(catalog, "nighttime");
   assert.equal(day.status, "available");
+  assert.equal(residentLabel(day), "Qwen3.8 Flash-Next (256K)",
+    "the model's published title, verbatim; an alias title titles a name, not a row");
+  // Either name addresses that one model, with its state and its limits.
+  const night = residentStatus(titled, "nighttime");
+  assert.equal(night.service, "daytime", "an alias resolves to the service it addresses");
   assert.equal(night.status, "available");
   assert.equal(night.served, day.served, "one model behind both names");
-  assert.equal(residentLabel(day), "Qwen3.8 Flash-Next (256K) Daytime", "a declared title is used verbatim");
-  assert.equal(residentLabel(night), "Qwen3.8 Flash-Next (256K) Nighttime");
-  assert.notEqual(residentLabel(day), residentLabel(night), "a picker lists options a person can tell apart");
-  assert.equal(night.capabilities.contextWindow, day.capabilities.contextWindow, "only the title differs; the limits are the model's");
+  assert.equal(residentLabel(night), residentLabel(day));
+  assert.equal(night.capabilities.contextWindow, day.capabilities.contextWindow, "the same model's limits, whichever name asked");
   assert.equal(night.capabilities.maxConcurrency, day.capabilities.maxConcurrency);
-  assert.deepEqual(night.aliases, day.aliases, "both names are on offer from the same row");
-  // A router that publishes no titles for its names is not broken, merely older
-  // than the field: the model's title plus the chosen name labels both rows.
+  assert.deepEqual(night.aliases, ["daytime", "local-active", "nighttime"], "every declared name addresses this one row");
+  // A router that publishes no alias titles is not broken: the row is unchanged,
+  // still one, still titled by the model's own published title.
   const untitled = catalogOf(capabilitiesDocument({ models: [shared()] }));
-  assert.equal(residentLabel(row(untitled, "daytime")), "Qwen3.8 Flash-Next (256K) (daytime)");
-  assert.equal(residentLabel(row(untitled, "nighttime")), "Qwen3.8 Flash-Next (256K) (nighttime)");
-  assert.equal(row(untitled, "nighttime").capabilities.contextWindow, 262144 - 1024);
-  // Titles are compared the way a renderer reads them, so a collision is caught
-  // however the publisher spelled or spaced it, and both rows are separated.
-  const doubled = catalogOf(capabilitiesDocument({ models: [shared({ daytime: "Flash-Next Daytime",
-    nighttime: " flash-next  daytime " })] }));
-  assert.equal(residentLabel(row(doubled, "daytime")), "Flash-Next Daytime (daytime)");
-  assert.equal(residentLabel(row(doubled, "nighttime")), " flash-next  daytime  (nighttime)");
-  // A title only one name carries is no collision, and stays untouched.
-  const qualified = catalogOf(capabilitiesDocument({ models: [residentModel({ displayNameQualified: "Qwen3.8 27B Q6_K (160K) · vision" })] }));
-  assert.equal(residentLabel(row(qualified, "daytime")), "Qwen3.8 27B Q6_K (160K) · vision", "the qualified label a picker renders wins over the plain one");
+  assert.deepEqual(untitled.services.map(entry => [entry.service, residentLabel(entry)]),
+    [["daytime", "Qwen3.8 Flash-Next (256K)"]]);
+  assert.equal(row(untitled, "daytime").capabilities.contextWindow, 262144 - 1024);
+  // A request that named an alias keeps naming the same model under the service
+  // the router publishes.
+  assert.equal(resolveServiceName(titled, "nighttime"), "daytime");
 });
 
-test("a title that reads exactly like the name is no title", () => {
-  // A publisher may title a name with the name itself, in any spelling or
-  // spacing; that publishes no title, and the model's own title is the next fact.
-  const document = capabilitiesDocument({ models: [residentModel({ service: "nighttime", nsfw: false,
-    displayName: "Qwen3.8 27B Abliterated Q6_K (96K)" })] });
-  document.models[0].metadata.alias_display_names = { nighttime: "  Nighttime\t" };
-  assert.equal(residentLabel(row(catalogOf(document), "nighttime")), "Qwen3.8 27B Abliterated Q6_K (96K)");
+test("titles are the router's, verbatim: no state word and no collision handling", () => {
+  // display_name_qualified is the label a router says a picker renders, so it wins
+  // over the plain one; otherwise the model's display_name is the title. Nothing
+  // is ever appended: no state word, no marker, no qualifier.
+  const qualified = catalogOf(capabilitiesDocument({ models: [residentModel({ displayNameQualified: "Qwen3.8 27B Q6_K (160K) · vision" })] }));
+  assert.equal(residentLabel(row(qualified, "daytime")), "Qwen3.8 27B Q6_K (160K) · vision");
+  // Two published models that publish the same title are two rows with that same
+  // title, shown twice, unchanged: a person telling them apart is the router's
+  // naming problem, and Harness appends nothing of its own to solve it.
+  const same = capabilitiesDocument({ models: [residentModel({ displayName: "Same Title" }),
+    residentModel({ service: "nighttime", displayName: "Same Title" })] });
+  assert.deepEqual(catalogOf(same).services.map(entry => [entry.service, residentLabel(entry)]),
+    [["daytime", "Same Title"], ["nighttime", "Same Title"]]);
+  // An unavailable model keeps the published title exactly; its state says what is
+  // wrong with it, and the route reads the state, not the title.
+  const down = catalogOf(paired({ models: [residentModel(), residentModel({ service: "nighttime", available: false })] }));
+  assert.equal(row(down, "nighttime").status, "unavailable");
+  assert.equal(residentLabel(row(down, "nighttime")), "Qwen3.8 27B Abliterated Q6_K (96K)");
+  // A stopped service that publishes no title is titled by its name — and nothing
+  // is composed onto the name either.
+  const bare = capabilitiesDocument({ models: [residentModel()],
+    offline: [{ model: NIGHTTIME_ID, aliases: ["nighttime"], reason: "exclusive_configuration" }],
+    configuration: { id: "solo-bare", exclusive: true } });
+  assert.equal(residentLabel(row(catalogOf(bare), "nighttime")), "nighttime");
 });
 
 test("the reserved alias, a canonical ID and a row with no service name offer nothing", () => {
@@ -181,9 +198,12 @@ test("the reserved alias, a canonical ID and a row with no service name offer no
   assert.deepEqual(catalog.services.map(entry => entry.service), ["daytime", "nighttime", "trial"]);
   for (const entry of catalog.services) {
     assert.notEqual(entry.service, RESERVED, "the reserved compatibility alias is not a service (§3)");
-    assert.equal(entry.aliases.includes(RESERVED), false, "it is not among the names on offer either");
-    assert.notEqual(entry.service, entry.model.id, "a canonical model ID is not a choice");
+    assert.notEqual(entry.service, entry.served, "a canonical model ID is not a choice");
   }
+  // The reserved alias is never a row of its own, but where a row declares it, it
+  // is a name that addresses that row's model, like any other alias.
+  assert.equal(residentStatus(document, RESERVED).service, "daytime");
+  assert.equal(residentStatus(document, RESERVED).served, DAYTIME_ID);
   // Even when the reserved alias is all a row has, nothing is offered for it.
   const aliasOnly = capabilitiesDocument({ models: [{ ...residentModel(), service: RESERVED, aliases: [RESERVED] }] });
   assert.deepEqual(catalogOf(aliasOnly).services, [], "a conformant client MUST NOT surface a row nobody may send");
@@ -199,20 +219,28 @@ test("the reserved alias, a canonical ID and a row with no service name offer no
   }
 });
 
-test("a name the document stops publishing keeps a row and says so", () => {
+test("a name the document stops publishing gets no row", () => {
+  // The document is the only source of rows: a row for a name the router no
+  // longer mentions would be a model of Harness's own, even one the route carries.
   const dropped = capabilitiesDocument({ models: [residentModel()], configuration: { id: "solo-no-trial", exclusive: true } });
   const catalog = catalogOf(dropped, { known: ["daytime", "nighttime", "trial"] });
-  assert.deepEqual(catalog.services.map(entry => entry.service), ["daytime", "nighttime", "trial"],
-    "a recorded name never vanishes from under a session (§5)");
-  const night = row(catalog, "nighttime");
-  assert.equal(night.status, "unavailable");
-  assert.equal(night.reason, "not offered by the router");
-  assert.equal(residentLabel(night), "nighttime — unavailable");
-  assert.equal(night.served, null, "the document attributes no model to it");
+  assert.deepEqual(catalog.services.map(entry => entry.service), ["daytime"],
+    "not even a name the route already carries keeps a row once a document can be read");
+  assert.equal(row(catalog, "nighttime"), undefined);
+  assert.equal(row(catalog, "trial"), undefined, "an opt-in name the document does not state is not a row either");
   assert.equal(row(catalog, "daytime").status, "available", "the names still published are judged on their own rows");
-  assert.equal(row(catalog, "trial").optIn, true);
-  assert.equal(row(catalogOf(dropped), "daytime") !== undefined, true, "a name nothing records and nobody publishes is not invented");
-  assert.equal(row(catalogOf(dropped, { known: [] }), "trial"), undefined);
+  // A session that names a dropped model is still answered — by a stated state,
+  // which is what gates the request; it is never written as a row.
+  for (const service of ["nighttime", "trial"]) {
+    const state = residentStatus(dropped, service);
+    assert.equal(state.status, "unavailable", service);
+    assert.equal(state.reason, "not offered by the router", service);
+    assert.equal(state.served, null, service);
+    assert.equal(residentLabel(state), service, "no title is invented for a model the router no longer names");
+    assert.equal(isBlockingStatus(state.status), true, service);
+  }
+  assert.equal(residentStatus(dropped, "nighttime").optIn, false);
+  assert.equal(residentStatus(dropped, "trial").optIn, true);
 });
 
 test("a stopped service reads its own published name and reason", () => {
@@ -229,11 +257,11 @@ test("a stopped service reads its own published name and reason", () => {
   const night = row(catalog, "nighttime");
   assert.equal(night.status, "offline");
   assert.equal(night.reason, "exclusive_configuration");
-  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated (96K) retired — offline (flash-next-solo-160k)");
+  assert.equal(residentLabel(night), "Qwen3.8 27B Abliterated (96K) retired");
   const trial = row(catalog, "trial");
   // A stopped row titled with the name it is addressed by publishes no title, so
-  // the row names itself rather than repeating the name twice.
-  assert.equal(residentLabel(trial), "trial — offline (flash-next-solo-160k)");
+  // the row is titled by its name — with no state composed onto it.
+  assert.equal(residentLabel(trial), "trial");
   assert.equal(trial.reason, "operator_stopped");
   assert.match(residentMessage(trial), /opt-in model/);
   // A name the active configuration both stops and still lists is stopped: the
@@ -265,7 +293,7 @@ test("an absent trial service is recorded as its own unavailable state", () => {
   const trial = residentStatus(document, "trial");
   assert.equal(trial.status, "unavailable");
   assert.equal(trial.reason, "not offered by the router");
-  assert.equal(residentLabel(trial), "trial — unavailable");
+  assert.equal(residentLabel(trial), "trial", "a name nothing answers keeps its own name; the state says why");
   assert.equal(isBlockingStatus(trial.status), true);
   assert.match(residentMessage(trial), /opt-in model/);
   assert.match(residentMessage(trial), /never selects it and never moves a session off it/);
@@ -285,7 +313,7 @@ test("a trial stopped by the active configuration is offline with that configura
   const trial = residentStatus(document, "trial");
   assert.equal(trial.status, "offline");
   assert.equal(trial.configuration, "flash-next-solo-160k");
-  assert.equal(residentLabel(trial), "Qwen3.8 Flash-Next (Strata trial) (160K) — offline (flash-next-solo-160k)");
+  assert.equal(residentLabel(trial), "Qwen3.8 Flash-Next (Strata trial) (160K)");
   assert.equal(describeStatus(trial), "offline (flash-next-solo-160k)");
   assert.equal(residentStatus(document, "daytime").status, "available");
   assert.equal(residentStatus(document, "nighttime").status, "offline");
@@ -304,8 +332,8 @@ test("Nighttime unhealthy or incomplete is recorded on its own and never blocks 
   assert.equal(residentStatus(unhealthy, "nighttime").status, "unavailable");
   assert.equal(residentStatus(unhealthy, "nighttime").reason, "backend unavailable");
   // The document still attributes the model to the name, so the row keeps the
-  // title that model was published with and adds its state.
-  assert.equal(residentLabel(residentStatus(unhealthy, "nighttime")), "Qwen3.8 27B Abliterated Q6_K (96K) — unavailable");
+  // title that model was published with, verbatim; the state says what is wrong.
+  assert.equal(residentLabel(residentStatus(unhealthy, "nighttime")), "Qwen3.8 27B Abliterated Q6_K (96K)");
   assert.equal(residentStatus(unhealthy, "daytime").status, "available");
   // Metadata a person cannot select a model on is recorded on the row that
   // carries it: no limits can be computed from it, so the row states why.
@@ -320,7 +348,7 @@ test("Nighttime unhealthy or incomplete is recorded on its own and never blocks 
     const document = paired({ models: [residentModel(), night] });
     const state = residentStatus(document, "nighttime");
     assert.equal(state.status, "incomplete", `${damage.label}: ${state.reason}`);
-    assert.equal(residentLabel(state), "Qwen3.8 27B Abliterated Q6_K (96K) — incomplete metadata", damage.label);
+    assert.equal(residentLabel(state), "Qwen3.8 27B Abliterated Q6_K (96K)", damage.label);
     assert.equal(residentStatus(document, "daytime").status, "available", damage.label);
   }
   // The metadata rules of the contract are each a reason the publisher
@@ -354,20 +382,26 @@ test("Nighttime unhealthy or incomplete is recorded on its own and never blocks 
 test("draining or maintenance: every model waits, none is blocked, nothing falls back", () => {
   for (const document of [draining(), capabilitiesDocument({ accepting: false, draining: false, maintenance: true }), draining(solo())]) {
     const catalog = catalogOf(document, { known: ["daytime", "nighttime", "trial"] });
-    // One route, every service of it waiting, including a name this document
-    // stopped publishing: a switching router answers nothing.
+    // One route, every service the document states waiting. A name the document
+    // does not state gets no row even now: switching is the absence of a row,
+    // not a row that says it switched.
     assert.deepEqual(catalog.services.map(entry => [entry.service, entry.status]),
-      [["daytime", "switching"], ["nighttime", "switching"], ["trial", "switching"]]);
-    for (const service of ["daytime", "nighttime", "trial"]) {
+      [["daytime", "switching"], ["nighttime", "switching"]]);
+    assert.equal(row(catalog, "trial"), undefined);
+    for (const service of ["daytime", "nighttime"]) {
       const state = residentStatus(document, service);
       assert.equal(state.status, "switching", service);
       assert.equal(isBlockingStatus(state.status), false);
-      assert.match(residentLabel(state), /router switching configuration$/);
+      // A waiting row keeps the published title; the state says it is waiting.
+      assert.equal(residentLabel(state), row(catalog, service).label, service);
+      assert.doesNotMatch(residentLabel(state), /switching|maintenance|—/);
     }
     assert.equal(catalog.route.status, "switching");
     assert.equal(catalog.route.configuration, document.configuration.id);
   }
   assert.equal(residentStatus(capabilitiesDocument({ accepting: false, draining: false, maintenance: true }), "daytime").reason, "maintenance");
+  assert.equal(residentLabel(residentStatus(draining(), "nighttime")), "Qwen3.8 27B Abliterated Q6_K (96K)",
+    "a draining name keeps the title its model was published with, unchanged");
   // Limits a person can still read: a drain keeps the row's last limits, marked stale.
   const drained = planOf(draining(), { known: ["nighttime"],
     stored: { baseURL: "http://router.invalid/v1", models: [{ id: "nighttime", name: "Qwen3.8 27B Abliterated Q6_K (96K)",
@@ -399,6 +433,11 @@ test("router unreachable: every recorded model is unavailable with a recoverable
   const named = planOf(null, { stored: { baseURL: "http://router.invalid/v1", displayName: "llm-router", models: [] } });
   assert.equal(named.displayName, "llm-router");
   assert.equal(named.residentUnavailable, true, "the route itself is what is not answering");
+  // Nothing new can be read, so every kept row keeps the title it had last.
+  const held = planOf(null, { known: ["nighttime"], stored: { baseURL: "http://router.invalid/v1",
+    models: [{ id: "nighttime", name: "Qwen3.8 27B Abliterated Q6_K (96K)" }] } });
+  assert.deepEqual(held.models.map(model => [model.id, model.name]),
+    [["nighttime", "Qwen3.8 27B Abliterated Q6_K (96K)"]], "a name kept while the router is down keeps its last title");
   // Nothing recorded and nothing readable offers nothing at all.
   assert.deepEqual(catalogOf(null).services, []);
 });
@@ -448,43 +487,44 @@ test("a model the catalog gives no service ID is never offered, addressed, or pe
     "the one-route-per-service routes are retired once the catalog route lists their service");
   const ids = state["llm-pi-ai"].providers[ROUTER_PROVIDER].models.map(model => model.id);
   assert.deepEqual(ids.slice(0, 3), ["daytime", "nighttime", "trial"], "the published names first, in published order");
-  assert.deepEqual(ids.slice(3), KEPT_NAMES,
-    "then the names this router does not offer; the alias the settings carried is not a service (1.2 §3)");
+  assert.deepEqual(ids.slice(3), [],
+    "then nothing: a name this document does not mention gets no row, not even one the settings carried (1.2 §3)");
   assert.equal(JSON.stringify(state).includes(UNADDRESSED_ID), false, "settings record a model nobody may send");
   assert.equal(state["agent-default-model"].model, "daytime");
 });
 
-test("CATALOG_HAS_NO_SERVICE_ID holds every recorded model and is never a Harness failure (1.2 §4)", async () => {
+test("CATALOG_HAS_NO_SERVICE_ID offers nothing and is never a Harness failure (1.2 §4)", async () => {
   const document = capabilitiesDocument({
     models: [unaddressedModel(), unaddressedModel({ id: "fixture-strata-preview-uncatalogued", displayName: "Strata preview (uncatalogued)" })],
     complete: false, warnings: ["CATALOG_HAS_NO_SERVICE_ID"],
   });
+  // The document can be read and mentions nothing addressable, so it states no
+  // rows at all — not even for names the route already carries.
   const catalog = catalogOf(document, { known: ["daytime", "nighttime", "trial"] });
-  assert.deepEqual(catalog.services.map(entry => entry.service), ["daytime", "nighttime", "trial"]);
+  assert.deepEqual(catalog.services, []);
+  // A session that names one of those models is still answered by a stated state.
   for (const service of ["daytime", "nighttime", "trial"]) {
-    const state = row(catalog, service);
+    const state = residentStatus(document, service);
     assert.equal(state.status, "unavailable", service);
     assert.equal(state.reason, "not offered by the router", service);
     assert.equal(state.served, null, service);
     // Never another name, and never the router's default model either.
     assert.doesNotMatch(JSON.stringify(residentStateRecord(state)), /fixture-|strata/i, service);
   }
-  assert.equal(row(catalog, "trial").optIn, true);
-  assert.match(residentMessage(row(catalog, "trial")), /opt-in model/);
+  assert.equal(residentStatus(document, "trial").optIn, true);
+  assert.match(residentMessage(residentStatus(document, "trial")), /opt-in model/);
   const state = structuredClone(legacySettings("http://router.invalid/v1"));
   const { errors } = await synchronizeRouterSettings(settingsService(state, [], applyOperation), { document });
   assert.deepEqual(errors.map(error => [error.provider, error.error.message]), [],
     "a router that publishes nothing addressable is not a failed update");
   const route = state["llm-pi-ai"].providers[ROUTER_PROVIDER];
   // Availability is route-level: this router answers and admits, so the route is
-  // not down — every name it carries states its own reason instead.
+  // not down — it simply offers nothing until the router names a service.
   assert.equal(route.residentState.status, "available");
   assert.equal(route.residentUnavailable, false);
-  assert.deepEqual(route.models.map(model => model.id), KEPT_NAMES,
-    "the alias the settings carried is dropped, not recorded as a name the router does not offer (1.2 §3)");
-  assert.deepEqual(route.residentState.services.map(entry => [entry.service, entry.status]),
-    [["qwen3.8-27b-abliterated-q6_k", "unavailable"]]);
-  assert.match(route.residentStates["qwen3.8-27b-abliterated-q6_k"].message, /does not offer it/);
+  assert.deepEqual(route.models, [], "the rows are exactly what the document states; the alias the settings carried is not one (1.2 §3)");
+  assert.deepEqual(route.residentState.services, []);
+  assert.deepEqual(route.residentStates, {});
   assert.doesNotMatch(JSON.stringify(route), /fixture-|strata/i, "a name nobody may send is never written");
   assert.notEqual(state["agent-default-model"].model, "trial");
 });
@@ -505,7 +545,7 @@ test("MODEL_HAS_NO_SERVICE_ID is the publisher's own reason, recorded as a reaso
   const document = paired({ models: [residentModel(), unreadable] });
   const state = residentStatus(document, "nighttime");
   assert.equal(state.status, "incomplete");
-  assert.equal(residentLabel(state), "Qwen3.8 27B Abliterated Q6_K (96K) — incomplete metadata");
+  assert.equal(residentLabel(state), "Qwen3.8 27B Abliterated Q6_K (96K)");
   const record = residentStateRecord(state);
   assert.deepEqual(Object.keys(record).sort(),
     ["configuration", "label", "limits", "message", "nsfw", "reason", "service", "status"]);
@@ -518,7 +558,7 @@ test("every row a person may send is a name the router publishes (1.2 §3)", asy
   // An omitted `model` is answered by the default of the active configuration,
   // which 1.2 does not promise is any particular service. Harness therefore sends
   // the name it was given, and the rows it writes are exactly the ones the
-  // catalog offers — including the recorded names it must keep stating.
+  // catalog states — never a row for a name the document left out.
   for (const document of [paired(), trio(), strata(), solo(), draining(), null]) {
     const state = structuredClone(legacySettings("http://router.invalid/v1"));
     const settings = settingsService(state, [], applyOperation);
@@ -529,16 +569,16 @@ test("every row a person may send is a name the router publishes (1.2 §3)", asy
     const published = document ? routerServices(document, { known: [] }).services.map(entry => entry.service) : [];
     const models = state["llm-pi-ai"].providers[ROUTER_PROVIDER].models;
     assert.deepEqual(models.map(model => model.id), catalog.services.map(entry => entry.service),
-      `${document?.configuration?.id ?? "no router"}: the route offers what the router publishes, then the names it must keep stating`);
+      `${document?.configuration?.id ?? "no router"}: the route offers exactly what the router publishes`);
     for (const model of models) assert.ok(nonEmpty(model.id), "a row configures an empty model ID");
     assert.deepEqual(models.map(model => model.id).filter(id => !published.includes(id)),
-      document === null ? RECORDED_NAMES.filter(id => id !== RESERVED) : KEPT_NAMES,
+      document === null ? RECORDED_NAMES.filter(id => id !== RESERVED) : [],
       document === null
         // A router that is not answering contradicts nothing, so every recorded
         // name keeps a row — except the reserved alias, which is not a name a
         // person may send (§3), reachable or not.
         ? "a router that is not answering keeps a row for every recorded service"
-        : "only names this Harness already carries a row for are added to what the router states");
+        : "with a document to read, the rows are exactly what that document states");
     for (const name of published) {
       assert.notEqual(name, RESERVED, "the reserved compatibility alias is never a row a person may send");
       assert.doesNotMatch(name, /fixture-|qwen3\.8/, "a canonical model ID is never a row a person may send");
@@ -579,7 +619,10 @@ test("limits come from the serving model, and slots are counted per model, not p
     residentModel({ service: "trial", slots: 2 })] });
   const catalog = catalogOf(shared);
   assert.deepEqual(catalog.services.map(entry => [entry.service, entry.served, entry.capabilities.maxConcurrency]),
-    [["daytime", DAYTIME_ID, 4], ["nighttime", DAYTIME_ID, 4], ["trial", TRIAL_ID, 2]]);
+    [["daytime", DAYTIME_ID, 4], ["trial", TRIAL_ID, 2]], "one row per model; an alias of one is not a second row");
+  const night = residentStatus(shared, "nighttime");
+  assert.equal(night.service, "daytime", "the alias addresses the same model");
+  assert.equal(night.capabilities.maxConcurrency, 4, "and that model's slots — an alias never duplicates capacity");
   assert.equal(planRouterProvider({ name: ROUTER_PROVIDER, catalog, stored: { baseURL: "http://router.invalid/v1" },
     clientName: "deepseek-harness/test" }).maxConcurrency, 6, "4 + 2, not 4 + 4 + 2");
 });
@@ -601,7 +644,7 @@ test("while a model is unavailable its last limits are kept and marked stale", (
   assert.equal(switching.residentStates.nighttime.limits, "stale");
 });
 
-test("the route is named by its router; a row with no model behind it names itself", () => {
+test("the route is named by its router and every row by the title the router published", () => {
   const offered = capabilitiesDocument({ models: [residentModel(), residentModel({ service: "trial" })] });
   const stored = { baseURL: "http://router.invalid/v1", apiKeyEnv: "KEEP",
     models: [{ id: "trial", name: "Qwen3.8 Flash-Next (Strata trial) (160K)" }] };
@@ -613,25 +656,23 @@ test("the route is named by its router; a row with no model behind it names itse
     "a name a model answers keeps the title that model was published with");
 
   // A configuration that drops a name leaves no row, alias and no offline entry
-  // for it. A remembered title describes a configuration that may no longer exist
-  // and reads as a model on offer, so the row names itself and its state.
+  // for it, and nothing that reads like a model of that name survives on the
+  // route: the row goes away, and returns with its title when the model does.
   const dropped = capabilitiesDocument({ models: [residentModel()], configuration: { id: "solo-no-trial", exclusive: true } });
   const state = residentStatus(dropped, "trial");
   assert.equal(state.status, "unavailable");
   assert.equal(state.reason, "not offered by the router");
   const gone = planOf(dropped, { known: ["trial"], stored: first });
-  const droppedRow = gone.models.find(model => model.id === "trial");
-  assert.equal(droppedRow.name, "trial — unavailable", "the row names itself, not a model the router no longer offers");
-  assert.equal(gone.residentStates.trial.label, "trial — unavailable");
-  assert.equal(gone.residentStates.trial.limits, "stale", "its last limits are still kept, marked stale");
-  assert.match(gone.residentStates.trial.message, /current configuration does not offer it/);
+  assert.equal(gone.models.find(model => model.id === "trial"), undefined,
+    "a name the document no longer mentions gets no row a person may send");
+  assert.equal(gone.residentStates.trial, undefined, "and no recorded state for it either");
   assert.equal(gone.displayName, "llm-router", "the header never named a model in the first place");
 
   // Offline names no model either; a draining router still attributes one, and the
   // remembered title belongs to it.
   const known = { baseURL: "http://router.invalid/v1", models: [{ id: "nighttime", name: "Qwen3.8 27B Abliterated Q6_K (96K)" }] };
   assert.equal(planOf(solo(), { known: ["nighttime"], stored: known }).models.find(model => model.id === "nighttime").name,
-    "Qwen3.8 27B Abliterated Q6_K (96K) — offline (flash-next-solo-128k)");
+    "Qwen3.8 27B Abliterated Q6_K (96K)", "a stopped service is titled by the title the router published for it, verbatim");
   assert.equal(residentStatus(draining(), "nighttime").served, NIGHTTIME_ID);
   assert.equal(planOf(draining(), { known: ["nighttime"], stored: known }).models.find(model => model.id === "nighttime").name,
     "Qwen3.8 27B Abliterated Q6_K (96K)", "the model behind a draining name is known");
@@ -665,18 +706,16 @@ test("planning preserves preferences, credential references and identity", () =>
     models: [{ id: "daytime", name: "Daytime (128K)", custom: "kept" },
       { id: "qwen3.8-27b-abliterated-q6_k", name: "Nighttime (128K)", contextWindow: 131072 }] };
   const next = planOf(paired(), { known: ["qwen3.8-27b-abliterated-q6_k"], stored });
-  assert.deepEqual(next.models.map(model => model.id), ["daytime", "nighttime", "qwen3.8-27b-abliterated-q6_k"],
-    "a name nothing serves keeps its row, and its limits are all anyone has for it");
+  assert.deepEqual(next.models.map(model => model.id), ["daytime", "nighttime"],
+    "a name this document does not mention gets no row, even one the settings carry");
   assert.equal(next.models[0].custom, "kept");
   assert.equal(next.apiKeyEnv, "KEEP");
   assert.equal(next.reasoning, "low");
   assert.deepEqual(next.retryPolicy, stored.retryPolicy);
   assert.deepEqual(next.headers, { Other: "kept", "X-Client-Name": "deepseek-harness/test" });
-  const remembered = next.models.find(model => model.id === "qwen3.8-27b-abliterated-q6_k");
-  assert.equal(remembered.name, "qwen3.8-27b-abliterated-q6_k — unavailable",
-    "a remembered title describes a model this router no longer offers, so the row names itself");
-  assert.equal(remembered.contextWindow, 131072, "its limits stay, which is all the settings hold for it");
-  assert.equal(next.residentStates["qwen3.8-27b-abliterated-q6_k"].limits, "stale");
+  assert.equal(next.models.find(model => model.id === "qwen3.8-27b-abliterated-q6_k"), undefined,
+    "its remembered title goes with it: nothing on the route reads like a model the router no longer names");
+  assert.equal(next.residentStates["qwen3.8-27b-abliterated-q6_k"], undefined);
   assert.doesNotMatch(JSON.stringify(next), /fixture-|mtp3/);
   // A route written from nothing inherits nothing it was not given.
   const provisioned = planOf(solo(), { stored: { baseURL: "http://router/v1" } });
@@ -779,14 +818,15 @@ test("a second router's catalog is discovered without a Harness release", async 
   assert.equal(route.residentState.configuration, "daisy-9b");
   assert.deepEqual(second.models.slice(0, 2).map(model => model.id), ["daytime", "nighttime"]);
   assert.equal(second.residentState.configuration, "qwen27b-q6k-with-nighttime");
-  assert.equal(second.models[1].name, "Qwen3.8 27B Abliterated Q6_K (96K) · NSFW");
+  assert.equal(second.models[1].name, "Qwen3.8 27B Abliterated Q6_K (96K)", "the published title, verbatim, with nothing appended");
   // Each route answers for its own router: a model of the other router is not
   // offered here as a name that went missing, because this router never said
   // anything about it.
   assert.equal(second.models.find(model => model.id === "daisy"), undefined,
     "another router's model is not this route's business");
   assert.equal(second.residentStates.daisy, undefined);
-  assert.deepEqual(route.models.map(model => model.id).filter(id => RECORDED_NAMES.includes(id)), KEPT_NAMES);
+  assert.deepEqual(route.models.map(model => model.id).filter(id => RECORDED_NAMES.includes(id)), [],
+    "a recorded name this router does not publish gets no row on its route either");
   // Slots are the ones that router publishes for the distinct models it offers.
   assert.equal(route.maxConcurrency, 3);
   assert.equal(second.maxConcurrency, 2);

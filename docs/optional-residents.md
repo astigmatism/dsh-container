@@ -6,14 +6,15 @@ configures **one provider route per router** — `local-ollama` — and that rou
 model list **is** the catalog the router publishes at
 `/v1/router/capabilities`: one row per service ID, right now `daytime`,
 `nighttime` and `daisy`, a service published by a second host. Requests carry the
-router's stable service IDs. A row is titled with the name the router publishes
-for the service it offers — `metadata.alias_display_names` for that name, else
-the model's `display_name_qualified`, else its `display_name` — with the service
-ID appended in parentheses only when two offered names would read alike, plus
-` · NSFW` when the document declares it. Harness keeps no service list of its own
-and invents no model names: a service a router starts publishing joins the picker
-on the next revision, and one it stops publishing stays visible only as its
-recorded state. The canonical model behind a service (for example an MTP3 variant
+router's stable service IDs. A row is one model the router publishes, titled with
+the title that model's row publishes — `display_name_qualified` where it publishes
+one, `display_name` otherwise — read verbatim, with nothing appended and no
+grouping of Harness's own above the list. `aliases` are other names for that same
+model, not further models: `nighttime` addresses the model published as `daytime`,
+and a request naming it is evaluated against that model. Harness keeps no service
+list of its own and invents no model names: a model a router starts publishing
+joins the picker on the next revision, and one it stops publishing leaves the
+picker, because a name the document does not publish is not a model. The canonical model behind a service (for example an MTP3 variant
 of `nighttime`) can change with any AI Runtime configuration and is never
 configured or stored. Below, a *resident* means one model of that route — one
 service the router publishes.
@@ -45,38 +46,34 @@ Discovery reads `/v1/router/capabilities` at startup and follows
 Each model is evaluated on its own, so one model's state never blocks updates
 to another. The picker shows exactly one state per resident:
 
-| State | Picker label | Selecting | Requests |
+| State | Picker row | Selecting | Requests |
 | --- | --- | --- | --- |
-| available | the name the router publishes for that service, `· NSFW` when the router declares it | allowed | sent with the serving model's limits |
-| offline (in `offline_services`) | `<published title> — offline (flash-next-solo-128k)` | blocked | fail at once with `MODEL_UNAVAILABLE`; no retries |
-| unavailable (backend unhealthy, ID absent, or router unreachable) | `<published title> — unavailable` | blocked | fail at once; no retries |
-| router switching configuration (draining or maintenance) | `<published title> — router switching configuration` | allowed | wait 2 → 30 s and retry the same model |
-| incomplete metadata (warnings, `complete: false`, invalid fields) | `<published title> — incomplete metadata` | blocked | fail at once; no retries |
+| available | the published title | allowed | sent with the serving model's limits |
+| offline (in `offline_services`) | the published title, row disabled | blocked | fail at once with `MODEL_UNAVAILABLE`; no retries |
+| unavailable (backend unhealthy, ID absent, or router unreachable) | the published title, row disabled | blocked | fail at once; no retries |
+| router switching configuration (draining or maintenance) | the published title, row disabled | allowed | wait 2 → 30 s and retry the same model |
+| incomplete metadata (warnings, `complete: false`, invalid fields) | the published title, row disabled | blocked | fail at once; no retries |
 
-Every label in that table is the router's published title for that name plus the
-state, which is why two names of one model are hard to tell apart and the code
-appends the name being chosen: today's router publishes `daytime` and `nighttime`
-both titled `Qwen3.8 Flash-Next (256K)`, and the picker offers
-`Qwen3.8 Flash-Next (256K) (daytime)` and `Qwen3.8 Flash-Next (256K) (nighttime)`
-under the group `llm-router`, next to the second host's
-`Qwen3.8 Flash-Next IQ3_XXS (64K)`. The title is **dropped while nothing serves
-that name** — the configuration stopped offering it, or the router is not
-answering at all — because a remembered title describes a configuration that may
-no longer exist and reads as a model on offer; such a row names itself and its
-state, for example `nighttime — unavailable`, and the title returns with the
-model. A router that is switching still attributes the model, so its title stays.
-Nothing in a row is Harness vocabulary: a row leads with the title the router
-publishes and continues with the state the contract names.
+Every row carries the router's own title, including the rows that cannot be
+chosen, because an edited title — a state word, a marker, a qualifier, a heading —
+would be a model or a category the router does not publish. What a model is doing
+is said by whether its row can be chosen and by the state recorded with it in
+`residentStates[service]`. Today's router publishes two models, so the picker is
+two rows: `Qwen3.8 Flash-Next (256K)`, served on the router's own host and
+addressable as `daytime`, `nighttime` or `local-active`, and
+`Qwen3.8 Flash-Next IQ3_XXS (64K)`, published by the second host as `daisy`. A name
+the document stops publishing has no row and no recorded state, and a saved
+selection naming one keeps naming that model under its published service. Only a
+router that is not answering at all leaves the remembered rows in place, every one
+disabled and keeping its last published title, until it answers again (§7).
 
-An opt-in service answers to the same table, with its own title and state:
-`Qwen3.8 Flash-Next (Strata trial) (160K) — offline (flash-next-solo-160k)` when
-the active configuration stops it, or `trial — unavailable` when the current
-configuration does not offer it at all. A service a row already exists for, which
-the configuration stops offering, is **held,
-never unknown**: the model row stays, its recorded state says `unavailable` with
-reason `not offered by the router`, and its message states that it is an opt-in
-model Harness never selects and never moves a session off. A session a human put
-there fails with that message instead of being moved to another model. A router
+An opt-in service answers to the same rule. While the active configuration
+publishes it, it is a row like any other, and when the configuration lists it in
+`offline_services` that row carries the title and name the router gives it,
+disabled. On today's configuration `trial` is published by nothing, so it has no
+row at all — and a session a human left on it still fails, at once, with
+`not offered by the router` rather than being moved to another model (§5).
+Naming it is answered from the document, so the answer needs no row. A router
 that has never offered it has no row for it yet; discovery writes one when it
 appears.
 

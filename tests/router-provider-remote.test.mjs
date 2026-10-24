@@ -15,15 +15,16 @@ const contract = await loadRouterContract();
 const { synchronizeRouterSettings, applyOperation, RouterWatch, ResidentDiscovery, routerClientName, ROUTER_PROVIDER,
   ROUTER_CONTRACT_HUB } = contract;
 const CLIENT = routerClientName();
-/** The route id a settings tree written before a router's catalog drove the model
- * list carries rows for and never published: such a name keeps its row, stating
- * that the router does not offer it. */
+/** Every name a settings tree written before a router's catalog drove the model
+ * list carries a row for. */
 const RECORDED = ['local-active', 'qwen3.8-27b-abliterated-q6_k'];
 /** The reserved compatibility alias of §3: never a name a row answers with. */
 const RESERVED = 'local-active';
-/** A router that answers and does not publish the alias takes its row away, so of
- * the names the settings carried only this one keeps a row of its own. */
-const KEPT = ['qwen3.8-27b-abliterated-q6_k'];
+/** A name this fixture router never publishes, so never a model of its own: a
+ * row for it would be a model of Harness's invention. It stays a row only while
+ * the router is not answering at all, where nothing can be read (§7: the last
+ * catalog, marked stale), and never survives a document that omits it. */
+const REMEMBERED = ['qwen3.8-27b-abliterated-q6_k'];
 const service = (state, mutations) => settingsService(state, mutations, applyOperation);
 const providers = state => state['llm-pi-ai'].providers;
 const route = state => providers(state)[ROUTER_PROVIDER];
@@ -75,21 +76,22 @@ test('startup migration writes one catalog route, takes limits from each serving
   const mutations = [];
   const { results, errors } = await synchronizeRouterSettings(service(state, mutations));
   assert.deepEqual(errors, []);
-  // One route for one router: every service it publishes is a model row of it, in
-  // publication order, followed by the names this settings tree already carries.
-  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime', ...KEPT]);
+  // One route for one router: its model rows are exactly the services that router
+  // publishes, in publication order — nothing this settings tree remembers.
+  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime']);
   assert.equal(row(state, 'daytime').contextWindow, 163840 - 1024);
   assert.equal(row(state, 'nighttime').contextWindow, 98304 - 1024);
   assert.deepEqual(row(state, 'daytime').input, ['text', 'image']);
   assert.deepEqual(row(state, 'nighttime').input, ['text'], 'each row takes the modalities of the model that serves it');
   assert.equal(row(state, 'daytime').maxTokens, null);
-  assert.equal(row(state, 'nighttime').name, 'Qwen3.8 27B Abliterated Q6_K (96K) · NSFW');
+  assert.equal(row(state, 'nighttime').name, 'Qwen3.8 27B Abliterated Q6_K (96K)',
+    'the published title verbatim: no state, no badge, no qualifier appended to a name');
   assert.equal(route(state).maxConcurrency, 2, 'slots summed over the distinct models the route offers');
   assert.equal(route(state).apiKeyEnv, 'UNCHANGED_CREDENTIAL_REFERENCE', 'a credential reference is never overwritten');
-  assert.equal(row(state, KEPT[0]).name, `${KEPT[0]} — unavailable`,
-    'a name this router does not offer keeps a row and says so');
-  assert.equal(row(state, KEPT[0]).contextWindow, undefined,
-    'the limits of the alias row this router took away belonged to no listed model (1.2 §3)');
+  assert.equal(row(state, REMEMBERED[0]), undefined,
+    'a name this router does not publish is not a model, so it has no row of its own');
+  assert.equal(rowState(state, REMEMBERED[0]), undefined,
+    'and with no row there is no state recorded for a model the router does not offer');
   assert.equal(route(state).headers['X-Client-Name'], CLIENT);
   assert.equal(results.get(ROUTER_PROVIDER).route.status, 'available');
   assert.deepEqual(Object.keys(providers(state)).sort(), ['custom', ROUTER_PROVIDER],
@@ -113,7 +115,7 @@ test('the opt-in trial is offered when its router publishes it, and held when it
   const router = await fakeRouter(t, trio());
   const state = legacySettings(router.baseURL);
   await synchronizeRouterSettings(service(state));
-  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime', 'trial', ...KEPT]);
+  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime', 'trial']);
   assert.equal(row(state, 'trial').contextWindow, 163840 - 1024);
   assert.deepEqual(row(state, 'trial').input, ['text'], 'the trial takes its own model’s modalities, not another service’s');
   assert.equal(rowState(state, 'trial').status, 'available', 'being offered only to a human is a property of the service, not of its state');
@@ -125,17 +127,30 @@ test('the opt-in trial is offered when its router publishes it, and held when it
   const trial = listed.find(entry => entry.model === 'trial');
   assert.equal(trial.optIn, true, 'the picker shows it and marks that only a human may select it');
   assert.equal(trial.available, true);
-  // A router that stops publishing the name keeps the row and states why: a model
-  // never vanishes from under a session that selected it.
+  // A router that stops publishing the name takes the model away with it: the row
+  // is gone, not held under a name the document never mentions. The list of
+  // models is the router's to publish, and one Harness kept back would be its own.
   router.publish(paired());
   await synchronizeRouterSettings(service(state));
-  assert.equal(row(state, 'trial').name, 'trial — unavailable');
-  assert.equal(rowState(state, 'trial').status, 'unavailable');
-  assert.equal(rowState(state, 'trial').limits, 'stale');
-  assert.equal(row(state, 'trial').contextWindow, 163840 - 1024, 'its last limits are kept');
+  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime'],
+    'a name the document stops mentioning has no row of its own');
+  assert.equal(row(state, 'trial'), undefined, 'the withdrawn opt-in model is not offered as a model');
+  assert.equal(rowState(state, 'trial'), undefined, 'and no state is recorded for a model that is not on offer');
   const notices = [];
   await verifyConfiguredRoutes(state, { log: notice => notices.push(notice) });
-  assert.match(notices.join('\n'), /local-ollama\/trial: unavailable \(not offered by the router\); skipped \(opt-in service/);
+  assert.doesNotMatch(notices.join('\n'), /trial/, 'nothing is reported about a model this router no longer publishes');
+  // The opt-in notice the verifier keeps is the other case: a service this router
+  // does publish, and whose row discovery has not written yet.
+  router.publish(trio({ models: [residentModel(), residentModel({ service: 'nighttime' }),
+    residentModel({ service: 'trial', available: false })] }));
+  const caught = [];
+  await verifyConfiguredRoutes(state, { log: notice => caught.push(notice) });
+  assert.match(caught.join('\n'),
+    /local-ollama\/trial: unavailable \(backend unavailable\); skipped \(opt-in service: discovery creates the row when the router offers it\)/);
+  await synchronizeRouterSettings(service(state));
+  assert.equal(rowState(state, 'trial').status, 'unavailable', 'discovery then writes the row, with its own state');
+  assert.equal(row(state, 'trial').name, 'Qwen3.8 Flash-Next (Strata trial) (160K)',
+    'titled with the title the router published for it, even while it cannot serve');
   assert.equal(state['agent-default-model'].model, 'daytime', 'nothing moves a session onto or off the opt-in model');
 });
 
@@ -147,10 +162,13 @@ test('solo configuration: Nighttime offline with the configuration ID never bloc
   providers(state)['amazon-bedrock'] = bedrock;
   state['agent-default-model'] = { provider: 'amazon-bedrock', model: 'external-model', reasoningEffort: 'high' };
   await synchronizeRouterSettings(service(state));
-  assert.equal(row(state, 'nighttime').name, 'Qwen3.8 27B Abliterated Q6_K (96K) — offline (flash-next-solo-128k)');
+  assert.equal(row(state, 'nighttime').name, 'Qwen3.8 27B Abliterated Q6_K (96K)',
+    'a service the active configuration stops is titled by its own published display_name, with nothing composed on it');
   assert.equal(rowState(state, 'nighttime').status, 'offline');
   assert.equal(rowState(state, 'nighttime').configuration, 'flash-next-solo-128k');
   assert.equal(rowState(state, 'nighttime').limits, 'stale');
+  assert.match(rowState(state, 'nighttime').message, /^Qwen3\.8 27B Abliterated Q6_K \(96K\) is offline in router configuration "flash-next-solo-128k"/,
+    'the configuration it is offline in is stated in the message, not in the name');
   assert.equal(route(state).residentUnavailable, false, 'the route answers; only this model cannot serve');
   assert.equal(route(state).residentState.status, 'available');
   assert.equal(row(state, 'daytime').contextWindow, 131072 - 1024);
@@ -158,17 +176,19 @@ test('solo configuration: Nighttime offline with the configuration ID never bloc
   assert.deepEqual(state['agent-default-model'], { provider: 'amazon-bedrock', model: 'external-model', reasoningEffort: 'high' });
   const notices = [];
   const rows = await verifyConfiguredRoutes(state, { log: notice => notices.push(notice) });
-  assert.deepEqual(rows.map(entry => entry.status), ['available', 'offline', 'unavailable']);
+  assert.deepEqual(rows.map(entry => entry.status), ['available', 'offline']);
   assert.match(notices.join('\n'),
     /local-ollama\/nighttime: offline \(flash-next-solo-128k\); skipped — the router's current configuration is not a Harness failure\./);
   const output = await remote(state);
   assert.match(output.stdout, /local-ollama\/nighttime: offline \(flash-next-solo-128k\); skipped/);
-  assert.match(output.stdout, /local-ollama\/qwen3\.8-27b-abliterated-q6_k: unavailable \(not offered by the router\); skipped/);
+  assert.doesNotMatch(output.stdout, /qwen3\.8-27b-abliterated-q6_k/,
+    'a name this router publishes no service for is not even offered, so there is nothing to report about it');
   assert.match(output.stdout, /Verified/);
   const expected = await residentClientExpectations(state);
   assert.deepEqual(expected.map(entry => [entry.model, entry.available, entry.optIn ?? false]),
-    [['daytime', true, false], ['nighttime', false, false], ['qwen3.8-27b-abliterated-q6_k', false, false]]);
-  assert.equal(expected[1].name, 'Qwen3.8 27B Abliterated Q6_K (96K) — offline (flash-next-solo-128k)');
+    [['daytime', true, false], ['nighttime', false, false]]);
+  assert.equal(expected[1].name, 'Qwen3.8 27B Abliterated Q6_K (96K)',
+    'the picker shows the router’s own title for a model it cannot serve, and nothing else');
   assert.equal(expected[0].contextWindow, 131072 - 1024);
 });
 
@@ -191,16 +211,21 @@ for (const [label, damage] of [
     assert.equal(night.contextWindow, before.contextWindow, 'its last limits are retained');
     assert.deepEqual(night.reasoningEfforts, before.reasoningEfforts, 'and its effort mapping, marked stale rather than dropped');
     assert.equal(night.name, before.name, 'a name a model still answers for keeps the title the router publishes for it');
-    assert.match(rowState(state, 'nighttime').label, new RegExp(` — ${label}`), 'its state rides on the label the picker shows');
+    assert.equal(rowState(state, 'nighttime').label, 'Qwen3.8 27B Abliterated Q6_K (96K)',
+      'the label is the published title unchanged; the state is a separate field, never a word in the name');
+    assert.match(rowState(state, 'nighttime').message, /^Qwen3\.8 27B Abliterated Q6_K \(96K\) is unavailable/,
+      'the state is stated in the message a person reads instead, under the published title');
+    assert.match(rowState(state, 'nighttime').message, new RegExp(label));
     assert.equal(rowState(state, 'nighttime').status, label);
     assert.equal(rowState(state, 'nighttime').limits, 'stale');
     assert.equal(route(state).residentUnavailable, false, 'the router answers; only this model is blocked');
     const listed = await residentClientExpectations(state, { live: false });
     assert.deepEqual(listed.map(entry => [entry.model, entry.available]),
-      [['daytime', true], ['nighttime', false], ['qwen3.8-27b-abliterated-q6_k', false]],
-      'one model is never blocked by another, and a name nobody publishes is not selectable');
+      [['daytime', true], ['nighttime', false]],
+      'one model is never blocked by another, and a name nobody publishes is not a model at all');
     assert.equal(listed[1].status, label);
-    assert.equal(listed[1].name, rowState(state, 'nighttime').label, 'the listing shows the state-bearing label, not the bare title');
+    assert.equal(listed[1].name, rowState(state, 'nighttime').label, 'the listing shows the router’s own title for the model');
+    assert.doesNotMatch(listed[1].name, new RegExp(label), 'and carries no state word of its own');
   });
 }
 
@@ -214,18 +239,16 @@ test('router draining: every model waits (not blocked), limits stay stale, verif
   assert.equal(route(state).residentState.status, 'switching');
   assert.equal(route(state).residentUnavailable, false, 'a draining router makes requests wait rather than fail');
   assert.deepEqual(route(state).residentState.services.map(entry => [entry.service, entry.status]),
-    [['daytime', 'switching'], ['nighttime', 'switching'], ['qwen3.8-27b-abliterated-q6_k', 'switching']]);
-  for (const model of ['daytime', 'nighttime']) {
-    assert.match(rowState(state, model).label, /— router switching configuration$/);
+    [['daytime', 'switching'], ['nighttime', 'switching']]);
+  for (const [model, title] of [['daytime', 'Qwen3.8 27B Q6_K (160K)'], ['nighttime', 'Qwen3.8 27B Abliterated Q6_K (96K)']]) {
+    assert.equal(rowState(state, model).label, title, 'a drain is a state, never a word added to the router’s own title');
     assert.match(rowState(state, model).message, /wait and retry without changing models/);
   }
   for (const model of ['daytime', 'nighttime']) {
     assert.deepEqual(row(state, model), before.find(entry => entry.id === model), `a drain changes no limits of ${model}`);
   }
-  const held = entry => !['daytime', 'nighttime'].includes(entry.id);
-  assert.deepEqual(route(state).models.filter(held).map(entry => [entry.id, entry.contextWindow]),
-    before.filter(held).map(entry => [entry.id, entry.contextWindow]), 'and a name nobody publishes keeps its limits through a drain too');
-  assert.match(rowState(state, KEPT[0]).label, /— router switching configuration$/, 'a name nobody publishes waits like every other model');
+  assert.deepEqual(route(state).models.map(entry => entry.id), before.map(entry => entry.id),
+    'and a drain adds no row and takes none away: only the document’s list of models does that');
 });
 
 test('router unreachable at startup: stored settings are kept, every recorded model is unavailable, discovery recovers', async t => {
@@ -256,12 +279,14 @@ test('router unreachable at startup: stored settings are kept, every recorded mo
   // so the row states its state and carries no limits until a document arrives.
   assert.equal(row(state, recorded.at(-1)).contextWindow, undefined, 'unpublished limits are not invented');
   assert.equal(rowState(state, recorded.at(-1)).limits, 'stale', 'the row says its limits are not the router\'s');
+  assert.equal(row(state, recorded.at(-1)).name, recorded.at(-1),
+    'and a remembered name the router never titled keeps its own name, with no state word written into it');
   router.reachable();
   await synchronizeRouterSettings(service(state));
   assert.equal(route(state).residentState.status, 'available');
   assert.equal(route(state).residentUnavailable, false);
-  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime', ...KEPT],
-    'the published names return, and the alias that could not be confirmed is gone');
+  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', 'nighttime'],
+    'the published names return, and the name that could not be confirmed is not taken back as a model of its own');
 });
 
 test('a new canonical ID behind nighttime between revisions keeps it available with nothing canonical persisted', async t => {
@@ -282,7 +307,7 @@ test('the live verifier rejects stale limits, titles, states, identity and an un
   const state = legacySettings(router.baseURL);
   await synchronizeRouterSettings(service(state));
   const saved = structuredClone(route(state));
-  assert.deepEqual(saved.models.map(entry => entry.id), ['daytime', 'nighttime', ...KEPT]);
+  assert.deepEqual(saved.models.map(entry => entry.id), ['daytime', 'nighttime']);
   for (const [mutate, pattern] of [
     [own => { own.models.find(entry => entry.id === 'daytime').contextWindow = 131072; }, /context is not synchronized/],
     [own => { own.models.find(entry => entry.id === 'daytime').maxTokens = 1024; }, /output policy is not synchronized/],
@@ -291,11 +316,17 @@ test('the live verifier rejects stale limits, titles, states, identity and an un
     [own => { own.models.find(entry => entry.id === 'daytime').name = 'Qwen3.8 27B Q6_K'; }, /display name is not the title the router publishes/],
     [own => { own.residentStates.daytime.label = 'Qwen3.8 27B Q6_K'; }, /picker label is not synchronized/],
     [own => { own.residentStates.nighttime.status = 'unavailable'; }, /state is not synchronized \(router reports available\)/],
-    [own => { own.models.find(entry => entry.id === 'daytime').id = 'daytime-legacy'; },
+    [own => { own.models = own.models.filter(entry => entry.id !== 'daytime'); },
       /local-ollama\/daytime: the router publishes it but the route configures no such model; discovery has not written it/],
-    [own => { own.models.find(entry => entry.id === KEPT[0]).id = 'qwen3.8-27b-abliterated'; },
-      /local-ollama\/qwen3\.8-27b-abliterated display name is not the title the router publishes/,
-      'renaming a row to a name nobody publishes does not opt it out of the contract: it stays a model of the route that must answer for itself'],
+    [own => { own.models.find(entry => entry.id === 'daytime').id = 'daytime-legacy'; },
+      /local-ollama\/daytime-legacy: the route offers a model the router publishes no service for/,
+      'a row renamed away from the service the router publishes is its own model, not a stale name we wait for'],
+    [own => { own.models.find(entry => entry.id === 'nighttime').id = RESERVED; },
+      /local-ollama\/local-active: the route offers a model the router publishes no service for/,
+      'a row kept for an alias is a model of the route that must answer for itself, not an opt-out'],
+    [own => { own.models.push({ id: 'qwen3.8-27b-abliterated', name: 'A model of our own' }); },
+      /local-ollama\/qwen3\.8-27b-abliterated: the route offers a model the router publishes no service for/,
+      'a row for a name the document never publishes is refused, whatever state is recorded on it'],
     [own => { own.maxConcurrency = 3; }, /concurrency is not the slots of the models it offers \(offered 2\)/],
     [own => { delete own.headers; }, /does not identify itself with X-Client-Name/],
     [own => { own.displayName = 'Ollama'; }, /is not titled with the name the router publishes/],
@@ -358,7 +389,8 @@ test('rollback verification skips identity checks, and a router this Harness doe
   await assert.rejects(verifyConfiguredRoutes(state), /does not identify itself with X-Client-Name/);
   const rows = await verifyConfiguredRoutes(state, { allowLegacyIds: true, primaryBrowser: true });
   assert.deepEqual(rows.map(entry => [entry.service, entry.status]),
-    [['daytime', 'available'], ['nighttime', 'offline'], ['qwen3.8-27b-abliterated-q6_k', 'unavailable']]);
+    [['daytime', 'available'], ['nighttime', 'offline']],
+    'the route carries exactly the services the router publishes: the stopped one with its own state');
   // A second router the plugin follows without a route yet is the owner's next
   // discovery, not a failed verification.
   providers(state)[ROUTER_PROVIDER] = saved;
@@ -492,17 +524,17 @@ test('a pre-contract router without /v1/router/capabilities keeps its models usa
   assert.deepEqual(errors, []);
   assert.equal(route(state).residentUnavailable, false);
   assert.equal(route(state).residentState.status, 'available');
-  // The listing answers for one service under a name, which is what becomes a row;
-  // the rows the settings carried are answered for by that name.
-  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime', ...KEPT]);
+  // The listing answers for one service under a name, which is the only row it
+  // gets: a pre-contract router names its models too, and names nothing else.
+  assert.deepEqual(route(state).models.map(entry => entry.id), ['daytime']);
   assert.equal(row(state, 'daytime').contextWindow, undefined, 'limits a pre-contract router does not publish are not invented');
-  assert.equal(row(state, KEPT[0]).contextWindow, undefined, 'nor are they carried over from a row of another router');
+  assert.equal(row(state, REMEMBERED[0]), undefined, 'a name this router does not list is not one of its models either');
   assert.equal(before[0].contextWindow, 262144, 'the settings tree is read as it stands before this route is written');
   assert.equal(rowState(state, 'daytime').limits, 'stored', 'a usable model without published limits is marked as running on stored limits');
   assert.ok(seen.some(([url, name]) => url === '/v1/models' && name === CLIENT));
   const notices = [];
   const rows = await verifyConfiguredRoutes(state, { log: notice => notices.push(notice) });
-  assert.deepEqual(rows.map(entry => entry.status), ['available', 'unavailable']);
+  assert.deepEqual(rows.map(entry => entry.status), ['available']);
   assert.match(notices.join('\n'), /local-ollama\/daytime: served by a pre-contract router without published limits; stored limits kept/);
-  assert.match(notices.join('\n'), /local-ollama\/qwen3\.8-27b-abliterated-q6_k: unavailable \(not offered by the router\); skipped/);
+  assert.doesNotMatch(notices.join('\n'), /qwen3\.8-27b-abliterated-q6_k/, 'nothing is reported about a model it does not offer');
 });

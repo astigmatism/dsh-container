@@ -52,12 +52,16 @@ test('AGENTS.md requires router integration to uphold the vendored contract', as
 test('docs/optional-residents.md describes the contract behavior and links it', async () => {
   const doc = await readFile(new URL('../docs/optional-residents.md', import.meta.url), 'utf8');
   assert.match(doc, /\[LLM Router client contract\]\(llm-router-contract\.md\)/);
-  // Every state of the §5/§9 table, shown as the router publishes it: the row's
-  // own title, then the state. Harness adds no words of its own to a label.
-  for (const label of ['<published title> — offline (flash-next-solo-128k)', '<published title> — unavailable',
-    '<published title> — router switching configuration', '<published title> — incomplete metadata']) {
-    assert.ok(doc.includes(label), label);
+  // Every state of the §5/§9 table is documented with the row it produces: the
+  // router's own title, and the state told by the row being disabled. A label with
+  // a state word in it is a document describing a model the router does not publish.
+  assert.match(doc, /the published title, row disabled/);
+  for (const state of ['offline (in `offline_services`)', 'unavailable (backend unhealthy',
+    'router switching configuration (draining or maintenance)', 'incomplete metadata (warnings']) {
+    assert.ok(doc.includes(state), state);
   }
+  assert.doesNotMatch(doc, /<published title> — /);
+  assert.match(doc, /read verbatim/);
   assert.doesNotMatch(doc, /qwen3\.8-27b-abliterated-q6_k|model `local-active`/);
   // The retired release's labels named the service with a Harness word; a current
   // document must not show one as what a person reads in the picker.

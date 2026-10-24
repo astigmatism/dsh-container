@@ -30,12 +30,12 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const marker = 'dsh-resident-availability-v4';
+const marker = 'dsh-resident-availability-v5';
 // One marker per revision of this script: every hunk family stamps `marker`, so
 // a file carrying only an older one was written by an older release of this
 // script. Such a tree is left as it was built (the hunks below are anchored on
 // pristine source) and reported, because a stale runtime is a build problem.
-const previousMarkers = ['dsh-resident-availability-v3', 'dsh-resident-availability-v2'];
+const previousMarkers = ['dsh-resident-availability-v4', 'dsh-resident-availability-v3', 'dsh-resident-availability-v2'];
 const patchedAlready = (source) => source.includes(marker) || previousMarkers.some((value) => source.includes(value));
 function replace(source, before, after) {
   if (!source.includes(before) || source.indexOf(before) !== source.lastIndexOf(before)) {
@@ -239,6 +239,13 @@ export function patchClient(input) {
                 if (!choices.some(choice => choice.selection.provider === selection.provider && choice.selection.model === selection.model && choice.model.available !== false)) return;`);
     s = replace(s, 'for (const model of group.models) this.reasoning.set(', 'for (const model of group.models) if (model.available !== false) this.reasoning.set(');
     s = replace(s, 'if (rowId(group.id, model.id) !== id) continue;', 'if (rowId(group.id, model.id) !== id || model.available === false) continue;');
+    // The router publishes models; it publishes no categories, and a heading over
+    // the list is Harness grouping the router's list on its router's behalf. While
+    // one provider supplies the whole list the rows render ungrouped; a second
+    // provider (a bundled or external route alongside the router) brings the
+    // headings back, because then a label is what tells two lists apart.
+    s = replace(s, 'return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MenuGroup, {',
+      'return (0, react_jsx_runtime.jsx)(filteredGroups.length === 1 ? react.Fragment : _deepseek_ai_dsh_client_ui_primitives.MenuGroup, {');
   }
   // v3: the opt-in availableOnly filter, transported on the catalog result.
   // The raw groups keep every model; only this view changes.

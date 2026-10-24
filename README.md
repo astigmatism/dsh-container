@@ -40,13 +40,14 @@ step after an operator updates a selected deployment through Service Portal.
   including its conformance map. An **opt-in** service such as `trial` is never
   selected by Harness, never made a default, and never entered or left by
   itself.
-- The model picker shows one group per router, headed by the name that router
-  publishes for itself (`llm-router` today), with one row per service it
-  currently offers, plus configured external providers. Each model shows exactly
-  one state (available, offline with its configuration, unavailable, router
-  switching configuration, or incomplete metadata). An opt-in service the
-  router's current configuration does not offer is held with that reason rather
-  than missing or unknown. Saved selections never fall back to another model, and
+- The model picker shows exactly the models each router publishes, each under the
+  title that router publishes for it, with no grouping of Harness's own, plus
+  configured external providers. Each model's state (available, offline with its
+  configuration, unavailable, router switching configuration, incomplete metadata)
+  is recorded with it and shown by whether its row can be chosen — never written
+  into its title. A service the router does not publish, the opt-in `trial` on
+  today's configuration, has no row at all; naming it still fails with that reason
+  instead of being served by a model nobody selected. Saved selections never fall back to another model, and
   a model that returns is selectable again without action. Startup never fails
   because of router state. Startup and discovery refresh preserve external
   defaults, credentials, session history and reasoning choices.
@@ -351,9 +352,9 @@ the previous value. Never stop a router because "the last known consumer moved";
 the deployment list below is how that is checked.
 
 **A consumer must be schema-2 aware before a multi-host router.** Pointing a
-revision older than `d2a0332` at a router that publishes several service names
-from one model yields duplicate picker labels (and the resident verification
-fails). Upgrade such a deployment first, then move it. `verify-resident-client.mjs`
+revision older than `d2a0332` at a router that publishes several names for one
+model lists that model once per name and never resolves the aliases, and the
+resident verification fails on the mismatch. Upgrade such a deployment first, then move it. `verify-resident-client.mjs`
 and the update verification are the check that both halves agree.
 
 [Router migration](docs/ROUTER_MIGRATION.md) records that precondition, the
@@ -388,34 +389,31 @@ model is evaluated on its own:
 
 | Router state | Picker | Requests |
 | --- | --- | --- |
-| Listed and `available` with complete metadata | the name the router publishes for that service (with an `· NSFW` badge when declared) | sent; context budget = `context_window` − `context_safety_reserve` |
-| In `offline_services` | `<published title> — offline (<configuration>)` | fail at once, no retries |
-| Listed with `available: false`, absent, or router unreachable | `… — unavailable` | fail at once, no retries |
-| `accepting_requests: false` (drain or maintenance) | `… — router switching configuration` | wait 2 → 30 s without switching models |
-| Metadata incomplete, invalid or warning-bearing | `… — incomplete metadata` | fail at once, no retries |
+| Listed and `available` with complete metadata | the title the router publishes for that model, verbatim | sent; context budget = `context_window` − `context_safety_reserve` |
+| In `offline_services` | that title (or the name it publishes with), row disabled | fail at once, no retries |
+| Listed with `available: false`, or no router answering at all | that title, row disabled | fail at once, no retries |
+| `accepting_requests: false` (drain or maintenance) | that title, row disabled | wait 2 → 30 s without switching models |
+| Metadata incomplete, invalid or warning-bearing | that title, row disabled | fail at once, no retries |
 
-Which name is on offer decides the title: `metadata.alias_display_names` for
-that name, otherwise the model's `display_name_qualified`, otherwise its
-`display_name`. Two names of one model share the model's title, which is the
-publisher's own statement that they are one model under two names, so the name
-being chosen is appended in parentheses. Today's router publishes `daytime` and
-`nighttime` both titled `Qwen3.8 Flash-Next (256K)`, so the picker lists
-`Qwen3.8 Flash-Next (256K) (daytime)` and
-`Qwen3.8 Flash-Next (256K) (nighttime)`, alongside
-`Qwen3.8 Flash-Next IQ3_XXS (64K)` — the service a second host publishes as
-`daisy`, whose title is its own and needs no suffix. The labels in the table
-above are that same published title plus the state, and the title is dropped
-while nothing serves the name: a remembered title describes a configuration that
-may no longer exist and reads as a model on offer, so such a row names itself and
-its state, and the title returns with the model.
+A router publishes models, not categories, so Harness adds nothing to the list and
+nothing to a title: no state word, no marker, no qualifier, and no heading of its
+own above the list. `router.name` is still recorded as the name of the route — that
+is the router naming itself, and it is what settings and verification call the
+route — but a menu heading groups the router's models into a category the router
+never published, so while one provider supplies the list the rows render
+ungrouped, and headings return only when a second provider genuinely exists. What
+a model is doing is said by its recorded state and by whether its row can be
+chosen, never by editing its name.
 
-A service this Harness already carries a row for, which the current
-configuration does not offer, keeps that row and says so. An opt-in service such
-as `trial` on a configuration that does not offer it is shown as
-`trial — unavailable` with reason `not offered by the router` — held,
-never missing and never "unknown" — and its message says it is an opt-in model
-Harness never selects and never moves a session off. A router that has never
-offered it simply has no row for it yet: discovery creates one when it appears.
+One row per entry in `models[]`, addressed by that entry's `service`. Its aliases
+are other names for the same model: `nighttime`, `local-active` and the canonical
+ID all address the 256K model, `metadata.alias_display_names` says nothing new about
+them, and none of them is a second model. A name the document stops mentioning is
+not a model either, so its row goes; a selection naming an alias keeps naming that
+model under the service the router publishes. Today's router publishes two models,
+so the picker is two rows — `Qwen3.8 Flash-Next (256K)` and
+`Qwen3.8 Flash-Next IQ3_XXS (64K)` — with the 64K model's `daisy` name addressing it
+directly.
 
 The state, label and message above are recorded **per model**, in
 `llm-pi-ai.providers.local-ollama.residentStates.<service>`. The route keeps

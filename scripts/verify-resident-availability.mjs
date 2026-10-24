@@ -2,10 +2,11 @@
  *
  * One router is one route: the fixture router is a single provider whose models
  * are the services it publishes, so taking one service offline gates that model
- * row alone while its neighbour on the same route keeps answering. Every label
- * this script waits for is derived from the titles the fixture router publishes
- * for that service ID plus the one state suffix the plugin writes — never from a
- * name this script invents (docs/llm-router-contract.md §4, §5).
+ * row alone while its neighbour on the same route keeps answering. Every name
+ * this script waits for is the title the fixture router publishes for that
+ * service ID, verbatim — no state word we add, no badge, and no name this script
+ * invents; whether the model can be chosen is a separate fact it reads from the
+ * document (docs/llm-router-contract.md §4, §5).
  */
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -48,29 +49,24 @@ const fixture = async (path) => {
 /** The capabilities document the fixture router is publishing right now. */
 const fixtureDocument = async () => (await fixture('/v1/router/capabilities')).json();
 /**
- * The labels one service of this fixture can be shown under, read from the
- * document as it stands: the title a name is offered under (`alias_display_names`
- * for the name on offer, else `display_name_qualified`, else `display_name`, with
- * the published ` · NSFW` badge), and that title with exactly one state suffix
- * while the active configuration stops it.
+ * What one service of this fixture is shown as, read from the document as it
+ * stands: the title the router publishes for it — `display_name_qualified` where
+ * it publishes one, else its `display_name`, and for a service the active
+ * configuration stops, that service's own published title. Nothing else is ever
+ * part of a name: no state word, no badge, no qualifier of ours or of the
+ * publisher's (docs/llm-router-contract.md §4, §5). Whether the service is
+ * serving travels separately, and this script reads that from the document.
  */
 async function labels(service) {
   const document = await fixtureDocument();
   const row = (document.models ?? []).find(candidate => candidate.service === service || candidate.id === service
     || (candidate.aliases ?? []).includes(service));
   const stopped = (document.offline_services ?? []).find(candidate => (candidate.aliases ?? []).includes(service));
-  const aliasTitle = row?.metadata?.alias_display_names?.[service];
-  const title = (typeof aliasTitle === 'string' && aliasTitle.trim().toLowerCase() !== service.toLowerCase()
-    ? aliasTitle
-    : row?.display_name_qualified ?? row?.display_name ?? row?.metadata?.display_name ?? stopped?.display_name) ?? service;
+  const title = row?.display_name_qualified ?? row?.display_name ?? row?.metadata?.display_name
+    ?? stopped?.display_name ?? service;
   assert.ok(title !== service, `the fixture router publishes no title for ${service}`);
-  return {
-    title,
-    serving: row !== undefined,
-    nsfw: row?.nsfw === true,
-    offered: row?.nsfw === true ? `${title} · NSFW` : title,
-    offline: `${title} — offline (${document.configuration?.id ?? 'unknown'})`,
-  };
+  assert.doesNotMatch(title, / — |· NSFW/, `the published title of ${service} carries no composed state`);
+  return { title, serving: row !== undefined, nsfw: row?.nsfw === true, configuration: document.configuration?.id ?? null };
 }
 async function rpc(method, request = {}) {
   const response = await context.request.post(`${base}/api/${method}`, { data: {
@@ -157,37 +153,41 @@ try {
   }, 'fixture session visible');
   await page.waitForSelector('[data-composer-input]');
   const trigger = page.getByRole('button', { name: /^Select model/ });
-  // Labels come from the fixture router's own document: the title it publishes for
-  // this service ID plus exactly one state suffix.
+  // The name comes from the fixture router's own document: the title it publishes
+  // for this service ID, verbatim, whether or not the service is serving.
   const gated = await labels(night.model);
   assert.equal(gated.serving, false, 'the fixture router lists this service as stopped right now');
-  assert.match(gated.offline, / — offline \(fixture-solo\)$/, 'the derived label carries the state the plugin writes for it');
-  await until(async () => (await trigger.innerText()).includes(gated.offline), 'the selected model shows the offline state the router published');
+  assert.equal(gated.configuration, 'fixture-solo', 'the document says which configuration stops it');
+  await until(async () => await selectedIs(night.model) && (await trigger.innerText()).includes(gated.title),
+    'a session stays on the model that went offline, shown under its published title');
   await clickVerificationTarget(page, trigger);
   await clickVerificationTarget(page, page.getByRole('menuitem', { name: /^Model/ }));
-  // Exactly one state: offline, titled as the publisher titles it and suffixed with
-  // the configuration ID from offline_services.
-  const unavailable = page.getByRole('menuitemradio', { name: gated.offline, exact: true });
+  // The stopped model is in the list under its published title and nothing else:
+  // the state is that it cannot be chosen, which the control carries by itself.
+  const unavailable = page.getByRole('menuitemradio', { name: gated.title, exact: true });
   await unavailable.waitFor();
-  assert.equal(await unavailable.isDisabled(), true);
+  assert.equal(await unavailable.isDisabled(), true, 'a model the router stops is shown and not selectable');
   await setNight(true);
   await delay(1000);
   assert.deepEqual(await (await fetch(`${control}/__fixture/requests`)).json(), before, 'reappearance never replays the failed prompt');
   // The same open picker must update without reload or reconnection.
-  // The router declares this service NSFW; the picker carries the badge.
+  // The same title, now selectable: returning changes what the row can do, never
+  // what it is called. The router declares this service NSFW, which the document
+  // states and no name repeats.
   const back = await labels(night.model);
   assert.equal(back.serving && back.nsfw, true, 'the router serves the returned service and declares it NSFW');
-  const returned = page.getByRole('menuitemradio', { name: back.offered, exact: true });
+  assert.equal(back.title, gated.title, 'one model has one name, in either state');
+  const returned = page.getByRole('menuitemradio', { name: back.title, exact: true });
   await until(async () => await returned.count() === 1, 'open picker observes the model return under the title the router publishes');
   assert.equal(await returned.isDisabled(), false, 'a returning model is selectable again');
   assert.equal(await selectedIs(night.model), true, 'the selection survived its own disappearance');
   await setNight(false);
   const offlineAgain = await labels(night.model);
-  assert.equal(offlineAgain.offline, gated.offline, 'the same published title and state are written again');
+  assert.equal(offlineAgain.title, gated.title, 'the same published title is written again');
   await until(async () => await unavailable.count() === 1, 'open picker observes removal of the selectable state');
   const served = await labels(day.model);
   assert.equal(served.serving, true, 'the fixture has served the stopped service neighbour all along');
-  await clickVerificationTarget(page, page.getByRole('menuitemradio', { name: served.offered, exact: true }));
+  await clickVerificationTarget(page, page.getByRole('menuitemradio', { name: served.title, exact: true }));
   await until(async () => await selectedIs(day.model), 'an explicit switch to the neighbour on the same route works');
   // Exercise actual history/projection shapes, not only mocked RPC replies.
   // A router error the contract does not retry (§10 INVALID_REQUEST) has to end

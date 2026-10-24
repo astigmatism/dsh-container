@@ -144,9 +144,10 @@ for (const selection of ['amazon-bedrock', 'local-everyday', 'local-trial']) {
     await fs.writeFile(session, 'unchanged session history');
     const result = await launch(home);
     assert.match(result.stdout, /^nighttime: offline \(flash-next-solo-128k\)$/m);
-    // The trial is not offered by this configuration: recorded and announced, and
-    // the update still exits 0.
-    assert.match(result.stdout, /^trial: unavailable \(not offered by the router\) \[opt-in service; never selected automatically\]$/m);
+    // The trial is not in this configuration's document at all: it is not a model
+    // of this router, so it is neither a row nor a line of the summary — and the
+    // update still exits 0.
+    assert.doesNotMatch(result.stdout, /^trial:/m);
     const text = await fs.readFile(file, 'utf8');
     assert.match(text, /!!js process.env.PRIVATE_FIXTURE # retain expression and comment/);
     assert.match(text, /Authorization: !!js process.env.PRIVATE_FIXTURE # retain provider expression/);
@@ -158,13 +159,14 @@ for (const selection of ['amazon-bedrock', 'local-everyday', 'local-trial']) {
     assert.deepEqual(next['amazon-bedrock'], external);
     const catalog = next['local-ollama'];
     assert.equal(row(catalog, 'daytime').contextWindow, 131072 - 1024);
-    assert.equal(catalog.residentStates.nighttime.label, 'Qwen3.8 27B Abliterated Q6_K (96K) — offline (flash-next-solo-128k)');
-    // The opt-in service is held with its reason and is never selectable: only a
-    // human selection can put a session on it, and nothing moves one off it.
-    assert.equal(catalog.residentStates.trial.status, 'unavailable');
-    assert.equal(catalog.residentStates.trial.service, 'trial');
-    assert.match(catalog.residentStates.trial.message, /opt-in model/);
-    assert.equal(row(catalog, 'trial').id, 'trial');
+    assert.equal(catalog.residentStates.nighttime.label, 'Qwen3.8 27B Abliterated Q6_K (96K)',
+      'the label is the router’s own title, with no state word written into it');
+    assert.equal(catalog.residentStates.nighttime.configuration, 'flash-next-solo-128k',
+      'the configuration it is offline in is recorded as state, where a title cannot hold it');
+    // The opt-in service this router does not publish is not offered as a model:
+    // no row, no recorded state — a model is the router’s to publish.
+    assert.equal(row(catalog, 'trial'), undefined);
+    assert.equal(catalog.residentStates.trial, undefined);
     // Nothing puts a session on the opt-in service that a human did not put there.
     assert.equal(config(migrated, 'agent-default-model').model === 'trial', selection === 'local-trial');
     const after = await fs.stat(file);
@@ -178,10 +180,10 @@ for (const selection of ['amazon-bedrock', 'local-everyday', 'local-trial']) {
     const restored = config(await rows(file), 'llm-pi-ai').providers['local-ollama'];
     assert.equal(restored.residentStates.nighttime.status, 'available');
     assert.equal(row(restored, 'nighttime').contextWindow, 98304 - 1024);
-    // Nighttime returned; the trial is still not offered and stays held. A
-    // human selected it, so it keeps the row and its reason and nothing moves.
-    assert.equal(restored.residentStates.trial.status, 'unavailable');
-    assert.equal(restored.residentStates.trial.reason, 'not offered by the router');
+    // Nighttime returned. The trial is still absent from the document, so it is
+    // still no model of this router — a human choice included, its row is not kept.
+    assert.equal(row(restored, 'trial'), undefined);
+    assert.equal(restored.residentStates.trial, undefined);
     assert.deepEqual(config(await rows(file), 'agent-default-model'), expected);
     assert.doesNotMatch(await fs.readFile(file, 'utf8'), /qwen3\.8|fixture-(?:day|night)time|local-active|256k/);
   });
@@ -225,42 +227,40 @@ test('the opt-in trial becomes available from its own metadata and disappears wi
   assert.equal(selection.provider, 'local-ollama');
   assert.equal(selection.model, 'daytime');
   assert.doesNotMatch(await fs.readFile(file, 'utf8'), /fixture-|local-active|qwen3\.8-flash-next|256k/);
-  // The service is withdrawn: held with its reason, announced, and the update
-  // still succeeds — a missing opt-in service is never a failed update.
+  // The service is withdrawn from the document: its row goes with it and the
+  // update still succeeds — a model the router stops publishing is not a model
+  // Harness keeps offering under a name of its own.
   router.publish(paired());
   const second = await launch(home);
-  assert.match(second.stdout, /^trial: unavailable \(not offered by the router\) \[opt-in service; never selected automatically\]$/m);
+  assert.doesNotMatch(second.stdout, /^trial:/m);
   const held = config(await rows(file), 'llm-pi-ai').providers['local-ollama'];
-  assert.equal(row(held, 'trial').id, 'trial');
-  assert.equal(held.residentStates.trial.status, 'unavailable');
-  // A row that no model answers names itself and its state: the title the router
-  // published describes a model that is not on offer.
-  assert.equal(held.residentStates.trial.label, 'trial — unavailable');
-  assert.equal(held.residentStates.trial.limits, 'stale');
+  assert.equal(row(held, 'trial'), undefined, 'a name the document stops mentioning gets no row at all');
+  assert.equal(held.residentStates.trial, undefined, 'and no state is recorded for a model that is not on offer');
+  assert.deepEqual(held.models.map(model => model.id), ['daytime', 'nighttime']);
   assert.equal(config(await rows(file), 'agent-default-model').provider, 'local-ollama');
   assert.equal(config(await rows(file), 'agent-default-model').model, 'daytime');
   assert.equal(held.residentStates.daytime.status, 'available');
   assert.equal(held.residentStates.nighttime.status, 'available');
 });
 
-// Contract 1.2 §3: a published configuration can declare no `daytime` at all, and
-// does not list it in `offline_services` either. Its row is held with that
-// reason; the update still exits 0, the row keeps its own stored limits, and
-// the only model actually serving — the opt-in trial — is never taken up.
-test('a configuration with no daytime at all holds its row, exits 0, and never reaches for the trial', { skip: !YAML }, async t => {
+// A published configuration can declare no `daytime` at all, and does not list
+// it in `offline_services` either. The router publishes no service for it, so it
+// is no model of this router: no row, no state, and no line of the summary. The
+// update still exits 0, and the only model actually serving — the opt-in trial —
+// is never taken up in its place.
+test('a configuration with no daytime at all gives it no row, exits 0, and never reaches for the trial', { skip: !YAML }, async t => {
   const router = await fakeRouter(t, strata());
   const { home, file } = await fixture(t, router.baseURL);
-  const before = config(await rows(file), 'llm-pi-ai').providers['local-ollama'];
   const result = await launch(home);
-  assert.match(result.stdout, /^daytime: unavailable \(not offered by the router\)$/m);
+  assert.doesNotMatch(result.stdout, /^daytime:/m, 'a name the document does not mention is not a model of this router');
   assert.match(line(result.stdout, 'trial'), /^trial: available$/);
   const catalog = config(await rows(file), 'llm-pi-ai').providers['local-ollama'];
-  assert.equal(catalog.residentStates.daytime.status, 'unavailable');
-  assert.equal(catalog.residentStates.daytime.reason, 'not offered by the router');
-  assert.equal(catalog.residentStates.daytime.service, 'daytime');
-  assert.equal(row(catalog, 'daytime').id, 'daytime');
-  assert.equal(row(catalog, 'daytime').name, 'daytime — unavailable', 'the held row still names the service it waits for');
-  assert.equal(row(catalog, 'daytime').contextWindow, row(before, 'daytime').contextWindow);
+  assert.deepEqual(catalog.models.map(model => model.id), ['trial', 'nighttime'],
+    'the rows are exactly what the router publishes: its models, then the services its configuration stops');
+  assert.equal(row(catalog, 'daytime'), undefined);
+  assert.equal(catalog.residentStates.daytime, undefined);
+  assert.equal(catalog.residentStates.nighttime.status, 'offline');
+  assert.equal(catalog.residentStates.nighttime.configuration, 'flash-next-strata-160k');
   // No other model's numbers fill the gap: the trial's 160K context and text-only
   // modalities stay on the trial's own row.
   assert.equal(row(catalog, 'trial').contextWindow, 163840 - 1024);

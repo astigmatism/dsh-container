@@ -54,9 +54,10 @@ const residents = [primaryId, secondaryId].map((id, index) => {
     nsfw: index === 1, capability_score: index ? 60 : 70, metadata };
 });
 // The third resident is the opt-in trial: text-only, and only ever selected by
-// a human. In the daytime-only qualification the router stops offering it, which
-// leaves that one model row held with a stated reason while the route keeps
-// serving the models the configuration offers — and never a failed update.
+// a human. In the daytime-only qualification the router's active configuration
+// stops it, and the document says so in `offline_services`: the row stays, titled
+// with the trial's own published title and holding its own state, while the route
+// keeps serving the models the configuration offers — and never a failed update.
 const trialId = 'fixture-trial-q4';
 const trialMetadata = {
   schema_version: 2, complete: true, warnings: [], alias: false, upstream_model: trialId,
@@ -92,10 +93,12 @@ const RETIRED_ROUTES = { 'local-everyday': 'nighttime', 'local-trial': 'trial' }
 /** The route list the deployment declares for this router (profiles/web plugins): one route, trial opt-in. */
 const ROUTER_PROVIDER = 'local-ollama';
 const DISCOVERY = { providers: [ROUTER_PROVIDER], optInServices: ['trial'] };
-/** The rows the catalog route carries in either configuration: one per service the
- * router publishes, plus a name it stops answering, which keeps its row and states
- * its state (§5). The pre-service-ID name these settings carried is the exception:
- * §3 says the compatibility alias is not a service, so it is not kept as a model. */
+/** The rows the catalog route carries in either configuration: exactly one per
+ * service the router publishes — its `models[]` entries and, in the daytime-only
+ * qualification, the services its active configuration stops, which the router
+ * names in `offline_services`. The names these settings carried before service IDs
+ * existed are not in that list and get no row of their own: §3 says a compatibility
+ * alias is not a service, and a name the document does not mention is not a model. */
 const catalogRows = ['daytime', 'nighttime', 'trial'];
 let nightOnline = !daytimeOnly;
 let trialOnline = !daytimeOnly;
@@ -302,20 +305,21 @@ try {
       assert.equal(route.residentState.reason, null);
       assert.equal(route.residentState.configuration, configuration);
       assert.equal(route.residentState.default, 'daytime', 'the document default answers a selection that names no configured model');
-      // One model row per service the router offers — plus a stated row for the name these
-      // settings carried before service IDs existed — and exactly one recorded state per
-      // row (docs/llm-router-contract.md §4, §5). Titles are the fixture's published ones.
+      // One model row per service the router publishes — its models, and in the
+      // daytime-only qualification the services its configuration stops — and
+      // exactly one recorded state per row (docs/llm-router-contract.md §4, §5).
+      // Every title is the fixture's published one, verbatim, serving or not.
       const expectations = {
         daytime: { name: publishedTitle.daytime, status: 'available', reason: null, limits: 'current', nsfw: false,
           input: ['text', 'image'] },
         nighttime: nightOnline
-          ? { name: `${publishedTitle.nighttime}${publishedNsfw.nighttime ? ' · NSFW' : ''}`, status: 'available', reason: null,
-              limits: 'current', nsfw: true, input: ['text'] }
-          : { name: `${publishedTitle.nighttime} — offline (${configuration})`, status: 'offline', reason: 'exclusive_configuration',
+          ? { name: publishedTitle.nighttime, status: 'available', reason: null,
+              limits: 'current', nsfw: publishedNsfw.nighttime, input: ['text'] }
+          : { name: publishedTitle.nighttime, status: 'offline', reason: 'exclusive_configuration',
               limits: 'stale', nsfw: null },
         trial: trialOnline
           ? { name: publishedTitle.trial, status: 'available', reason: null, limits: 'current', nsfw: false, input: ['text'] }
-          : { name: `${publishedTitle.trial} — offline (${configuration})`, status: 'offline', reason: 'exclusive_configuration',
+          : { name: publishedTitle.trial, status: 'offline', reason: 'exclusive_configuration',
               limits: 'stale', nsfw: null },
       };
       assert.deepEqual(route.models.map(row => row.id), Object.keys(expectations),
@@ -328,7 +332,9 @@ try {
       for (const [service, expected] of Object.entries(expectations)) {
         const row = rows[service];
         const state = states[service];
-        assert.equal(row.name, expected.name, `${service}: the row carries the published title and exactly one state`);
+        assert.equal(row.name, expected.name, `${service}: the row carries the title the router published for it`);
+        assert.doesNotMatch(row.name, / — |· NSFW/,
+          `${service}: no state, badge or qualifier is written into a name; the recorded state below says those`);
         assert.equal(state.service, service, `${service}: a recorded state answers for its own model`);
         assert.equal(state.status, expected.status, `${service}: the state is the one the router publishes for this model`);
         assert.equal(state.label, expected.name, `${service}: the picker label is the row title`);
@@ -342,7 +348,6 @@ try {
           assert.equal(row.contextWindow, servedBudget, `${service}: the published context window less its safety reserve`);
           assert.equal(row.maxTokens, null, `${service}: the published unrestricted output policy`);
           assert.deepEqual(row.reasoningEfforts, effortMap, `${service}: the published reasoning levels`);
-          assert.doesNotMatch(row.name, / — /, `${service}: a model on offer carries its published title and no state`);
           assert.equal('message' in state, false, `${service}: a model on offer states no failure`);
         } else if (expected.stale) {
           assert.equal(row.contextWindow, expected.stale.contextWindow, `${service}: limits recorded earlier are kept`);

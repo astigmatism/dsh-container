@@ -321,6 +321,32 @@ test('the live verifier rejects stale limits, titles, states, identity and an un
   assert.match(output.stdout, /Verified/);
 });
 
+test('a router that has stopped answering is verified as the state the route records', async t => {
+  const router = await fakeRouter(t, paired());
+  const remote = await remoteVerifier(t);
+  const state = legacySettings(router.baseURL);
+  await synchronizeRouterSettings(service(state));
+  await verifyConfiguredRoutes(state);
+  router.unreachable();
+  await synchronizeRouterSettings(service(state));
+  // §5 and §7: with the router silent there is no document to compare against,
+  // and no fallback to invent. The route says the router is down and every model
+  // answers for itself as down; that is what verification has to confirm.
+  const rows = await verifyConfiguredRoutes(state, { log: () => {} });
+  assert.ok(rows.length > 1, JSON.stringify(rows));
+  assert.ok(rows.every(row => row.status === 'unavailable' && /router not answering/.test(row.notice ?? '')),
+    JSON.stringify(rows));
+  const output = await remote(state);
+  assert.match(output.stdout, /an unreachable router is a state, not a Harness failure/);
+  // What does fail is settings that still offer a model the silent router cannot
+  // serve: a row left standing at `available` is a Harness desync, not the
+  // router's configuration.
+  providers(state)[ROUTER_PROVIDER].residentStates.daytime = { ...rowState(state, 'daytime'), status: 'available' };
+  await assert.rejects(verifyConfiguredRoutes(state),
+    /local-ollama\/daytime: the router is not answering but the model still records available/);
+  await assert.rejects(remote(state), error => error.code === 22 && /still records available/.test(error.stderr));
+});
+
 test('rollback verification skips identity checks, and a router this Harness does not follow is reported', async t => {
   const router = await fakeRouter(t, solo());
   const state = legacySettings(router.baseURL);

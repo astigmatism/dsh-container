@@ -437,7 +437,12 @@ document warning `CATALOG_HAS_NO_SERVICE_ID` changes no exit status. What still
 fails is a claim Harness makes about itself: a name the router publishes that no
 model row carries, a route still titled for a router that publishes a name of its
 own, configured limits that no longer match the document, a stale label, the wrong
-or a canonical ID configured. The live
+or a canonical ID configured. A router that is not answering at all is that rule at
+route scale: with no document there is nothing to compare against and §5/§7 forbid
+inventing one, so verification requires the route to say what it knows — gated,
+with every model recorded as down — and passes; what fails it is settings that still
+offer a model the silent router cannot serve, since that is Harness claiming a
+capability it cannot use. The live
 verifiers state-check the opt-in route and never select it or send inference
 through it: only a non-opt-in resident whose state is `available` is ever picked
 up for a selection or inference check, and when none is left the check is logged

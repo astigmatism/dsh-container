@@ -5,6 +5,11 @@
  * unavailable, incomplete or switching model is reported and skipped. What must
  * hold is that each model's recorded state, label and (when available) limits
  * match the capabilities document, and that only service IDs are configured.
+ *
+ * A router that is not answering is that same rule at route scale: the contract
+ * keeps the last catalog and marks it stale rather than inventing a fallback, so
+ * verification accepts a gated route whose every model is recorded as down, and
+ * fails only when settings still offer a model the silent router cannot serve.
  */
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -72,12 +77,36 @@ export async function verifyConfiguredRoutes(settings, { browser = false, primar
       assert.equal(provider.headers?.['X-Client-Name'], clientName, `${name} does not identify itself with X-Client-Name`);
     }
     const base = routerBaseOf(provider.baseURL);
-    if (!documents.has(base)) documents.set(base, (await fetchCapabilities(base, { clientName })).document);
-    const document = documents.get(base);
+    if (!documents.has(base)) {
+      try { documents.set(base, { document: (await fetchCapabilities(base, { clientName })).document }); }
+      catch (error) { documents.set(base, { document: null, error: error.message }); }
+    }
+    const fetched = documents.get(base);
+    const document = fetched.document;
     const configured = new Map((provider.models ?? []).map(row => [row.id, row]));
+    const states = provider.residentStates ?? {};
+    if (document === null) {
+      // A router that is not answering is a state this contract defines (§5: no
+      // fallback; §7: keep the last catalog and mark it stale), never a Harness
+      // failure. What has to hold is that the route says so: gated, with every
+      // model recorded as down, instead of offering a model nobody can serve.
+      assert.equal(provider.residentUnavailable, true,
+        `${name}: the router is not answering (${fetched.error}) and the route is not gated`);
+      assert.equal(provider.residentState?.status, 'unavailable',
+        `${name}: route state is not synchronized (the router is not answering: ${fetched.error})`);
+      for (const model of provider.models ?? []) {
+        const state = states[model.id];
+        assert.ok(state?.status === 'unavailable' || state?.status === 'incomplete',
+          `${name}/${model.id}: the router is not answering but the model still records ${state?.status ?? 'nothing'}`);
+        rows.push({ provider: name, service: model.id, status: state.status,
+          notice: `router not answering (${fetched.error}); recorded as ${state.status}` });
+      }
+      log(`${name}: the router is not answering (${fetched.error}); the route is gated and every model is recorded as `
+        + 'unavailable — an unreachable router is a state, not a Harness failure.');
+      continue;
+    }
     const catalog = routerServices(document, { known: [...configured.keys()], optInServices });
     const route = routerRouteState(document);
-    const states = provider.residentStates ?? {};
     // The route is gated only by its router as a whole; each model answers for itself.
     const routeBlocked = route.status === 'unavailable' || route.status === 'incomplete';
     assert.equal(provider.residentUnavailable === true, routeBlocked,

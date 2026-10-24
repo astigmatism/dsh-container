@@ -113,7 +113,32 @@ try {
   assert.equal(seen.at(-1).body.model, served, 'requests send the service ID');
   assert.equal(seen.at(-1).body.stream, true, 'stream is set explicitly');
   console.log('A Responses request queued 4x past the idle timeout completed on router keepalive comments; X-Client-Name and the service ID were sent.');
-  // §10: classify by error.code first, then HTTP status. Bodies use the router's exact shapes.
+  // §4, §5: a model the router stops serving is gated on its own recorded state.
+  // It fails at once with the advice its row states, without consuming a request
+  // or reporting anything to discovery, and the neighbour it shares the route
+  // with — the model the router does serve — still dispatches.
+  reports.length = 0;
+  const blocked = await run(gated);
+  const blockedFailure = blocked.error?.code === 'MODEL_UNAVAILABLE' ? blocked.error : blocked.finish?.reason?.failure;
+  assert.equal(blockedFailure?.code, 'MODEL_UNAVAILABLE', JSON.stringify(blockedFailure ?? blocked.error ?? blocked.chunks.at(-1)));
+  assert.match(blockedFailure.message, /Fixture Night \(96K\) is offline in router configuration "fixture-solo"/,
+    'the blocked model states its own configuration');
+  assert.match(blockedFailure.message, /Select another model, or retry when/, 'the blocked model states its own advice');
+  assert.deepEqual(reports, [], 'a model gated before dispatch reports nothing to discovery');
+  const dispatched = seen.length;
+  const neighbour = await run(served);
+  assert.equal(neighbour.error, undefined, String(neighbour.error));
+  assert.equal(neighbour.finish?.reason.kind, 'stop', JSON.stringify(neighbour.finish));
+  assert.ok(neighbour.chunks.some(chunk => chunk.type === 'text-delta' && chunk.text === 'queued answer'),
+    'a gated model on the route does not stop the model the router serves');
+  assert.equal(seen.length, dispatched + 1, 'only the served model reached the router');
+  assert.equal(seen.at(-1).body.model, served, 'the neighbour sends its own service ID');
+  console.log('One offline model of the catalog route failed at dispatch with its own advice while its neighbour on the same route dispatched.');
+  // §10: classify by error.code first, then HTTP status. Bodies use the router's
+  // exact shapes. This sweep runs last on purpose: an offline the router reports
+  // in a stream is remembered for the route, so a sweep that ends on one must
+  // not precede scenarios that expect their requests to reach the router.
+  // (A model that answers again comes back through discovery, not here.)
   const openai = (code, message = `${code} fixture`) => ({ error: { message, type: 'server_error', param: 'model', code } });
   const cases = [
     [{ status: 503, body: openai('SERVICE_OFFLINE', 'Fixture is offline in runtime configuration "fixture-solo" (exclusive_configuration).') }, 'MODEL_UNAVAILABLE', 'SERVICE_OFFLINE'],
@@ -144,27 +169,7 @@ try {
     if (reported) assert.deepEqual(reports.map(row => [row.provider, row.code]), [[provider, reported]], `${label}: discovery hub report`);
     if (expected === 'MODEL_UNAVAILABLE') assert.match(result.finish.reason.failure.message, /Switch this session to another model/);
   }
-  // §4, §5: a model the router stops serving is gated on its own recorded state.
-  // It fails at once with the advice its row states, without consuming a request
-  // or reporting anything to discovery, and the neighbour it shares the route
-  // with — the model the router does serve — still dispatches.
-  reports.length = 0;
-  const blocked = await run(gated);
-  const blockedFailure = blocked.error?.code === 'MODEL_UNAVAILABLE' ? blocked.error : blocked.finish?.reason?.failure;
-  assert.equal(blockedFailure?.code, 'MODEL_UNAVAILABLE', JSON.stringify(blockedFailure ?? blocked.error ?? blocked.chunks.at(-1)));
-  assert.match(blockedFailure.message, /Fixture Night \(96K\) is offline in router configuration "fixture-solo"/,
-    'the blocked model states its own configuration');
-  assert.match(blockedFailure.message, /Select another model, or retry when/, 'the blocked model states its own advice');
-  assert.deepEqual(reports, [], 'a model gated before dispatch reports nothing to discovery');
-  const dispatched = seen.length;
-  const neighbour = await run(served);
-  assert.equal(neighbour.error, undefined, String(neighbour.error));
-  assert.equal(neighbour.finish?.reason.kind, 'stop', JSON.stringify(neighbour.finish));
-  assert.ok(neighbour.chunks.some(chunk => chunk.type === 'text-delta' && chunk.text === 'queued answer'),
-    'a gated model on the route does not stop the model the router serves');
-  assert.equal(seen.length, dispatched + 1, 'only the served model reached the router');
-  assert.equal(seen.at(-1).body.model, served, 'the neighbour sends its own service ID');
-  console.log('One offline model of the catalog route failed at dispatch with its own advice while its neighbour on the same route dispatched.');
+
   // §3 (contract 1.2): an omitted `model` is answered by the default of the
   // active configuration, which the contract does not promise is `daytime` —
   // while a trial configuration is selected it is the trial. A client that must

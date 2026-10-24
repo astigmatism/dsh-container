@@ -31,8 +31,11 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const marker = 'dsh-resident-availability-v4';
+// One marker per revision of this script: every hunk family stamps `marker`, so
+// a file carrying only an older one was written by an older release of this
+// script. Such a tree is left as it was built (the hunks below are anchored on
+// pristine source) and reported, because a stale runtime is a build problem.
 const previousMarkers = ['dsh-resident-availability-v3', 'dsh-resident-availability-v2'];
-/** A tree that already carries an older revision is left as it was built. */
 const patchedAlready = (source) => source.includes(marker) || previousMarkers.some((value) => source.includes(value));
 function replace(source, before, after) {
   if (!source.includes(before) || source.indexOf(before) !== source.lastIndexOf(before)) {
@@ -193,8 +196,7 @@ export function patchCatalog(input) {
   return s;
 }
 export function patchCatalogCodec(input) {
-  const codecMarker = 'dsh-resident-availability-v3-codec';
-  if (input.includes(codecMarker)) return input;
+  if (patchedAlready(input)) return input;
   // Only the modelCatalog result's model descriptor, never arbitrary names.
   const start = input.indexOf('const _deepseek_ai_dsh_api_session_controller_session_modelCatalog_result$schema =');
   const end = input.indexOf('let _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath', start);
@@ -216,7 +218,7 @@ export function patchCatalogCodec(input) {
   if (!section.includes(`${routableLine[2]}availableOnly${routableLine[2]}: ${prefix}boolean().optional(),`)) {
     section = replace(section, routableLine[0], availableOnlyDecl + '\n' + routableLine[0]);
   }
-  return input.slice(0, start) + '// ' + codecMarker + '\n' + section + input.slice(end);
+  return input.slice(0, start) + '// ' + marker + '\n' + section + input.slice(end);
 }
 export function patchClient(input) {
   if (patchedAlready(input)) return input;

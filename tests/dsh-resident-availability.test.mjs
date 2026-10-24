@@ -395,6 +395,14 @@ test('unavailable failures never replay, including a saved always-retry policy',
     assert.equal(await recover({ failure: { code: 'MODEL_UNAVAILABLE' }, retryPolicy: policy }, () => downstream++), undefined);
     assert.equal(downstream, 0);
   }
+  // §10: an invalid request is not retryable, and a saved always-retry policy
+  // does not get to disagree — the router rejected the request, not a slot.
+  for (const code of ['INVALID_REQUEST']) {
+    let downstream = 0;
+    assert.equal(await recover({ failure: { code }, retryPolicy: { mode: 'always' } }, () => downstream++), undefined,
+      `${code} was recovered under an always-retry policy`);
+    assert.equal(downstream, 0, `${code} was replayed`);
+  }
   let downstream = 0;
   await recover({ failure: { code: 'UNRELATED_ERROR' } }, () => downstream++);
   assert.equal(downstream, 1, 'other failures retain their normal recovery path');

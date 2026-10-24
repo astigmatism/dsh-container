@@ -190,11 +190,22 @@ try {
   await clickVerificationTarget(page, page.getByRole('menuitemradio', { name: served.offered, exact: true }));
   await until(async () => await selectedIs(day.model), 'an explicit switch to the neighbour on the same route works');
   // Exercise actual history/projection shapes, not only mocked RPC replies.
-  // This fixture returns a generic 503; it must fail on the terminal event,
-  // without retrying it as a router transition or waiting ten minutes.
-  await assert.rejects(verificationPrompt({ sessionId, text: 'Isolated terminal-error acceptance check.',
-    timeoutMs: 30000, rpc: (method, request) => rpc(`session/${method}`, request) }),
-  /Verification request ended without completion/);
+  // A router error the contract does not retry (§10 INVALID_REQUEST) has to end
+  // the turn on its terminal event: not retried, not read as a router
+  // transition, and not left spinning until the deadline. The generic 503 this
+  // fixture otherwise answers with is a contract retry, so the fixture is
+  // armed for exactly this request and disarmed again straight after.
+  const attempts = (await (await fetch(`${control}/__fixture/requests`)).json()).length;
+  await fetch(`${control}/__fixture/poison/invalid-request`, { headers: { 'x-client-name': CLIENT_NAME } });
+  try {
+    await assert.rejects(verificationPrompt({ sessionId, text: 'Isolated terminal-error acceptance check.',
+      timeoutMs: 30000, rpc: (method, request) => rpc(`session/${method}`, request) }),
+    /Verification request ended without completion/);
+  } finally {
+    await fetch(`${control}/__fixture/poison/off`, { headers: { 'x-client-name': CLIENT_NAME } });
+  }
+  const afterPoison = (await (await fetch(`${control}/__fixture/requests`)).json()).length;
+  assert.equal(afterPoison, attempts + 1, `a non-retryable router error was sent ${afterPoison - attempts} times`);
   console.log('Single-model Bedrock startup, a session retained on one gated model of the shared route, no fallback to its neighbour, and live picker removal/return passed.');
 } catch (error) {
   throw new Error(`${error.message}\nSynthetic fixture browser: ${(await page.locator('body').innerText().catch(() => '')).slice(-8000)}\nBrowser diagnostics: ${browserErrors.slice(-30).join('\n').split(secret).join('[redacted]')}`, { cause: error });

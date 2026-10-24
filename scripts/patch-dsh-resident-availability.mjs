@@ -151,6 +151,11 @@ export function patchRetry(input) {
   return replace(input, 'async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {', `async function recover({ agent, turn, step, provider, failure, retryPolicy: policy, signal }, next) {
         // ${marker}: an unavailable selection is terminal, even under always-retry.
         if (failure.code === 'MODEL_UNAVAILABLE') return;
+        // ${marker}: §10 says an invalid request is never retried and never
+        // re-sent to another model. Under this deployment's saved always-retry
+        // policy it would otherwise replay identically forever, so the reply the
+        // router already gave is the answer.
+        if (failure.code === 'INVALID_REQUEST') return;
         // ${marker}: a draining router is waited out on its own chain, without
         // consuming the provider's retry budget. Every attempt prepares the call
         // again, so a model that went offline in the new configuration fails then.

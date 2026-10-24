@@ -99,6 +99,10 @@ const DISCOVERY = { providers: [ROUTER_PROVIDER], optInServices: ['trial'] };
 const catalogRows = ['daytime', 'nighttime', 'trial'];
 let nightOnline = !daytimeOnly;
 let trialOnline = !daytimeOnly;
+// Armed by the availability qualification to answer inference with a status the
+// contract does not retry, so a real turn can be watched reaching its terminal
+// event instead of retrying. `off` returns the fixture to its generic 503.
+let poison = null;
 let revision = 0;
 const subscribers = new Set();
 function capabilities() {
@@ -125,6 +129,8 @@ const server = http.createServer((request, response) => {
   if (daytimeOnly && request.url.startsWith('/__fixture/')) {
     if (request.url === '/__fixture/night/on' && !nightOnline) { nightOnline = true; publish(); }
     if (request.url === '/__fixture/night/off' && nightOnline) { nightOnline = false; publish(); }
+    if (request.url === '/__fixture/poison/off') poison = null;
+    if (request.url === '/__fixture/poison/invalid-request') poison = { status: 422, body: { error: { message: 'synthetic invalid request', type: 'invalid_request_error', param: 'messages', code: 'synthetic_invalid_request' } } };
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify(inferenceRequests)); return;
   }
@@ -141,6 +147,11 @@ const server = http.createServer((request, response) => {
       if (model === 'nighttime' && !nightOnline) {
         response.writeHead(503, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ error: { message: 'Secondary fixture is offline in runtime configuration "fixture-solo" (exclusive_configuration).', type: 'server_error', param: 'model', code: 'SERVICE_OFFLINE' } }));
+        return;
+      }
+      if (poison !== null) {
+        response.writeHead(poison.status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(poison.body));
         return;
       }
       response.writeHead(503); response.end('synthetic inference unavailable');
@@ -424,7 +435,8 @@ try {
 } catch (error) {
   // This isolated home contains synthetic settings only; strip launch URLs.
   const diagnostic = bootLog.split('\n').slice(-30).map(line => line.replace(/https?:\/\/\S+/g, '[endpoint]').replace(/fixture-only[^\s]*/g, '[fixture value]')).join('\n');
-  throw new Error(`${error.message.replace(/https?:\/\/\S+/g, '[endpoint]').replace(/cookie:.*$/gim, 'cookie: [redacted]')}${diagnostic ? '\n' + diagnostic : ''}`);
+  const reason = `${error.stack ?? error.message}`.replace(/https?:\/\/\S+/g, '[endpoint]').replace(/cookie:.*$/gim, 'cookie: [redacted]');
+  throw new Error(`${reason}${diagnostic ? '\n' + diagnostic : ''}`);
 } finally {
   await stop();
   server.closeAllConnections();

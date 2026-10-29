@@ -74,7 +74,7 @@ The locked web profile contains these eleven plugins:
    compatibility patch, installed but disabled by default because its
    inode/device-sensitive refold path and per-frame synchronous Zstandard
    decompression have caused repeatable multi-gigabyte Harness RSS growth
-2. `dsh-context` 0.62.2
+2. `dsh-context` 0.72.0
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
 5. `dsh-ego-browser` 0.8.6 at `dfde57221443bdade5e0cbee7c773a6839ffe560`,
@@ -82,10 +82,10 @@ The locked web profile contains these eleven plugins:
    logins, native screenshot attachments and authenticated browser controls
 6. `dsh-plugin-task-notification` 0.2.1 at commit
    `f10cd6869b7a50e55780627a6d55bbb310fd59b4`
-7. `dsh-session-pin` 0.7.16
-8. `dsh-ui-appearance` 0.1.17
+7. `dsh-session-pin` 0.7.19
+8. `dsh-ui-appearance` 0.1.25
 9. `dsh-favicon-status` 0.1.0-rc.8 (published without a manifest BOM)
-10. `dsh-better-sidebar` 0.24.1 with task views and session file activity;
+10. `dsh-better-sidebar` 0.26.1 with task views and session file activity;
     terminal and image/PDF rendering use the upstream Harness implementations
 11. `dsh-follow-up-suggestions` 0.1.0 (local, in `seed/profile/plugins/`),
     adapted from `shaoeric/dsh-suggest` (MIT) for the 0.2 APIs

@@ -125,17 +125,20 @@ if ! inventory=$(compose exec -T harness dsh plugin --profile web list); then
   echo "Harness did not return its plugin inventory." >&2
   exit "$application_health_exit"
 fi
+# The captured inventory is one list, proved identical to the built-image gate's
+# by tests/captured-inventory.test.py. Keep both in step when a plugin is bumped.
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-better-sidebar@0.24.1' \
-  'dsh-context@0.62.2' \
+  'dsh-better-sidebar@0.26.1' \
+  'dsh-context@0.72.0' \
   'dsh-favicon-status@0.1.0-rc.8' \
+  'dsh-follow-up-suggestions@link:' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
   'dsh-ego-browser@0.8.6' \
-  'dsh-session-pin@0.7.16' \
-  'dsh-ui-appearance@0.1.17'
+  'dsh-session-pin@0.7.19' \
+  'dsh-ui-appearance@0.1.25'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
     echo "Missing captured plugin: $expected" >&2

@@ -32,6 +32,7 @@ case "${1:-}" in
     python3 -B "$project_dir/tests/router-endpoint.test.py"
     (cd "$project_dir" && python3 -B -c 'from maintenance.qualification import registered_files; registered_files(".")')
     python3 -B "$project_dir/tests/upgrade-recovery.test.py"
+    python3 -B "$project_dir/tests/captured-inventory.test.py"
     node --test "$project_dir/tests/external-tls.integration.mjs"
     node --test "$project_dir/tests/verification-inference.test.mjs"
     # LLM Router client contract (docs/llm-router-contract.md): synthetic
@@ -81,6 +82,7 @@ python3 "$project_dir/tests/gateway-credentials.test.py"
 python3 "$project_dir/tests/upgrade-recovery.test.py"
 python3 "$project_dir/tests/router-endpoint.test.py"
 python3 "$project_dir/tests/runtime-release.test.py"
+python3 "$project_dir/tests/captured-inventory.test.py"
 python3 "$project_dir/tests/runtime-profile-sync.test.py"
 "$project_dir/tests/delegated-gateway.test.sh"
 "$project_dir/tests/dictation-validation.test.sh"

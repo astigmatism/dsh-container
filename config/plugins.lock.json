@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-10-16",
+  "capturedAt": "2026-10-29 (Appearance raised to 0.1.25 for the dark-mode dialog fix)",
   "dsh": "0.2.1-alpha.5 (dsh-v0.2.1-alpha.5; 1517a4dbca0a2789ff1d41ba439600f8547d23fa)",
   "profile": "web",
   "plugins": {
@@ -11,7 +11,7 @@
     "dsh-loop-detector": "1.0.0 (local patch)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-session-pin": "0.7.19 (session/workspace navigation patch)",
-    "dsh-ui-appearance": "0.1.23 (settings icon patch)",
+    "dsh-ui-appearance": "0.1.25 (settings icon verification; dark-mode dialog fix)",
     "dsh-better-sidebar": "0.26.1",
     "dsh-ego-browser": "0.8.6 (container adapter v1)"
   },

@@ -13,7 +13,7 @@
     "dsh-loop-detector": "1.0.0",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification#f10cd6869b7a50e55780627a6d55bbb310fd59b4",
     "dsh-session-pin": "0.7.19",
-    "dsh-ui-appearance": "0.1.23",
+    "dsh-ui-appearance": "0.1.25",
     "dsh-container-profile": "link:./managed",
     "dsh-ego-browser": "https://codeload.github.com/Fisfzy/dsh-ego-browser/tar.gz/dfde57221443bdade5e0cbee7c773a6839ffe560",
     "playwright-core": "1.56.1"

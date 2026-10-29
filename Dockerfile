@@ -200,7 +200,7 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-container-v1' node_modules/dsh-ego-browser/lib/index.js \
     && grep -Fq 'dsh-session-pin@0.7.19' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ui-appearance@0.1.23' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ui-appearance@0.1.25' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \

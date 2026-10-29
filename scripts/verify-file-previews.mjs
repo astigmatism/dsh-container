@@ -238,19 +238,95 @@ try {
   await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await page.waitForFunction(() => document.body.hasAttribute('data-ds-dark-theme'));
+  // Appearance paints dialogs from its own modal tokens. 0.1.23 scoped the light
+  // rule with `:is(#root, body)`, and `:is()` contributes the highest specificity
+  // of its arguments, so the leaked `#root` ID outranked the dark rule and left a
+  // body-mounted dialog white behind near-white text (contrast 1.0-1.1). Anchor
+  // the dark surface and the readability of the controls sitting on it.
+  const dialogSurface = await page.evaluate(() => {
+    const panel = document.querySelector('[data-shortcut-modal="settings"]');
+    if (!panel) throw new Error('the settings dialog did not open');
+    const paint = value => {
+      const parts = /rgba?\(([^)]+)\)/.exec(value)?.[1].split(',').map(Number) ?? [];
+      return { red: parts[0] ?? 255, green: parts[1] ?? 255, blue: parts[2] ?? 255, alpha: parts.length > 3 ? parts[3] : 1 };
+    };
+    const blend = (front, back) => ({
+      red: front.alpha * front.red + (1 - front.alpha) * back.red,
+      green: front.alpha * front.green + (1 - front.alpha) * back.green,
+      blue: front.alpha * front.blue + (1 - front.alpha) * back.blue,
+    });
+    const luminance = ({ red, green, blue }) => {
+      const channel = value => { const part = value / 255; return part <= 0.03928 ? part / 12.92 : ((part + 0.055) / 1.055) ** 2.4; };
+      return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+    };
+    const backdrop = element => {
+      let surface = { red: 255, green: 255, blue: 255 };
+      for (let node = element; node; node = node.parentElement) {
+        const layer = paint(getComputedStyle(node).backgroundColor);
+        if (layer.alpha === 0) continue;
+        surface = blend(layer, surface);
+        if (layer.alpha === 1) break;
+      }
+      return surface;
+    };
+    const contrast = element => {
+      const surface = backdrop(element);
+      const ink = blend(paint(getComputedStyle(element).color), surface);
+      const brighter = Math.max(luminance(ink), luminance(surface));
+      const darker = Math.min(luminance(ink), luminance(surface));
+      return Number(((brighter + 0.05) / (darker + 0.05)).toFixed(2));
+    };
+    const readout = selector => [...panel.querySelectorAll(selector)]
+      .filter(element => element.getClientRects().length && (element.innerText || '').trim())
+      .map(element => ({ text: element.innerText.trim().slice(0, 24), contrast: contrast(element) }));
+    const style = getComputedStyle(panel);
+    return {
+      background: style.backgroundColor,
+      layer2: style.getPropertyValue('--dsw-alias-bg-layer-2').trim().toLowerCase(),
+      navTabs: readout('[class*="_navCell"]'),
+      selects: readout('[class*="_selector"]'),
+    };
+  });
+  assert.equal(dialogSurface.layer2, '#2c2c2e', 'the dialog resolves the dark layer-2 surface token');
+  assert.equal(dialogSurface.background, 'rgb(44, 44, 46)', 'the dialog paints the dark modal surface, not #ffffff');
+  for (const [group, rows] of Object.entries({ 'navigation tabs': dialogSurface.navTabs, 'mode selects': dialogSurface.selects })) {
+    assert.ok(rows.length >= 2, `the settings dialog shows at least two ${group}`);
+    assert.deepEqual(rows.filter(row => row.contrast < 4.5), [], `${group} text must stay readable on the dark dialog`);
+  }
+  console.log(`Verified the dark settings dialog paints the dark modal surface with readable ${dialogSurface.navTabs.length} tabs and ${dialogSurface.selects.length} selects.`);
   const appearanceBefore = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim());
   await page.locator('[data-disclosure-row]').filter({ has: page.getByText('Appearance', { exact: true }) }).click();
   await page.getByRole('tab', { name: /^Dark Mode/ }).click();
   await page.getByRole('button', { name: 'Ocean', exact: true }).click();
+  // The settings document only exists after a control commits, so an unreadable
+  // dialog cannot hide behind a missing key. Resolve it by shape instead of by
+  // key: 0.1.25 keeps writing `dsh-ui-appearance.settings`, and a future rename
+  // must fail here rather than read as an unset preset.
   await page.waitForFunction(() => {
-    const dark = JSON.parse(localStorage.getItem('dsh-ui-appearance.settings'))?.dark;
-    return dark?.preset === 'ocean' && getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim().toLowerCase() === dark.accent.toLowerCase();
+    for (const key of Object.keys(localStorage)) {
+      let stored;
+      try { stored = JSON.parse(localStorage.getItem(key) ?? ''); } catch { continue; }
+      if (stored?.dark?.preset === 'ocean')
+        return getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim().toLowerCase() === String(stored.dark.accent).toLowerCase();
+    }
+    return false;
   });
+  const readAppearanceSettings = () => page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) {
+      let stored;
+      try { stored = JSON.parse(localStorage.getItem(key) ?? ''); } catch { continue; }
+      if (typeof stored?.dark?.preset === 'string' && typeof stored.dark.accent === 'string') return { key, dark: stored.dark };
+    }
+    return null;
+  });
+  const appearanceSettings = await readAppearanceSettings();
+  assert.ok(appearanceSettings, 'Appearance commits its settings document to localStorage');
+  assert.equal(appearanceSettings.dark.preset, 'ocean');
   const appearanceAfter = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim());
   assert.notEqual(appearanceAfter, appearanceBefore, 'preset changes the rendered accent color');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(expected => getComputedStyle(document.body).getPropertyValue('--dsw-alias-brand-primary').trim() === expected, appearanceAfter);
-  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-ui-appearance.settings')).dark.preset), 'ocean');
+  assert.deepEqual(await readAppearanceSettings(), appearanceSettings, 'the Appearance document survives a browser reload');
   console.log('Verified Appearance preset controls, applied styles and persistence across browser reload.');
   assert.deepEqual(errors, []);
 } catch (error) {

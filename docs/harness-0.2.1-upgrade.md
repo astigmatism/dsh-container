@@ -15,7 +15,7 @@ has been updated until its dated result appears in the acceptance record below.
 | Better Sidebar | `0.26.1`, workspace fence patch reimplemented on the upstream resolver surface |
 | Context | `0.72.0` |
 | Session Pin | `0.7.19`, retained navigation verification |
-| Appearance | `0.1.23`, retained settings icon verification |
+| Appearance | `0.1.25`, settings icon verification, dark-mode dialog fix |
 | Token | `0.1.3`, installed but bundle inactive |
 | ego-browser | tag `v0.8.6`, unchanged from the 0.2 qualification |
 | pnpm | `11.7.0` |
@@ -41,6 +41,14 @@ replayed from a fresh tarball and a fresh `pnpm install` before this PR.
   is a build-gated verification of that behavior.
 - **Appearance settings icons are upstream.** The personalization icon adapter
   ships in 0.1.23; the patch is now a verification.
+- **Appearance dialogs follow dark mode upstream.** 0.1.23 scoped its light
+  modal rule with `:is(#root, body)`, and `:is()` contributes the highest
+  specificity of its arguments, so the leaked `#root` ID outranked the dark rule
+  and a body-mounted settings dialog kept the light panel behind near-white text.
+  0.1.24 made the ancestor scope specificity-free (`:where(#root, body)`) and
+  tightened the dialog selector; the pin moves to `0.1.25` for that fix, the
+  build gate verifies both anchors, and the boot rehearsal samples the dark
+  settings dialog for the dark modal token and readable text.
 - **Sidebar 0.26.1 grew fence seams.** Its workspace resolvers accept a fence
   parameter placeholder; `patch-dsh-sidebar-workspace.mjs` now implements the
   container fence behind those upstream resolvers and threads the live

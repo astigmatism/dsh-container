@@ -55,8 +55,8 @@ importers:
         specifier: 0.7.19
         version: 0.7.19(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/schemastery@3.18.5-alpha.2)
       dsh-ui-appearance:
-        specifier: 0.1.23
-        version: 0.1.23(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/schemastery@3.18.5-alpha.2)
+        specifier: 0.1.25
+        version: 0.1.25(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/schemastery@3.18.5-alpha.2)
       playwright-core:
         specifier: 1.56.1
         version: 1.56.1
@@ -158,9 +158,6 @@ packages:
 
   '@deepseek-ai/cosmokit@1.8.6':
     resolution: {integrity: sha512-ZSD/fN52L498LBIOYwjIOlaLv5veY6ZEwI2yzvZUKQtctn0QAPqu8tKdJ+OF5+Tv6NBq1U+wJWH+QI6OGy5EvQ==}
-
-  '@deepseek-ai/cosmokit@1.8.6-alpha.2':
-    resolution: {integrity: sha512-FcxdMUal80CeFURh3lPYsw9TPDMVSGpovWnA3JtTGrBG15XFli4k38z1Egso1lgvifKpIW4Hx42X6UTelLEOAA==}
 
   '@deepseek-ai/dsh-brand@0.2.1-alpha.5':
     resolution: {integrity: sha512-BfOPg8MMlmbzWq4zL3f/Dlwqk3PjsIwjQVzF+uiEzFkOdXo5nPXEqP/9mso1cn7d7eTVfO0eXkCsPD1Py9AoJQ==}
@@ -685,8 +682,8 @@ packages:
       '@deepseek-ai/dsh-client-ui-sidebar':
         optional: true
 
-  dsh-ui-appearance@0.1.23:
-    resolution: {integrity: sha512-CEniSKkCsE4JU7Cb0ZtGw1gQe9Wf0KoJEV4sri3lEofwtddaH2ZGLJh+EspGyciSaIKWuIx3ulQGrAOADTVHpQ==}
+  dsh-ui-appearance@0.1.25:
+    resolution: {integrity: sha512-kee+FkjREv4JBI/Vyqrq0+ibQit0yDAW87cAPZq3K6TnmPULSBYWxou+B2ZBB/gdEQT6uNygJXksfBWdAk/nyw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@deepseek-ai/cordis': '*'
@@ -1095,8 +1092,6 @@ snapshots:
 
   '@deepseek-ai/cosmokit@1.8.6': {}
 
-  '@deepseek-ai/cosmokit@1.8.6-alpha.2': {}
-
   '@deepseek-ai/dsh-brand@0.2.1-alpha.5(@deepseek-ai/cordis@4.0.5)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.5
@@ -1137,7 +1132,7 @@ snapshots:
 
   '@deepseek-ai/schemastery@3.18.5-alpha.2':
     dependencies:
-      '@deepseek-ai/cosmokit': 1.8.6-alpha.2
+      '@deepseek-ai/cosmokit': 1.8.6
       '@standard-schema/spec': 1.1.0
 
   '@formkit/auto-animate@0.10.0': {}
@@ -1665,7 +1660,7 @@ snapshots:
       '@deepseek-ai/cordis': 4.0.5
       '@deepseek-ai/schemastery': 3.18.5-alpha.2
 
-  dsh-ui-appearance@0.1.23(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/schemastery@3.18.5-alpha.2):
+  dsh-ui-appearance@0.1.25(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/schemastery@3.18.5-alpha.2):
     dependencies:
       clsx: 2.1.1
     optionalDependencies:

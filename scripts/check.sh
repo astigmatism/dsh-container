@@ -6,6 +6,20 @@ project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 build=0
 rehearsals_only=0
 
+# A failing script like this one reports only "Process completed with exit code 1"
+# in a check run, and the log is otherwise the only signal. Each stage of the image
+# path names itself, so a red run annotates the stage that failed and can be acted
+# on without opening a log.
+stage_name="source checks"
+stage() {
+  stage_name=$1
+  printf 'check.sh: %s\n' "$1"
+}
+trap 'status=$?
+if [ $status -ne 0 ]; then
+  printf "::error::check.sh failed in stage \"%s\" (exit %s)\n" "$stage_name" "$status" >&2
+fi' EXIT
+
 # Synthetic credentials belong only to static configuration checks. Do not
 # let them conceal missing private credentials in upgrade/recovery tests.
 compose_check() {
@@ -204,9 +218,11 @@ if [ "$build" -eq 1 ]; then
 
   # Exercise the same restrictive source permissions as a real maintenance
   # fetch, without changing the checkout or copying private deployment state.
+  stage "build the harness, gateway, and router images"
   python3 -B "$project_dir/tests/build-private-release.py" \
     "$harness_image" "$gateway_image" "$router_image"
 
+  stage "maintenance, gateway, and router image prerequisites"
   docker run --rm --network none --read-only --user 12345:12345 \
     --entrypoint python3 "$harness_image" -B /opt/dsh-maintenance/main.py self-test
   docker run --rm --network none --read-only --user 12345:12345 \
@@ -250,6 +266,7 @@ if [ "$build" -eq 1 ]; then
     echo "Built image has the wrong upstream commit label." >&2
     exit 1
   }
+  stage "built image inventory and shipped-bundle markers"
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.2.2-rc.1") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
@@ -364,6 +381,7 @@ if [ "$build" -eq 1 ]; then
     }
   '
 
+  stage "effective configuration and gateway checks"
   docker run --rm --network none --env DSH_HOME=/opt/dsh-seed \
     --entrypoint /bin/sh "$harness_image" -eu -c '
     dsh --profile web --dump-config | node --input-type=module -e '\''
@@ -377,6 +395,7 @@ if [ "$build" -eq 1 ]; then
       | node /opt/dsh-build/verify-dsh-token-policy.mjs --effective-config disabled
   '
 
+  stage "canonical runtime profile synchronization"
   docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
     mkdir -p /data/dsh/profiles/web /data/dsh/.dsh-plugins /data/dsh/sessions
     touch /data/dsh/profiles/web/divergent-package /data/dsh/.dsh-plugins/divergent-plugin
@@ -390,6 +409,7 @@ if [ "$build" -eq 1 ]; then
     cmp /opt/dsh-seed/.dsh-plugins/dsh-router-model-discovery.js /data/dsh/.dsh-plugins/dsh-router-model-discovery.js
   '
 
+  stage "router startup compatibility"
   docker run --rm --network none --entrypoint node "$harness_image" /opt/dsh-build/verify-router-startup.mjs
   docker run --rm --network none --entrypoint node "$harness_image" /opt/dsh-build/verify-router-startup.mjs --daytime-only
 
@@ -402,12 +422,14 @@ if [ "$build" -eq 1 ]; then
   qualification_artifacts=${RUNNER_TEMP:-/tmp}/dsh-vision-evidence
   mkdir -p "$qualification_artifacts"
   chmod 0777 "$qualification_artifacts"
+  stage "plugin boot verification"
   docker run --rm --env HOME=/ --env DSH_VERIFY_RESIDENT_CATALOG=true \
     --env DSH_EGO_VISION_EVIDENCE=/qualification \
     --volume "$qualification_artifacts:/qualification" --entrypoint /bin/sh "$harness_image" -eu -c '
     /usr/local/bin/dsh-verify-plugin-boot
   '
 
+  stage "persisted settings and service compatibility"
   docker run --rm --tmpfs /data/dsh --entrypoint /bin/sh "$harness_image" -eu -c '
     DSH_CANONICAL_SETTINGS=/opt/dsh-defaults/settings.yaml \
     DSH_RUNTIME_SETTINGS=/data/dsh/settings.yaml \

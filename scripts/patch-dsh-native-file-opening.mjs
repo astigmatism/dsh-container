@@ -46,65 +46,24 @@ export function guardedWorkspaceFileOpener(hostDescription, openFile) {
 /** Apply the capability boundary to the pinned conversation browser bundle. */
 export function patchConversationSource(input) {
   if (input.includes(PATCH_MARKER)) return input;
+  // The container renders in a browser, so a workspace file has to open in the
+  // Harness sidebar instead of through the Host. 0.2.2-rc.1 made that the
+  // upstream behaviour: `openFile` resolves a `dsh-resource://file/` address and
+  // hands it to `sidebarRight.openResource`, and the conversation bundle no
+  // longer holds a `workspaces.openPath` dispatch at all. Prove both halves, so
+  // a release that reintroduces a Host dispatch fails the image build rather
+  // than quietly offering an action this deployment cannot serve.
   if (
     input.includes('const FILE_ADDRESS_PREFIX = "dsh-resource://file/";') &&
-    input.includes('const url = fileAddressFor(sessionId, cwd, path);') &&
-    input.includes('ctx.sidebarRight.openResource(url)')
+    input.includes('ctx.sidebarRight.openResource(url)') &&
+    !input.includes('workspaces.openPath(')
   ) {
     return `${input}\n// ${PATCH_MARKER}: verified upstream in-app workspace resource opening; no native host dispatch.\n`;
   }
-  let source = input;
-
-  source = replaceOnce(
-    source,
-    `\t\tfunction apply(ctx) {`,
-    `\t\t// ${PATCH_MARKER}: native file actions fail closed on the live Host capability.\n${canOpenWorkspacePath.toString()}\n${exposedWorkspaceFileOpener.toString()}\n${guardedWorkspaceFileOpener.toString()}\n\t\tfunction apply(ctx) {`,
-    "conversation native-file capability helpers",
+  throw new Error(
+    'conversation bundle dispatches workspace paths to the Host again: re-qualify the native-file capability gate '
+    + '(the 0.2.2-rc.1 in-app open path is `sidebarRight.openResource`, and no `workspaces.openPath` call may remain)',
   );
-
-  source = replaceOnce(
-    source,
-    `\t\tfunction ChatView({ useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt, fileMentions, t }) {\n\t\t\tconst order = useSession((s) => s.chat.order);`,
-    `\t\tfunction ChatView({ useSession, useSessions, useStore, useHostDescription, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt, fileMentions, t }) {\n\t\t\tconst hostDescription = useHostDescription((description) => description);\n\t\t\tconst order = useSession((s) => s.chat.order);`,
-    "conversation Host-description subscription",
-  );
-
-  source = replaceOnce(
-    source,
-    `\t\t\t}, [openFile, t]);\n\t\t\tconst closeFileOpenError = (0, react.useCallback)(() => {`,
-    `\t\t\t}, [openFile, t]);\n\t\t\tconst availableOpenFile = exposedWorkspaceFileOpener(hostDescription, requestOpenFile);\n\t\t\t(0, react.useEffect)(() => {\n\t\t\t\tif (availableOpenFile !== void 0) return;\n\t\t\t\tfileOpenRequest.current += 1;\n\t\t\t\tsetFileOpenError(null);\n\t\t\t\tsetFileOpenBusy(false);\n\t\t\t}, [availableOpenFile]);\n\t\t\tconst closeFileOpenError = (0, react.useCallback)(() => {`,
-    "conversation file-action exposure",
-  );
-
-  source = replaceOnce(
-    source,
-    `\t\t\t\t\t\t\t\topenFile: requestOpenFile,`,
-    `\t\t\t\t\t\t\t\topenFile: availableOpenFile,`,
-    "conversation chat-node opener",
-  );
-
-  source = replaceOnce(
-    source,
-    `\t\t\tconst sessions = ctx.sessions;\n\t\t\tconst workspaces = ctx.workspaces;\n\t\t\tconst layout = ctx.layout;`,
-    `\t\t\tconst sessions = ctx.sessions;\n\t\t\tconst workspaces = ctx.workspaces;\n\t\t\tconst connection = ctx.connection;\n\t\t\tconst layout = ctx.layout;`,
-    "conversation connection service",
-  );
-
-  source = replaceOnce(
-    source,
-    `\t\t\t\tinject: (sessionId, actions) => {\n\t\t\t\t\tconst conversation = concreteConversation(ctx);\n\t\t\t\t\tconst scoped = scopedConversation(sessions, sessionId);\n\t\t\t\t\treturn {\n\t\t\t\t\t\topenDetails: (target) => {`,
-    `\t\t\t\tinject: (sessionId, actions) => {\n\t\t\t\t\tconst conversation = concreteConversation(ctx);\n\t\t\t\t\tconst scoped = scopedConversation(sessions, sessionId);\n\t\t\t\t\tconst openFile = guardedWorkspaceFileOpener(connection.hostDescription, (path) => {\n\t\t\t\t\t\tconst cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd;\n\t\t\t\t\t\treturn workspaces.openPath((0, _deepseek_ai_dsh_client_runtime_client.resolveWorkspacePath)(cwd, path));\n\t\t\t\t\t});\n\t\t\t\t\treturn {\n\t\t\t\t\t\thooks: { hostDescription: connection.hostDescription },\n\t\t\t\t\t\topenDetails: (target) => {`,
-    "conversation guarded open-file injection",
-  );
-
-  source = replaceOnce(
-    source,
-    `\t\t\t\t\t\tfileMentions: (owner) => ctx.get("chatFileMentions")?.forClosing(owner),\n\t\t\t\t\t\topenFile: (path) => {\n\t\t\t\t\t\t\tconst cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd;\n\t\t\t\t\t\t\treturn workspaces.openPath((0, _deepseek_ai_dsh_client_runtime_client.resolveWorkspacePath)(cwd, path));\n\t\t\t\t\t\t},`,
-    `\t\t\t\t\t\tfileMentions: (owner) => owner.openFile === void 0 ? void 0 : ctx.get("chatFileMentions")?.forClosing(owner),\n\t\t\t\t\t\topenFile,`,
-    "conversation open-file boundary",
-  );
-
-  return source;
 }
 
 /** Make produced-file and folder affordances obey the same Host capability. */

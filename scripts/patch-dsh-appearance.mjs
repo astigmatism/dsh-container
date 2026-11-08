@@ -28,7 +28,7 @@ export function verifyClient(source) {
 async function main() {
   const root = process.argv[2] ?? '/opt/dsh-seed/profiles/web/node_modules/dsh-ui-appearance';
   const manifest = JSON.parse(await readFile(`${root}/package.json`, 'utf8'));
-  if (manifest.version !== '0.1.25') throw new Error('Appearance patch requires published 0.1.25');
+  if (manifest.version !== '0.1.28') throw new Error('Appearance patch requires published 0.1.28');
   verifyClient(await readFile(`${root}/lib/client.js`, 'utf8'));
   console.log('Verified Appearance settings use the upstream personalization icon adapter.');
 }

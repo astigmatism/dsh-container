@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 const marker = 'dsh-ego-container-v1';
 function replace(source, before, after, count = 1) {
-  if (source.split(before).length !== count + 1) throw new Error(`Ego 0.8.6 source drift: ${before.slice(0, 90)}`);
+  if (source.split(before).length !== count + 1) throw new Error(`Ego 0.9.11 source drift: ${before.slice(0, 90)}`);
   return source.replaceAll(before, after);
 }
 export function patchHost(source) {
@@ -20,7 +20,7 @@ export function patchHost(source) {
   source = replace(source, 'ctx.inject?.(["webServer"], (wctx) => {', 'ctx.inject?.(["webServer", "connection"], (wctx) => {');
   source = replace(source, 'const isTrustedRequest = (req) => /(?:^|;\\s*)dsh-auth-[^=]+=/.test(String(req.headers.cookie ?? ""));',
     'const isTrustedRequest = (req) => ctx.connection.requestRejection(req) === undefined;');
-  source = replace(source, 'env: process.versions.electron ? {\n\t\t\t\t\t\t...process.env,\n\t\t\t\t\t\tELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? "1"\n\t\t\t\t\t} : void 0,', 'env: browserEnvironment(),');
+  source = replace(source, 'env: process.versions.electron ? {\n\t\t\t\t\t...process.env,\n\t\t\t\t\tELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? "1"\n\t\t\t\t} : void 0,', 'env: browserEnvironment(),');
   source = replace(source, 'const data = await proxyFrom(port, "/api/spaces");', 'const raw = await proxyFrom(port, "/api/spaces");\nconst data = raw ? await scopeSpaces(_req, raw) : null;');
   source = replace(source, 'const res = resRaw;\n\t\t\t\tif (req.method !== "POST")', 'const res = resRaw;\nconst rejection = ctx.connection.requestRejection(req);\nif (rejection !== undefined) { res.writeHead(rejection); res.end(); return; }\n\t\t\t\tif (req.method !== "POST")');
   source = replace(source, 'const result = await proxyPost(port, "/api/input", await readJsonBody$1(req).catch(() => ({})));', 'lastEgoActivity = Date.now();\nconst result = await proxyPost(port, "/api/input", await readJsonBody$1(req).catch(() => ({})));');
@@ -35,7 +35,7 @@ export function patchClient(source) {
     'var res = await fetch(SPACES_ROUTE + "?sessionId=" + encodeURIComponent(self.sessionId || ""), { cache: "no-store" });\n\t\t\t\t\tif (self.disposed');
   source = replace(source, 'var controller = controllerRef.current;', 'var controller = controllerRef.current;\ncontroller.sessionId = props.scope?.sessionId;');
   source = replace(source, 'var self = this;\n\t\t\tfetch(INPUT_ROUTE, {', 'var self = this;\nself.inputQueue = (self.inputQueue || Promise.resolve()).then(function() {\nreturn fetch(INPUT_ROUTE, { signal: AbortSignal.timeout(10000),');
-  source = replace(source, 'self.refresh();\n\t\t\t\t}\n\t\t\t}).catch(function() {});\n\t\t};\n\t\tLivePreviewController.prototype.browserXY', 'self.refresh();\n\t\t\t\t}\n\t\t\t}); }).catch(function() {});\n\t\t};\n\t\tLivePreviewController.prototype.browserXY');
+  source = replace(source, 'self.refresh();\n\t\t\t\t}\n\t\t\t}).catch(function() {});\n\t\t};\n\t\tLivePreviewController.prototype.noteViewport', 'self.refresh();\n\t\t\t\t}\n\t\t\t}); }).catch(function() {});\n\t\t};\n\t\tLivePreviewController.prototype.noteViewport');
   source = replace(source, 'if (Array.isArray(list)) self._processSpaces(list);', 'if (Array.isArray(list)) self.refresh();');
   source = replace(source, '\t\t\t\t\tif (!m || !m.targetId || !m.data) return;\n\t\t\t\t\tif (Number.isFinite(m.vw)', '\t\t\t\t\tif (!m || !m.targetId || !m.data || !self.pageMeta.has(m.targetId)) return;\n\t\t\t\t\tif (Number.isFinite(m.vw)');
   source = replace(source, 'title: wt("raiseWindowHint"),', 'style: { display: "none" }, title: wt("raiseWindowHint"),');
@@ -46,7 +46,7 @@ export function patchClient(source) {
 }
 export async function main(root = process.argv[2] || '/opt/dsh-seed/profiles/web/node_modules/dsh-ego-browser') {
   const manifest = JSON.parse(await readFile(`${root}/package.json`, 'utf8'));
-  if (manifest.version !== '0.8.6') throw new Error('Ego adapter requires pinned 0.8.6');
+  if (manifest.version !== '0.9.11') throw new Error('Ego adapter requires pinned 0.9.11');
   for (const [file, patch] of [['lib/index.js', patchHost], ['lib/client.js', patchClient]]) {
     const path = `${root}/${file}`; await writeFile(path, patch(await readFile(path, 'utf8')));
   }

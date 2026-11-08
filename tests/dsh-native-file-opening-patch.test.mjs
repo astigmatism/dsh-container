@@ -9,6 +9,26 @@ import {
   patchDeliverablesSource,
 } from "../scripts/patch-dsh-native-file-opening.mjs";
 
+// 0.2.2-rc.1 opens a workspace file in the Harness sidebar: `openFile` builds a
+// `dsh-resource://file/` address and hands it to `sidebarRight.openResource`, so
+// the bundle holds no Host dispatch for the container to gate.
+const conversationInAppFixture = `
+\t\tconst FILE_ADDRESS_PREFIX = "dsh-resource://file/";
+\t\tfunction fileAddressFor(sessionId, cwd, path) {
+\t\t\treturn FILE_ADDRESS_PREFIX + sessionId + "/" + path;
+\t\t}
+\t\tfunction apply(ctx) {
+\t\t\tslots.register({
+\t\t\t\topenFile: async (path, options) => {
+\t\t\t\t\tconst cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd;
+\t\t\t\t\tconst url = fileAddressFor(sessionId, cwd, resolveWorkspacePath(cwd, path));
+\t\t\t\t\tif (options?.line === void 0) ctx.sidebarRight.openResource(url);
+\t\t\t\t\telse ctx.sidebarRight.openResource(url, { params: { line: options.line } });
+\t\t\t\t},
+\t\t\t});
+\t\t}
+`;
+
 const conversationFixture = `
 		function ChatView({ useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt, fileMentions, t }) {
 			const order = useSession((s) => s.chat.order);
@@ -154,20 +174,21 @@ test("an opener retained across disconnect cannot issue a stale native-open call
   assert.equal(exposedWorkspaceFileOpener(hostDescription.getSnapshot(), guarded), undefined);
 });
 
-test("production patches gate Markdown, produced-file, and folder affordances and are idempotent", () => {
-  const conversation = patchConversationSource(conversationFixture);
+test("0.2.2-rc.1 conversation opening is verified upstream and marker-only", () => {
+  const patched = patchConversationSource(conversationInAppFixture);
+
+  assert.match(patched, /dsh-native-file-opening-v1/);
+  assert.match(patched, /verified upstream in-app workspace resource opening/);
+  assert.ok(!/useHostDescription/.test(patched), "the in-app bundle must not gain native gating");
+  assert.equal(patchConversationSource(patched), patched, "conversation verification is idempotent");
+});
+
+test("production patch gates produced-file and folder affordances and is idempotent", () => {
   const deliverables = patchDeliverablesSource(deliverablesFixture);
 
-  assert.match(conversation, /dsh-native-file-opening-v1/);
-  assert.match(conversation, /useHostDescription\(\(description\) => description\)/);
-  assert.match(conversation, /openFile: availableOpenFile/);
-  assert.match(conversation, /owner\.openFile === void 0 \? void 0/);
-  assert.match(conversation, /resolveWorkspacePath\)\(cwd, path\)/);
-  assert.match(conversation, /guardedWorkspaceFileOpener\(connection\.hostDescription/);
   assert.match(deliverables, /canOpenPath \? .*"button"/s);
   assert.match(deliverables, /: .*"span".*children: path/s);
   assert.match(deliverables, /hidden > 0 && isLoopback && canOpenPath/);
-  assert.equal(patchConversationSource(conversation), conversation, "conversation patch is idempotent");
   assert.equal(patchDeliverablesSource(deliverables), deliverables, "deliverables patch is idempotent");
 });
 
@@ -201,10 +222,15 @@ test("0.2.1-alpha.5 server-driven desktop metadata is verified and marker-only",
 });
 
 test("upstream anchor drift fails with a clear diagnostic", () => {
-  const driftedConversation = conversationFixture.replace("openFile: requestOpenFile,", "openFile: renamedOpenFile,");
+  // A bundle that dispatches workspace paths to the Host again must not be
+  // accepted by the in-app verification.
   assert.throws(
-    () => patchConversationSource(driftedConversation),
-    /cannot patch conversation chat-node opener: expected source was not found/,
+    () => patchConversationSource(conversationFixture),
+    /dispatches workspace paths to the Host again/,
+  );
+  assert.throws(
+    () => patchConversationSource(`${conversationInAppFixture}\n\t\tworkspaces.openPath(path);`),
+    /dispatches workspace paths to the Host again/,
   );
 
   const driftedDeliverables = deliverablesFixture.replace("const canOpenPath = isLoopback && hostCanOpenPath;", "const canOpenPath = hostCanOpenPath;");

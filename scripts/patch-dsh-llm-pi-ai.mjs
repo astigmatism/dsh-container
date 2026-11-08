@@ -297,10 +297,15 @@ export function patchSource(input) {
     "concurrency lease declaration",
   );
 
+  // 0.2.2-rc.1 widened requestHeaders() to carry the request options, the
+  // serving base URL, and the adapter's prepareHeaders hook. The injected
+  // spread stays limited to `openai-responses`, which is the api this
+  // deployment's router route publishes; the azure/codex responses variants
+  // upstream also recognises are deliberately left unpatched and unqualified.
   source = replaceOnce(
     source,
-    `\t\t\t\t\tsignal: watchdog.signal,\n\t\t\t\t\theaders: requestHeaders(profile.headers)\n`,
-    `\t\t\t\t\tsignal: watchdog.signal,\n\t\t\t\t\theaders: requestHeaders(profile.headers),\n\t\t\t\t\t// ${PATCH_MARKER}: router queue keepalives (SSE comments) count as stream activity.\n\t\t\t\t\t...model.api === "openai-responses" ? { fetch: routerActivityFetch(watchdog) } : {}\n`,
+    `\t\t\t\t\tsignal: watchdog.signal,\n\t\t\t\t\theaders: requestHeaders(profile.headers, options, model.baseUrl, this.config.prepareHeaders)\n`,
+    `\t\t\t\t\tsignal: watchdog.signal,\n\t\t\t\t\theaders: requestHeaders(profile.headers, options, model.baseUrl, this.config.prepareHeaders),\n\t\t\t\t\t// ${PATCH_MARKER}: router queue keepalives (SSE comments) count as stream activity.\n\t\t\t\t\t...model.api === "openai-responses" ? { fetch: routerActivityFetch(watchdog) } : {}\n`,
     "router stream activity",
   );
 

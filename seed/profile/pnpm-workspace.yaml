@@ -12,19 +12,22 @@ allowBuilds:
 patchedDependencies:
   dsh-loop-detector@1.0.0: patches/dsh-loop-detector@1.0.0.patch
 
+# Reviewed dependency graph for Harness 0.2.2-rc.1. Each entry names the exact
+# version this profile installs, so a newer release cannot enter the image
+# through the exclusion, and an exclusion never outlives its pin.
 minimumReleaseAgeExclude:
-  - '@deepseek-ai/cordis@4.0.5'
-  - '@deepseek-ai/dsh-brand@0.2.1-alpha.5'
-  - '@deepseek-ai/dsh-llm@0.2.1-alpha.5'
-  - '@deepseek-ai/dsh-timeout@0.2.1-alpha.5'
-  - '@deepseek-ai/dsh-typert-protocol@0.2.1-alpha.5'
-  - '@deepseek-ai/dsh-util-crypto@0.2.1-alpha.5'
-  - '@deepseek-ai/dsh-util-values@0.2.1-alpha.5'
-  - dsh-context@0.72.0
-  - dsh-session-pin@0.7.19
-  - dsh-ui-appearance@0.1.25
-  - '@deepseek-ai/cosmokit@1.8.6'
-  - dsh-better-sidebar@0.26.1
+  - '@deepseek-ai/cordis@4.1.0'
+  - '@deepseek-ai/dsh-brand@0.2.2-rc.1'
+  - '@deepseek-ai/dsh-llm@0.2.2-rc.1'
+  - '@deepseek-ai/dsh-timeout@0.2.2-rc.1'
+  - '@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1'
+  - '@deepseek-ai/dsh-util-crypto@0.2.2-rc.1'
+  - '@deepseek-ai/dsh-util-values@0.2.2-rc.1'
+  - '@deepseek-ai/cosmokit@1.9.0'
+  - dsh-better-sidebar@0.30.1
+  - dsh-context@0.82.2
+  - dsh-session-pin@0.7.21
+  - dsh-ui-appearance@0.1.28
 
 # Retain established editor internals while the new releases are inside pnpm's
 # minimum-release-age window. Both versions satisfy the installed plugins.

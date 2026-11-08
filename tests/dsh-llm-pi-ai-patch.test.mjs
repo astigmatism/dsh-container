@@ -79,7 +79,7 @@ var PiAiAdapter = class extends LlmAdapter {
 \t\t\tconst context = {};
 \t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {
 \t\t\t\t\tsignal: watchdog.signal,
-\t\t\t\t\theaders: requestHeaders(profile.headers)
+\t\t\t\t\theaders: requestHeaders(profile.headers, options, model.baseUrl, this.config.prepareHeaders)
 \t\t\t}), model.contextWindow)[Symbol.asyncIterator]();
 \t\t\tyield iterator;
 \t\t\t} finally {

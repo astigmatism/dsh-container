@@ -129,16 +129,16 @@ fi
 # by tests/captured-inventory.test.py. Keep both in step when a plugin is bumped.
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-better-sidebar@0.26.1' \
-  'dsh-context@0.72.0' \
+  'dsh-better-sidebar@0.30.1' \
+  'dsh-context@0.82.2' \
   'dsh-favicon-status@0.1.0-rc.8' \
   'dsh-follow-up-suggestions@link:' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
-  'dsh-ego-browser@0.8.6' \
-  'dsh-session-pin@0.7.19' \
-  'dsh-ui-appearance@0.1.25'
+  'dsh-ego-browser@0.9.11' \
+  'dsh-session-pin@0.7.21' \
+  'dsh-ui-appearance@0.1.28'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {
     echo "Missing captured plugin: $expected" >&2
@@ -470,4 +470,4 @@ if ! compose ps; then
   echo "Docker Compose could not report the verified deployment." >&2
   exit "$docker_compose_exit"
 fi
-echo "Verified DSH 0.2.1-alpha.5, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."
+echo "Verified DSH 0.2.2-rc.1, persisted runtime settings, canonical plugins, authenticated HTTPS gateway, and Ollama router reachability."

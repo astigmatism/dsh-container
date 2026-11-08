@@ -1,16 +1,21 @@
 # syntax=docker/dockerfile:1.7
 
 # This digest is the Node base used by the captured live image. Override the
-# argument deliberately when rebuilding against a newer base.
-ARG NODE_IMAGE=node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+# argument deliberately when rebuilding against a newer base. Harness
+# 0.2.2-rc.1 is the first release that declares `engines.node >= 24.9.0`, so the
+# base moves from the Node 22 image to `node:24.22.2-bookworm` (multi-arch index
+# digest). The bookworm variant is selected explicitly: a Node upgrade must not
+# also be a Debian upgrade, because the image installs Chromium and the native
+# toolchain from that distribution.
+ARG NODE_IMAGE=node@sha256:8fa96264f302f58bbb13aa7339c541547b56975766ce956c875da149452a3e40
 ARG DOCKER_CLI_IMAGE=docker@sha256:d14410ab6f87a2b6c14b7150de787cd7b8bb012a8e900966d6d893e9f7fc49b6
 
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
 FROM ${NODE_IMAGE} AS harness
 
-ARG DSH_VERSION=0.2.1-alpha.5
-ARG DSH_UPSTREAM_COMMIT=1517a4dbca0a2789ff1d41ba439600f8547d23fa
+ARG DSH_VERSION=0.2.2-rc.1
+ARG DSH_UPSTREAM_COMMIT=66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
 ARG PNPM_VERSION=11.7.0
 
 LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-container" \
@@ -190,17 +195,17 @@ RUN cd /opt/dsh-seed/profiles/web \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
-    && grep -Fq 'dsh-better-sidebar@0.26.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-context@0.72.0' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-better-sidebar@0.30.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-context@0.82.2' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.8' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-follow-up-suggestions@link:' /opt/dsh-seed/plugin-inventory.txt \
     && dsh --profile web --dump-config | grep -Fq 'name: dsh-follow-up-suggestions' \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ego-browser@0.9.11' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-container-v1' node_modules/dsh-ego-browser/lib/index.js \
-    && grep -Fq 'dsh-session-pin@0.7.19' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ui-appearance@0.1.25' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-session-pin@0.7.21' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ui-appearance@0.1.28' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \

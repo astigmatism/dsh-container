@@ -239,16 +239,16 @@ if [ "$build" -eq 1 ]; then
     exit 0
   fi
 
-  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.1-alpha.5 ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$harness_image")" = 0.2.2-rc.1 ] || {
     echo "Built image has the wrong Harness version label." >&2
     exit 1
   }
-  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 1517a4dbca0a2789ff1d41ba439600f8547d23fa ] || {
+  [ "$(docker image inspect --format '{{ index .Config.Labels "io.astigmatism.deepseek-harness.upstream.commit" }}' "$harness_image")" = 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db ] || {
     echo "Built image has the wrong upstream commit label." >&2
     exit 1
   }
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
-    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.2.1-alpha.5") process.exit(1)'
+    -e 'const version = require("/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json").version; if (version !== "0.2.2-rc.1") process.exit(1)'
   docker run --rm --network none --read-only --entrypoint docker "$harness_image" buildx version
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-file-previews.mjs --check
@@ -286,16 +286,16 @@ if [ "$build" -eq 1 ]; then
     ')
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
-    'dsh-better-sidebar@0.26.1' \
-    'dsh-context@0.72.0' \
+    'dsh-better-sidebar@0.30.1' \
+    'dsh-context@0.82.2' \
     'dsh-favicon-status@0.1.0-rc.8' \
     'dsh-follow-up-suggestions@link:' \
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
-    'dsh-ego-browser@0.8.6' \
-    'dsh-session-pin@0.7.19' \
-    'dsh-ui-appearance@0.1.25'
+    'dsh-ego-browser@0.9.11' \
+    'dsh-session-pin@0.7.21' \
+    'dsh-ui-appearance@0.1.28'
   do
     printf '%s\n' "$inventory" | grep -Fq "$expected" || {
       echo "Built image is missing: $expected" >&2
@@ -328,7 +328,9 @@ if [ "$build" -eq 1 ]; then
         "Stopped by safety hook",
         "dsh-native-file-opening-v1",
         "const FILE_ADDRESS_PREFIX = \"dsh-resource://file/\";",
-        "const url = fileAddressFor(sessionId, cwd, path);",
+        // 0.2.2-rc.1 resolves the workspace path before building the resource
+        // address; the file still opens in the sidebar, never on the Host.
+        "const url = fileAddressFor(sessionId, cwd, resolveWorkspacePath(",
         "ctx.sidebarRight.openResource(url)",
       ]],
       ["deliverables", deliverables, [

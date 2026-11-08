@@ -80,15 +80,20 @@ export function patchResponses(input) {
   // pinned SDK. Override the local route's fetch method, not its numeric timeout.
   // ${errorMarker}: keep the router's machine-readable error code beside the
   // display text so the adapter classifies by error.code (contract §10).
-  s = replace(s, `            output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
-                ? \`\${errorMessage}\\nCheck your ChatGPT usage: \${CHATGPT_USAGE_URL}\`
-                : errorMessage;`,
-    `            output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
-                ? \`\${errorMessage}\\nCheck your ChatGPT usage: \${CHATGPT_USAGE_URL}\`
-                : errorMessage;
+  // pi-ai 1.5.0 turned the single ChatGPT-usage ternary into an if/else-if/else
+  // chain, so the marker now attaches after the chain resolves the display text
+  // and before the failure is pushed to the stream.
+  s = replace(s, `            else {
+                output.errorMessage = errorMessage;
+            }
+            stream.push({ type: "error", reason: output.stopReason, error: output });`,
+    `            else {
+                output.errorMessage = errorMessage;
+            }
             // ${errorMarker}
             const routerError = routerErrorOf(error);
-            if (routerError !== undefined) output.routerError = routerError;`);
+            if (routerError !== undefined) output.routerError = routerError;
+            stream.push({ type: "error", reason: output.stopReason, error: output });`);
   s += `\n// ${errorMarker}: SDK APIError carries status and error.code; in-stream failures carry routerCode.\nfunction routerErrorOf(error) {\n  const body = error?.error !== null && typeof error?.error === 'object' ? error.error : undefined;\n  const code = typeof error?.routerCode === 'string' && error.routerCode ? error.routerCode\n    : typeof error?.status === 'number' && typeof (body?.code ?? error.code) === 'string' ? (body?.code ?? error.code) : undefined;\n  if (code === undefined) return undefined;\n  const message = typeof error.routerMessage === 'string' ? error.routerMessage : typeof body?.message === 'string' ? body.message : undefined;\n  return { code, ...(typeof error.status === 'number' ? { status: error.status } : {}), ...(message === undefined ? {} : { message }) };\n}\n`;
   s += `\n// ${marker}: the router owns connection/stall recovery and generation has no total deadline.\n// ${activityMarker}: every received byte, including queue keepalive comments, is stream activity.\nclass RouterOpenAI extends OpenAI {\n  constructor(options) {\n    super(options);\n    this.routerActivity = typeof options?.fetch?.routerActivity === 'function' ? options.fetch.routerActivity : undefined;\n  }\n  async fetchWithTimeout(url, init, _ms, controller) {\n    const { request } = await import(String(url).startsWith('https:') ? 'node:https' : 'node:http');\n    const { Readable } = await import('node:stream');\n    const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;\n    const activity = this.routerActivity;\n    return new Promise((resolve, reject) => {\n      const headers = new Headers(init.headers);\n      if (typeof init.body === 'string') headers.set('content-length', String(Buffer.byteLength(init.body)));\n      const req = request(url, { method: init.method || 'POST', headers: Object.fromEntries(headers), signal }, res => {\n        let body = Readable.toWeb(res);\n        if (activity) body = body.pipeThrough(new TransformStream({ transform(chunk, stream) { try { activity(); } catch {} stream.enqueue(chunk); } }));\n        resolve(new Response(body, { status: res.statusCode, headers: res.headers }));\n      });\n      req.once('error', reject);\n      if (init.body) req.write(init.body);\n      req.end();\n    });\n  }\n}\n`;
   return s;

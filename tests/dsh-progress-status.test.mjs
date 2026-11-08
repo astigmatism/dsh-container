@@ -5,13 +5,13 @@ import { currentStep, patchSource, verifyHookScope } from '../scripts/patch-dsh-
 const MARKER = 'dsh-step-progress-status-v1';
 
 /**
- * Minimal stand-in for the pinned dsh-client-ui-chat client bundle. The
+ * Minimal stand-in for the pinned dsh-client-ui-chat client bundle (0.2.2-rc.1). The
  * memoized ChatFlow component owns the `useChatNode` prop and renders the
  * running status; ChatView is the outer view slot where that identifier is
  * undefined and throws on every render.
  */
 const bundle = ({ marker = false, hookInChatView = false } = {}) => [
-  '\tfunction RunningStatus({ startTime, t }) {',
+  '\tfunction RunningStatus({ startTime, paused, holding = false, t }) {',
   marker ? `\t\t// ${MARKER}` : '',
   '\t\tconst label = startTime === void 0 ? t("chat.deepDiving") : t("chat.deepDivingFor", { duration: formatRunDuration(Math.max(1e3, now - startTime), t).map((part) => part.text).join("") });',
   '\t\treturn label;',
@@ -22,7 +22,8 @@ const bundle = ({ marker = false, hookInChatView = false } = {}) => [
   '\t\treturn ChatFlowProp;',
   '\t}',
   '\tfunction ChatFlow({ entries, useChat, useChatNode, t }) {',
-  '\t\t\tconst runningStartTime = useChatNode(useChat((snapshot) => snapshot.navigation.items().at(-1)?.anchorKey) ?? "", (node) => {',
+  '\t\t\tconst latestTurnAnchor = useChat((snapshot) => snapshot.navigation.items().at(-1)?.anchorKey);',
+  '\t\t\tconst runningStartTime = useChatNode(latestTurnAnchor ?? "", (node) => {',
   '\t\t\t\treturn node;',
   '\t\t\t});',
   '\t\t\treturn t("chat.deepDiving", { startTime: runningStartTime, });',
@@ -33,8 +34,8 @@ const bundle = ({ marker = false, hookInChatView = false } = {}) => [
 /** The hook placed in ChatFlow, as the pinned patch leaves it. */
 const correctlyAnchored = () => bundle({ marker: true }).replace(
   '\t\t\tconst runningStartTime = useChatNode(',
-  '\t\t\tconst runningStep = useChatNode(useChat((snapshot) => snapshot), (node) => node);\n'
-  + '\t\t\tconst runningStartTime = useChatNode(',
+  '\t\t\tconst runningStep = useChatNode(latestTurnAnchor ?? "", (node) => node);\n'
+  + '\t\t\tconst runningStartTime = useChatNode(latestTurnAnchor ?? "", (node) => {',
 );
 
 test('progress uses the current open turn and its durable step start after reload', () => {

@@ -182,7 +182,11 @@ still hard-fails on a version mismatch or a mixed-generation runtime tree.
   updater. Two pushes of this branch failed exactly where the local builds had
   failed, which is the expected division of labour: CI is the gate, and the
   local builds exist so the round trip is not the only way to learn that a
-  patched module does not compile.
+  patched module does not compile. One further failure arrived with no local
+  reproduction and no readable message — a hosted runner reporting one exit code
+  for a script of sequential gates is a poor instrument — so `check.sh` now
+  announces each stage of the image path and turns the failing one into a
+  check-run annotation.
 
 ## Held pins and open follow-ups
 

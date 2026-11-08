@@ -133,7 +133,10 @@ compose_check --env-file "$project_dir/.env.example" \
 compose_check --env-file "$project_dir/speech/.env.example" \
   -f "$project_dir/speech/compose.yaml" config --quiet
 
-node_image=node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+# Syntax-check the JavaScript on the Node that actually ships. A second copy of
+# the base-image pin drifts the way this one did: the Dockerfile moved to Node
+# 24 and this sweep kept parsing with Node 22.
+node_image=$(sed -n 's/^ARG NODE_IMAGE=//p' "$project_dir/Dockerfile")
 docker run --rm --network none --read-only --tmpfs /tmp \
   --volume "$project_dir:/src:ro" --workdir /src --entrypoint /bin/sh \
   "$node_image" -eu -c '

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Preserve the 0.21 workspace policy across Sidebar 0.24's removal of it. */
 import { readFile, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -66,9 +67,27 @@ function replace(source, before, after, count = 1) {
   return source.split(before).join(after);
 }
 
+/**
+ * The guards take `realpath` from the bundle's own promises-fs import. Sidebar
+ * 0.26 did not import it, so this patch used to add it; 0.30.1 already lists it
+ * in that same import, and adding it twice is a duplicate binding that passes
+ * every anchor check and only surfaces when Node compiles the module at boot.
+ * Add it only when it is genuinely absent, and still fail on import drift.
+ */
+export function ensureRealpathImport(source) {
+  const anchor = 'import { access, lstat,';
+  const line = source.match(/^import \{[^}]*\} from "node:fs\/promises";$/m)?.[0];
+  if (!line || !source.includes(anchor)) throw new Error(`Workspace patch anchor changed: ${anchor}`);
+  const specifiers = line.slice(line.indexOf('{') + 1, line.lastIndexOf('}')).split(',').map(s => s.trim()).filter(Boolean);
+  const realpaths = specifiers.filter(s => s === 'realpath' || s.startsWith('realpath '));
+  if (realpaths.some(s => s === 'realpath' || s.endsWith(' as realpath'))) return source;
+  if (realpaths.length) throw new Error(`Workspace patch anchor changed: promises import binds realpath elsewhere (${realpaths.join(', ')})`);
+  return replace(source, anchor, 'import { realpath, access, lstat,');
+}
+
 export function patchSidebarWorkspace(input) {
   if (input.includes(MARKER)) return input;
-  let source = replace(input, 'import { access, lstat,', 'import { realpath, access, lstat,');
+  let source = ensureRealpathImport(input);
   source = replace(source, 'const SIDEBAR_PREFS_DEFAULTS = {', 'const SIDEBAR_PREFS_DEFAULTS = {\n\tworkspaceFence: true,');
   source = replace(source, 'const PrefsSchema = z.object({', 'const PrefsSchema = z.object({\n\tworkspaceFence: z.boolean().default(true),');
   // 0.26 resolution is deliberately lexical; swap the three resolvers that
@@ -124,6 +143,11 @@ export async function main(args = process.argv.slice(2)) {
   if (args.includes('--check')) {
     if (before !== after) throw new Error('Sidebar workspace patch missing');
   } else if (before !== after) await writeFile(path, after);
+  // Every anchor can match and still leave a module Node refuses to compile —
+  // an inserted binding the bundle already declares is a boot-time SyntaxError.
+  // Compile the file that actually ships before the image build spends its time.
+  const parsed = spawnSync(process.execPath, ['--check', path], { encoding: 'utf8' });
+  if (parsed.status !== 0) throw new Error(`Patched Sidebar bundle does not parse:\n${parsed.stderr}`);
   console.log(`Verified ${MARKER}.`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

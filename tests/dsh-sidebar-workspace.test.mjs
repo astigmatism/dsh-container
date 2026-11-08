@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, symlink, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { relative, isAbsolute, join, dirname, basename, resolve } from 'node:path';
-import { createWorkspaceGuards } from '../scripts/patch-dsh-sidebar-workspace.mjs';
+import { createWorkspaceGuards, ensureRealpathImport } from '../scripts/patch-dsh-sidebar-workspace.mjs';
 
 class SidebarError extends Error { constructor(code, message, status) { super(message); this.code = code; this.status = status; } }
 const guards = createWorkspaceGuards({ realpath, relative, isAbsolute, join, dirname, basename,
@@ -31,4 +31,18 @@ test('Sidebar reads and mutations retain the default workspace fence, including 
     assert.equal(await guards.ensureWorkspaceWritePath(root, join(root, 'escape', 'new'), false), join(outside, 'new'));
     assert.equal((await guards.resolveEntry(root, join(root, 'escape'), false)).absolute, join(root, 'escape'));
   } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test('The realpath import is added once and never duplicated', () => {
+  // Sidebar 0.26 shape: the guard's realpath had to be imported.
+  const without = 'import { access, lstat, mkdir } from "node:fs/promises";\n';
+  assert.equal(ensureRealpathImport(without), 'import { realpath, access, lstat, mkdir } from "node:fs/promises";\n');
+  // Sidebar 0.30.1 shape: the same import already carries realpath, and a
+  // second binding of that name is a SyntaxError at bundle import time.
+  const withRealpath = 'import { access, lstat, mkdir, opendir, readFile, readdir, realpath, rename } from "node:fs/promises";\n';
+  assert.equal(ensureRealpathImport(withRealpath), withRealpath);
+  assert.equal(ensureRealpathImport(withRealpath).match(/\brealpath\b/g).length, 1);
+  // An aliased binding is the same declaration; a renamed import is not.
+  assert.throws(() => ensureRealpathImport('import { access, lstat, realpath as real } from "node:fs/promises";\n'), /anchor changed|realpath/);
+  assert.throws(() => ensureRealpathImport('import { readFile } from "node:fs";\n'), /Workspace patch anchor changed/);
 });

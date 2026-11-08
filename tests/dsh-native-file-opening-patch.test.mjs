@@ -1,13 +1,7 @@
 import assert from "node:assert/strict";
-import path from "node:path";
 import test from "node:test";
 
-import {
-  exposedWorkspaceFileOpener,
-  guardedWorkspaceFileOpener,
-  patchConversationSource,
-  patchDeliverablesSource,
-} from "../scripts/patch-dsh-native-file-opening.mjs";
+import { patchConversationSource, patchDeliverablesSource } from "../scripts/patch-dsh-native-file-opening.mjs";
 
 // 0.2.2-rc.1 opens a workspace file in the Harness sidebar: `openFile` builds a
 // `dsh-resource://file/` address and hands it to `sidebarRight.openResource`, so
@@ -122,57 +116,6 @@ const deliverablesUpstreamFixture = `
 			});
 		}
 `;
-
-function source(initialDescription) {
-  let current = initialDescription;
-  return {
-    getSnapshot: () => current,
-    set: (next) => {
-      current = next;
-    },
-  };
-}
-
-test("canOpenPath true exposes a native action and preserves cwd-relative resolution", async () => {
-  const hostDescription = source({ canOpenPath: true });
-  const opened = [];
-  const cwd = "/workspace/project/docs";
-  const guarded = guardedWorkspaceFileOpener(hostDescription, (candidate) => {
-    opened.push(path.resolve(cwd, candidate));
-    return Promise.resolve();
-  });
-  const action = exposedWorkspaceFileOpener(hostDescription.getSnapshot(), guarded);
-
-  assert.equal(typeof action, "function");
-  await action("../README.md");
-  assert.deepEqual(opened, ["/workspace/project/README.md"]);
-});
-
-test("canOpenPath false exposes no native-open action", () => {
-  assert.equal(exposedWorkspaceFileOpener({ canOpenPath: false }, () => {}), undefined);
-});
-
-test("missing and unknown Host capabilities fail closed", () => {
-  for (const description of [undefined, null, {}, { canOpenPath: "true" }]) {
-    assert.equal(exposedWorkspaceFileOpener(description, () => {}), undefined);
-  }
-});
-
-test("an opener retained across disconnect cannot issue a stale native-open call", async () => {
-  const hostDescription = source({ canOpenPath: true });
-  let calls = 0;
-  const guarded = guardedWorkspaceFileOpener(hostDescription, () => {
-    calls += 1;
-    return Promise.resolve();
-  });
-  const formerlyExposed = exposedWorkspaceFileOpener(hostDescription.getSnapshot(), guarded);
-  assert.equal(typeof formerlyExposed, "function");
-
-  hostDescription.set(undefined);
-  await formerlyExposed("report.md");
-  assert.equal(calls, 0);
-  assert.equal(exposedWorkspaceFileOpener(hostDescription.getSnapshot(), guarded), undefined);
-});
 
 test("0.2.2-rc.1 conversation opening is verified upstream and marker-only", () => {
   const patched = patchConversationSource(conversationInAppFixture);

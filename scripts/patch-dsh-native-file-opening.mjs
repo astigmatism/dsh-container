@@ -16,33 +16,6 @@ function replaceOnce(source, before, after, description) {
   return `${source.slice(0, first)}${after}${source.slice(first + before.length)}`;
 }
 
-/** True only for the Host's explicit, current native-path-opening capability. */
-export function canOpenWorkspacePath(description) {
-  return description?.canOpenPath === true;
-}
-
-/** Expose an opener only while the rendered Host description explicitly allows it. */
-export function exposedWorkspaceFileOpener(description, openFile) {
-  return canOpenWorkspacePath(description) ? openFile : undefined;
-}
-
-/**
- * Recheck the live Host-description source at invocation time so a callback
- * retained across disconnect cannot issue a stale host.openPath request.
- */
-export function guardedWorkspaceFileOpener(hostDescription, openFile) {
-  return (...args) => {
-    let description;
-    try {
-      description = hostDescription?.getSnapshot?.();
-    } catch {
-      return Promise.resolve();
-    }
-    if (!canOpenWorkspacePath(description)) return Promise.resolve();
-    return openFile(...args);
-  };
-}
-
 /** Apply the capability boundary to the pinned conversation browser bundle. */
 export function patchConversationSource(input) {
   if (input.includes(PATCH_MARKER)) return input;

@@ -26,6 +26,12 @@ NODE
 [ ! -e "$runtime" ] || { echo "Runtime installation directory already exists: $runtime" >&2; exit 1; }
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+# A frozen lock makes a retry the same content, so a lost registry connection on
+# a shared hosted runner is retried rather than charged to the image gate.
+npm_config_fetch_retries=5
+npm_config_fetch_retry_maxtimeout=120000
+export npm_config_fetch_retries npm_config_fetch_retry_maxtimeout
+
 npm pack "@deepseek-ai/dsh@$version" --pack-destination "$temporary" --quiet >/dev/null
 mkdir -p "$runtime"
 tar -xzf "$temporary/deepseek-ai-dsh-$version.tgz" --strip-components=1 -C "$runtime"

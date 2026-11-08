@@ -26,8 +26,8 @@ LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-contai
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
       bash \
       bubblewrap \
       ca-certificates \
@@ -53,7 +53,7 @@ COPY scripts/install-dsh-runtime.sh /opt/dsh-build/install-dsh-runtime.sh
 # Include the build-time installer in the CRLF defense for older Windows
 # checkouts, before executing it (runtime entrypoints are normalized below).
 RUN sed -i 's/\r$//' /opt/dsh-build/install-dsh-runtime.sh \
-    && npm install --global "pnpm@${PNPM_VERSION}" \
+    && npm_config_fetch_retries=5 npm install --global "pnpm@${PNPM_VERSION}" \
     && sh /opt/dsh-build/install-dsh-runtime.sh "${DSH_VERSION}" \
     && test "$(node -p "require('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json').version")" = "${DSH_VERSION}"
 
@@ -176,7 +176,7 @@ COPY seed/plugins/ /opt/dsh-seed/.dsh-plugins/
 # here, then discard the compiler; the runtime smoke test requires a real PTY.
 RUN --mount=type=cache,target=/root/.cache/pnpm \
     cd /opt/dsh-seed/profiles/web \
-    && pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store
+    && npm_config_fetch_retries=5 pnpm install --frozen-lockfile --store-dir /opt/dsh-pnpm-store
 RUN cd /opt/dsh-seed/profiles/web \
     && node /opt/dsh-build/verify-sidebar-terminal.mjs \
     && node /opt/dsh-build/patch-dsh-resident-availability.mjs --profile-registry /opt/dsh-seed/profiles/web/node_modules/@deepseek-ai \
@@ -250,8 +250,8 @@ LABEL org.opencontainers.image.source="https://github.com/astigmatism/dsh-contai
 ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=production
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates openssl \
+RUN apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY gateway/server.mjs gateway/request-trust.mjs gateway/session-auth.mjs gateway/backend-auth.mjs gateway/external-tls.mjs scripts/verify-dictation-backend.mjs /opt/dsh-gateway/

@@ -186,7 +186,12 @@ still hard-fails on a version mismatch or a mixed-generation runtime tree.
   reproduction and no readable message — a hosted runner reporting one exit code
   for a script of sequential gates is a poor instrument — so `check.sh` now
   announces each stage of the image path and turns the failing one into a
-  check-run annotation.
+  check-run annotation. One such failure landed on the image-build stage with no
+  local reproduction, on a commit whose only change was this document; the image
+  installs now retry bounded fetches — a frozen lock makes a retry the same
+  content, so a dropped registry or archive connection is not charged to the
+  build — and the builder reports which of the three images failed together with
+  what the build last said.
 
 ## Held pins and open follow-ups
 

@@ -40,7 +40,19 @@ with tempfile.TemporaryDirectory(prefix='dsh-private-release-') as temporary:
             directory.chmod(0o700)
     for role, image in [('harness', harness), ('gateway', gateway), ('router', router)]:
         build_context = context / 'ollama-router' if role == 'router' else context
-        subprocess.run(['docker', 'build', '--target', role, '--tag', image, str(build_context)], check=True)
+        # A hosted runner reports one exit code for the whole gate, so the build is
+        # captured, echoed, and on failure annotated with the role and the last
+        # thing the build said. Which of the three images failed is the difference
+        # between an inspection and a guess.
+        built = subprocess.run(['docker', 'build', '--target', role, '--tag', image, str(build_context)],
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        sys.stdout.write(built.stdout)
+        if built.returncode != 0:
+            tail = [line.rstrip() for line in built.stdout.splitlines() if line.strip()][-25:]
+            detail = '%0A'.join(line[:200] for line in tail)
+            print('::error::' + role + ' image build failed (exit ' + str(built.returncode)
+                  + '):%0A' + detail, flush=True)
+            raise SystemExit(built.returncode)
 
     # Exercise the real candidate builder twice at one revision. Only source
     # retrieval is substituted so CI qualifies its current commit before merge.

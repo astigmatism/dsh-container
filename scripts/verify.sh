@@ -129,14 +129,14 @@ fi
 # by tests/captured-inventory.test.py. Keep both in step when a plugin is bumped.
 for expected in \
   '@zoytown/dsh-token@0.1.3' \
-  'dsh-better-sidebar@0.30.1' \
+  'dsh-better-sidebar@0.26.1' \
   'dsh-context@0.82.2' \
   'dsh-favicon-status@0.1.0-rc.8' \
   'dsh-follow-up-suggestions@link:' \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
-  'dsh-ego-browser@0.9.11' \
+  'dsh-ego-browser@0.8.6' \
   'dsh-session-pin@0.7.21' \
   'dsh-ui-appearance@0.1.28'
 do

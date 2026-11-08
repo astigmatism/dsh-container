@@ -23,8 +23,8 @@ Everything below is the state at the Harness `0.2.2-rc.1` pin.
 | `dsh-session-pin` | `0.7.21` | Pinning sessions and workspaces in the sidebar list | `patch-dsh-session-pin.mjs` (pinned-version navigation) |
 | `dsh-ui-appearance` | `0.1.28` | Themes and chat appearance controls; dark mode must reach dialog surfaces | `patch-dsh-appearance.mjs` (verification) |
 | `dsh-favicon-status` | `0.1.0-rc.8` | Favicon shows working/waiting/done so a background tab is readable | unpatched |
-| `dsh-better-sidebar` | `0.30.1` | Sidebar workspaces, file previews, and the sidebar terminal | `patch-dsh-file-previews.mjs`, `patch-dsh-sidebar-workspace.mjs` (workspace fence), `verify-sidebar-terminal.mjs` |
-| `dsh-ego-browser` | tag `v0.9.11` @ commit `18068f95dc8acab1bc7489b76c201f6147c58a49` | The agent's own browser, driven headless through the Sidebar tab | `patch-dsh-ego-browser.mjs` + `plugin/dsh-ego-adapter`: container browser state, conversation scoping, image and transport adapters; desktop window/cookie-import affordances disabled |
+| `dsh-better-sidebar` | `0.26.1`; `0.30.1` is held — see the upgrade record | Sidebar workspaces, file previews, and the sidebar terminal | `patch-dsh-file-previews.mjs`, `patch-dsh-sidebar-workspace.mjs` (workspace fence), `verify-sidebar-terminal.mjs` |
+| `dsh-ego-browser` | tag `v0.8.6`, commit `dfde57221443bdade5e0cbee7c773a6839ffe560`; `v0.9.11` is held — see the upgrade record | The agent's own browser, driven headless through the Sidebar tab | `patch-dsh-ego-browser.mjs` + `plugin/dsh-ego-adapter`: container browser state, conversation scoping, image and transport adapters; desktop window/cookie-import affordances disabled |
 | `dsh-container-profile` | local, `seed/profile/managed` | This fork's own cordis patch bundle: the only place the profile's non-bundle wiring lives | mounts the four plugins below |
 
 ## Mounted through the profile patch, not the bundle list

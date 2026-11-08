@@ -78,7 +78,7 @@ The locked web profile contains these eleven plugins:
 2. `dsh-context` 0.82.2
 3. `dsh-local-speech-input` 0.1.0 (local)
 4. `dsh-loop-detector` 1.0.0 with the captured local patch
-5. `dsh-ego-browser` 0.9.11 at `18068f95dc8acab1bc7489b76c201f6147c58a49`,
+5. `dsh-ego-browser` 0.8.6 at `dfde57221443bdade5e0cbee7c773a6839ffe560`,
    with the container adapter for conversation workspaces, persistent shared
    logins, native screenshot attachments and authenticated browser controls
 6. `dsh-plugin-task-notification` 0.2.1 at commit
@@ -86,7 +86,7 @@ The locked web profile contains these eleven plugins:
 7. `dsh-session-pin` 0.7.21
 8. `dsh-ui-appearance` 0.1.28
 9. `dsh-favicon-status` 0.1.0-rc.8 (published without a manifest BOM)
-10. `dsh-better-sidebar` 0.30.1 with task views and session file activity;
+10. `dsh-better-sidebar` 0.26.1 with task views and session file activity;
     terminal and image/PDF rendering use the upstream Harness implementations
 11. `dsh-follow-up-suggestions` 0.1.0 (local, in `seed/profile/plugins/`),
     adapted from `shaoeric/dsh-suggest` (MIT) for the 0.2 APIs

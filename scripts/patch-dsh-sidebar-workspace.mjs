@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const MARKER = 'dsh-sidebar-workspace-fence-v1';
-export const SIDEBAR_VERSION = '0.30.1';
+export const SIDEBAR_VERSION = '0.26.1';
 
 /** Embedded in the host bundle; dependencies are provided by its existing imports. */
 export function createWorkspaceGuards({ realpath, relative, isAbsolute, join, dirname, basename, requireAbsolute, resolveSessionPath, SidebarError }) {

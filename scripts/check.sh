@@ -289,14 +289,14 @@ if [ "$build" -eq 1 ]; then
     ')
   for expected in \
     '@zoytown/dsh-token@0.1.3' \
-    'dsh-better-sidebar@0.30.1' \
+    'dsh-better-sidebar@0.26.1' \
     'dsh-context@0.82.2' \
     'dsh-favicon-status@0.1.0-rc.8' \
     'dsh-follow-up-suggestions@link:' \
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
-    'dsh-ego-browser@0.9.11' \
+    'dsh-ego-browser@0.8.6' \
     'dsh-session-pin@0.7.21' \
     'dsh-ui-appearance@0.1.28'
   do
@@ -340,8 +340,11 @@ if [ "$build" -eq 1 ]; then
         "dsh-native-file-opening-v1",
         // 0.2.1-alpha.5 rewrote Deliverables around server-reported Host
         // desktop metadata; produced-file chips still route through the chat
-        // resource opener, and the patch verifies the upstream gate.
-        "function producedFileMentions(paths, openFile, label, operations = [])",
+        // resource opener, and the patch verifies the upstream gate. The
+        // signature is asserted up to the parameters the container relies on:
+        // 0.2.2 appended a trigger-props parameter, and a trailing-parameter
+        // addition is not the loss of the opener this marker exists to prove.
+        "function producedFileMentions(paths, openFile, label, operations = []",
         "owner.openFile",
         "verified Deliverables gates open actions on server-reported Host desktop metadata.",
       ]],

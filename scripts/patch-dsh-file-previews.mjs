@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const MARKER = 'dsh-session-file-previews-v1';
-export const SIDEBAR_VERSION = '0.30.1';
+export const SIDEBAR_VERSION = '0.26.1';
 export const DSH_VERSION = '0.2.2-rc.1';
 
 function replaceOnce(source, before, after, label) {

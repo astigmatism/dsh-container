@@ -195,14 +195,14 @@ RUN cd /opt/dsh-seed/profiles/web \
     && dsh plugin --profile web list >/opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq '@zoytown/dsh-token@0.1.3' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-token-session-format-v3-compat-v1' node_modules/@zoytown/dsh-token/lib/index.js \
-    && grep -Fq 'dsh-better-sidebar@0.30.1' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-better-sidebar@0.26.1' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-context@0.82.2' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-favicon-status@0.1.0-rc.8' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-follow-up-suggestions@link:' /opt/dsh-seed/plugin-inventory.txt \
     && dsh --profile web --dump-config | grep -Fq 'name: dsh-follow-up-suggestions' \
     && grep -Fq 'dsh-loop-detector@1.0.0' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-plugin-task-notification@0.2.1' /opt/dsh-seed/plugin-inventory.txt \
-    && grep -Fq 'dsh-ego-browser@0.9.11' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-container-v1' node_modules/dsh-ego-browser/lib/index.js \
     && grep -Fq 'dsh-session-pin@0.7.21' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ui-appearance@0.1.28' /opt/dsh-seed/plugin-inventory.txt \

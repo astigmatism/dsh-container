@@ -95,7 +95,7 @@ awk '/^patchedDependencies:/ { in_block = 1; next }
 done
 
 # Ego and its complete dependency graph are locked to the reviewed release.
-grep -Fq '18068f95dc8acab1bc7489b76c201f6147c58a49' "$lock" || fail "missing pinned ego source"
+grep -Fq 'dfde57221443bdade5e0cbee7c773a6839ffe560' "$lock" || fail "missing pinned ego source"
 grep -Fq 'dsh-ego-browser:' "$lock" || fail "missing ego importer"
 if grep -Fq 'dsh-playwright' "$lock"; then fail "retired browser remains installed"; fi
 echo "ok - seed profile patch hashes and pinned ego source are consistent"

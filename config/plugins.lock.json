@@ -12,12 +12,12 @@
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-session-pin": "0.7.21 (session/workspace navigation patch)",
     "dsh-ui-appearance": "0.1.28 (settings icon verification; dark-mode dialog fix)",
-    "dsh-better-sidebar": "0.30.1",
-    "dsh-ego-browser": "0.9.11 (container adapter v1)"
+    "dsh-better-sidebar": "0.26.1",
+    "dsh-ego-browser": "0.8.6 (container adapter v1)"
   },
   "sourceHeads": {
     "@zoytown/dsh-token": "https://github.com/zoyluoblue/deepseek-harness-token@8b75452985fc47bdc00b914053cf4c5c1cbe4898",
-    "dsh-ego-browser": "https://github.com/Fisfzy/dsh-ego-browser@18068f95dc8acab1bc7489b76c201f6147c58a49"
+    "dsh-ego-browser": "https://github.com/Fisfzy/dsh-ego-browser@dfde57221443bdade5e0cbee7c773a6839ffe560"
   },
   "policies": {
     "@zoytown/dsh-token": {

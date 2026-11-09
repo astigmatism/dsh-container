@@ -1,10 +1,12 @@
 # Harness 0.2.2-rc.1 upgrade
 
-Release decision and immutable CI evidence: the upgrade pull request for this
-branch and its required `test-and-build` check at the reviewed revision. A
-draft or failing PR remains held. This document records the migration and the
-acceptance contract, not a completed production deployment. No production host
-has been updated until its dated result appears in the acceptance record below.
+Release decision and immutable CI evidence: the required `test-and-build` check
+on `main` at the landed revision (this work landed as a fast-forward of
+`upgrade/harness-0.2.2-rc.1`, whose required check and updater rehearsal both
+passed at that same revision). A draft or failing branch remains held. This
+document records the migration and the acceptance contract, not a completed
+production deployment; a host counts as updated only once its dated result
+appears in the acceptance record below.
 
 ## Immutable inputs
 
@@ -217,16 +219,36 @@ above, listed so a later bump does not have to rediscover it.
 
 ## Production acceptance (per deployment)
 
-For each deployment (this host, `192.168.1.4`, `local-ai-voice`), after the
-Portal update: gateway authentication; resident models show available and
-reasoning selections persist across restart; ego browser opens, controls, and
-screenshots reach the model; website logins survive restart; **dictation
-transcribes and spoken replies play** (`verify-dictation-client.mjs`,
-`verify-dictation-backend.mjs`, and the roundtrip through the speech gateway);
-sidebar terminal streams; Portal still offers Update and restart and the update
-check reports `current`. Record dated results here:
+For each deployment (`192.168.1.5` — `samus`, this host, `192.168.1.4`,
+`local-ai-voice`), after the Portal update: gateway authentication; resident
+models show available and reasoning selections persist across restart; ego
+browser opens, controls, and screenshots reach the model; website logins survive
+restart; **dictation transcribes and spoken replies play**
+(`verify-dictation-client.mjs`, `verify-dictation-backend.mjs`, and the roundtrip
+through the speech gateway); sidebar terminal streams; Portal still offers Update
+and restart and the update check reports `current`. Record dated results here:
 
-- (pending)
+- **`192.168.1.5` (`samus`) — 2026-11-09, deployed first, machine-verified.**
+  Portal **Update and restart** for the `deepseek-harness` project succeeded
+  (job `b85437c0-cddf-4466-b4d0-e3dd8cd62c6a`, exit 0, about twelve minutes, no
+  operator intervention), moving the deployment from `d746e5a` / `0.2.1-alpha.5`
+  to `35b78ae` / `0.2.2-rc.1`. The running container reports
+  `org.opencontainers.image.version=0.2.2-rc.1`, upstream commit
+  `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`, and Node `v24.22.2` — the new base
+  image, not just a new application version. Harness and gateway are both
+  `running/healthy`; the cutover left the service `exited/unhealthy` for about
+  ninety seconds inside the updater's own health wait, which is the expected
+  window and did not require a rollback. Gateway authentication is enforced (the
+  application root answers 401 unauthenticated), and both speech routes are
+  mounted and auth-protected rather than absent — `POST /local-stt/transcriptions`
+  and `POST /local-tts/speech` answer 401, where an unmounted plugin answers 404.
+  The Portal's own update check afterwards reports `current` with `behind: 0` at
+  `35b78ae`. Not covered by machine checks and still owed by the operator in a
+  live session: dictation transcription and spoken replies, resident model
+  availability with reasoning selection across a restart, ego browser control with
+  a screenshot reaching the model, website logins surviving a restart, and sidebar
+  terminal streaming.
+- (pending for the remaining deployments)
 
 ## Rollback
 

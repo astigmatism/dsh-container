@@ -226,6 +226,11 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
   const dispatched = [];
   const acks = [];
   const timers = [];
+  /** Every object URL this browser minted, and whether it is still live. */
+  const urls = new Map();
+  let nextUrl = 0;
+  /** The mounted instance whose hooks the fake React is answering, if any. */
+  const hooks = { host: null };
 
   const db = (name) => {
     if (!databases.has(name)) databases.set(name, new Map());
@@ -315,7 +320,18 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
       addEventListener: () => {},
       removeEventListener: () => {},
     },
-    URL: { createObjectURL: () => 'blob:fake', revokeObjectURL: () => {} },
+    URL: {
+      // Object URLs as a browser keeps them: live until something revokes them,
+      // and an <img> still holding a revoked one draws a broken picture. Which
+      // one is which is what the settings-row test below watches.
+      createObjectURL: () => {
+        nextUrl += 1;
+        const url = `blob:fake-${nextUrl}`;
+        urls.set(url, 'live');
+        return url;
+      },
+      revokeObjectURL: (url) => { urls.set(url, 'revoked'); },
+    },
     StorageEvent: class StorageEvent {
       constructor(type, init) { this.type = type; Object.assign(this, init); dispatched.push(init?.key); }
     },
@@ -350,8 +366,10 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
 
   const stores = new Map();
   const react = {
-    createElement: (type, props, ...children) => ({ type, props, children }),
-    useEffect: () => {},
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    // Answered by whichever instance mount() is rendering; see mount().
+    useState: (initial) => hooks.host.useState(initial),
+    useEffect: (effect, deps) => hooks.host.useEffect(effect, deps),
   };
   /** Everything the client registered with the platform, as it registered it. */
   const strings = {};
@@ -368,6 +386,8 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
     appearanceImages: () => [...(db('dsh-ui-appearance').get('images') ?? new Map()).values()],
     library: () => [...(db('dsh-portal-wallpapers').get('images') ?? new Map()).values()],
     rows: new Map(),
+    urls,
+    hooks,
     localeStrings: strings,
     localeNamespaces: () => namespaces,
   };
@@ -427,6 +447,148 @@ const waitFor = async (predicate, description) => {
 };
 
 const rowMeta = (browser) => browser.rows.get('portal-wallpapers');
+
+/**
+ * Render one component the way the settings panel does, with just enough React
+ * to be the thing that matters here: hooks keep their state while the instance
+ * is mounted, effects run after the render that scheduled them, a `setState`
+ * re-renders, and `unmount()` runs every cleanup — which is exactly what closing
+ * Settings is. Function children are rendered too, so a preview is reachable as
+ * the component that owns its object URL.
+ */
+function mount(component, props, browser) {
+  const nodes = new Map();
+  const pending = [];
+  let path = 'row';
+  let dirty = false;
+
+  const outer = browser.hooks.host;
+  browser.hooks.host = {
+    useState(initial) {
+      const node = nodes.get(path);
+      const index = node.cursor++;
+      if (node.state.length <= index) node.state.push(typeof initial === 'function' ? initial() : initial);
+      const value = node.state[index];
+      return [value, (next) => {
+        node.state[index] = typeof next === 'function' ? next(node.state[index]) : next;
+        dirty = true;
+      }];
+    },
+    useEffect(effect, deps) {
+      const node = nodes.get(path);
+      const index = node.cursor++;
+      const seen = node.effects.get(index);
+      const same = seen !== undefined && deps !== undefined && seen.deps !== undefined
+        && seen.deps.length === deps.length && seen.deps.every((dep, at) => dep === deps[at]);
+      if (same === true) return;
+      // A re-run also retires what the previous run scheduled, so a deps list
+      // that changes cannot leave an effect's cleanup stranded.
+      seen?.cleanup?.();
+      pending.push(() => node.effects.set(index, { deps, cleanup: effect() }));
+    },
+  };
+
+  const renderNode = (element, key) => {
+    if (element === null || element === undefined || typeof element !== 'object') return element;
+    if (Array.isArray(element)) return element.map((child, at) => renderNode(child, `${key}/${at}`));
+    if (typeof element.type !== 'function') {
+      return { ...element, children: (element.children ?? []).map((child, at) => renderNode(child, `${key}/${at}`)) };
+    }
+    if (!nodes.has(key)) nodes.set(key, { state: [], effects: new Map(), cursor: 0 });
+    const node = nodes.get(key);
+    const above = path;
+    path = key;
+    // Hook slots are addressed per render, exactly as React counts them: without
+    // this reset a second render would ask for the next slot and lose its state.
+    node.cursor = 0;
+    let tree = element.type(element.props);
+    for (let pass = 0; dirty === true && pass < 8; pass += 1) {
+      dirty = false;
+      tree = element.type(element.props);
+    }
+    path = above;
+    return renderNode(tree, `${key}!`);
+  };
+
+  let tree;
+  for (let pass = 0; pass < 8; pass += 1) {
+    dirty = false;
+    tree = renderNode({ type: component, props, children: [] }, 'row');
+    while (pending.length > 0) {
+      // Splice, not a copy plus a reset: `pending.length = 0` would empty the
+      // very array the jobs were taken from and run none of them.
+      for (const job of pending.splice(0)) job();
+    }
+    if (dirty === false) break;
+  }
+  browser.hooks.host = outer;
+
+  return {
+    tree,
+    unmount() {
+      for (const node of nodes.values()) {
+        for (const effect of [...node.effects.values()].reverse()) effect.cleanup?.();
+        node.effects.clear();
+      }
+    },
+  };
+}
+
+/** Every element of a rendered tree that matches, depth first. */
+const findAll = (node, matches, found = []) => {
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, matches, found);
+  } else if (node !== null && typeof node === 'object') {
+    if (matches(node)) found.push(node);
+    for (const child of node.children ?? []) findAll(child, matches, found);
+  }
+  return found;
+};
+
+const pictures = (tree) => findAll(tree, (node) => node.type === 'img').map((node) => node.props);
+
+/** The props the platform hands the settings row, from what it injected. */
+const rowProps = (browser) => {
+  const row = rowMeta(browser);
+  const injected = row.inject();
+  return {
+    useState: (select) => select(injected.hooks.state.getSnapshot()),
+    usePrefs: (select) => select(injected.hooks.prefs.getSnapshot()),
+    setPref: injected.setPref,
+    check: injected.check,
+    show: injected.show,
+    t: (key) => browser.localeStrings[key] ?? key,
+  };
+};
+
+test('a received wallpaper shows in the strip, and keeps showing next visit', async () => {
+  const browser = fakeBrowser({ queued: [entry()] });
+  await waitFor(() => browser.acks.length > 0, 'the wallpaper was received');
+  await settle();
+
+  const row = rowMeta(browser);
+  const props = rowProps(browser);
+  assert.equal(row.inject().hooks.state.getSnapshot().records.length, 1, 'one wallpaper in the switcher');
+
+  // One visit to Settings: the preview is drawn, from an object URL that works.
+  const visit = mount(row.component, props, browser);
+  const [first] = pictures(visit.tree);
+  assert.ok(first !== undefined && String(first.src).startsWith('blob:'), 'the preview is drawn as a picture');
+  assert.equal(browser.urls.get(first.src), 'live', 'the address behind the preview is live');
+
+  // Closing Settings takes the row away, and with it the picture it was showing.
+  visit.unmount();
+  assert.equal(browser.urls.get(first.src), 'revoked', 'the visit released its picture on the way out');
+
+  // The next visit sees the same stored wallpaper. It has to be drawn again,
+  // which it can only be from a fresh address: the one above is gone, and an
+  // <img> still holding it is the broken thumbnail this guards.
+  const again = mount(row.component, props, browser);
+  const [second] = pictures(again.tree);
+  assert.ok(second !== undefined, 'the wallpaper is still offered on the next visit');
+  assert.notEqual(second.src, first.src, 'a new visit does not reuse the released address');
+  assert.equal(browser.urls.get(second.src), 'live', 'and the picture shows');
+});
 
 test('the client adds one settings row beneath the Appearance row', () => {
   const browser = fakeBrowser();

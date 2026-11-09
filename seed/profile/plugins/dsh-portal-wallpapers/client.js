@@ -566,17 +566,23 @@ window.__ModuleLoader__.load({
       return 'network'
     }
 
-    /** The row only needs metadata, and its blob URLs must survive a no-op poll. */
+    /**
+     * The rows outlive the settings row — this list lives in the plugin's store
+     * so a poll that changed nothing is a no-op — so it carries metadata and the
+     * thumbnail itself, and never a blob URL. A URL belongs to whatever is
+     * showing the picture: one minted during a visit that has since been closed
+     * was revoked on the way out, and an <img> holding it draws a broken image.
+     * See Thumb, which owns that lifetime.
+     */
     function reuse(previous, records) {
       const sorted = records.slice().sort((a, b) => Number(b.savedAt) - Number(a.savedAt))
       const keys = sorted.map((record) => record.key).join('\n')
       if (previous.length === sorted.length && previous.map((row) => row.key).join('\n') === keys) return previous
-      for (const row of previous) if (row.thumbUrl !== '') URL.revokeObjectURL(row.thumbUrl)
       return sorted.map((record) => ({
         key: record.key,
         name: record.name,
         appearanceKey: String(record.appearanceKey ?? ''),
-        thumbUrl: record.thumb instanceof Blob ? URL.createObjectURL(record.thumb) : '',
+        thumb: record.thumb instanceof Blob ? record.thumb : null,
       }))
     }
 
@@ -599,13 +605,34 @@ window.__ModuleLoader__.load({
       return ''
     }
 
+    /**
+     * One preview of the switcher. Its object URL exists exactly as long as this
+     * component is mounted: minted when the picture is put on screen, revoked
+     * when it is taken off — including when the settings row as a whole goes
+     * away because Settings was closed. So every visit mints fresh ones, and
+     * releasing them is what keeps a reopened Settings panel from pointing at
+     * blobs that are already gone.
+     */
+    function Thumb({ blob }) {
+      const [url, setUrl] = React.useState('')
+      React.useEffect(() => {
+        if (blob === null) {
+          setUrl('')
+          return undefined
+        }
+        const created = URL.createObjectURL(blob)
+        setUrl(created)
+        return () => URL.revokeObjectURL(created)
+      }, [blob])
+      return url === ''
+        ? h('span', { className: 'dpw-thumb-empty' }, '·')
+        : h('img', { src: url, alt: '', loading: 'lazy' })
+    }
+
     function Row({ useState, usePrefs, setPref, check, show, t }) {
       const state = useState((value) => value)
       const prefs = usePrefs((value) => value)
       React.useEffect(() => { void check() }, [])
-      React.useEffect(() => () => {
-        for (const record of state.records) if (record.thumbUrl !== '') URL.revokeObjectURL(record.thumbUrl)
-      }, [state.records])
       const showing = currentAppearanceImage()
       const message = statusMessage(state, t)
       return h('div', { className: 'dpw-row', 'data-portal-wallpapers-setting': '' },
@@ -624,9 +651,7 @@ window.__ModuleLoader__.load({
                 title: record.name,
                 'aria-current': current ? 'true' : undefined,
                 onClick: () => void show(record.key),
-              }, record.thumbUrl === ''
-                ? h('span', { className: 'dpw-thumb-empty' }, '·')
-                : h('img', { src: record.thumbUrl, alt: '', loading: 'lazy' }))
+              }, h(Thumb, { blob: record.thumb }))
             }))),
         h('div', { className: 'dpw-actions' },
           h(Switch, { checked: prefs.enabled, label: t('settingTitle'), onChange: (next) => void setPref('enabled', next) }),

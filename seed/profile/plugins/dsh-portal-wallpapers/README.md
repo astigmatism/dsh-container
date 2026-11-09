@@ -41,6 +41,14 @@ sends push it out.
   the Appearance plugin applies to an upload.
 - Two switches, both per browser: **Wallpapers sent from the Service Portal**
   (master, on by default) and the accent adoption above.
+- **Background placement**: a 3×3 grid of anchors — the corners, the edge
+  centers, the middle — and two sliders for anywhere between them, so a wallpaper
+  can be pinned to the upper left of a wide window instead of having its middle
+  cropped by it. Same origin grid, same 0–100 numbers as the portal's Appearance
+  panel, kept per wallpaper and per browser; the picker appears below the strip
+  for whatever is on screen and edits that one. It is offered for any background,
+  including one you uploaded in the Appearance panel — the framing is ours to
+  choose, the picture stays theirs.
 - A failure says which side failed: a portal that does not answer keeps its
   queue and is retried; a portal without the export endpoints says it may predate
   wallpaper export; unreadable Appearance settings leave the Appearance storage
@@ -63,9 +71,11 @@ too, so a year of sends cannot accumulate:
 | Received bytes | 150 MB total, oldest given up first | a run of large originals cannot fill the browser |
 | Currently showing | never evicted | settings still point at that image record |
 | One import | 64 MB image, 8 MB preview | larger payloads are acked with a "too large" note instead of jamming the queue |
+| Placed wallpapers | one entry per wallpaper that is off center, dropped once the wallpaper is gone | the center of the crop is what the appearance plugin does unaided, so it costs nothing |
 
 Storage lives in the browser profile (IndexedDB `dsh-portal-wallpapers` plus a
-record the appearance plugin owns), so it is per browser and does not survive a
+record the appearance plugin owns, plus `dsh-portal-wallpapers.origins` in
+localStorage for the placements), so it is per browser and does not survive a
 clean browser profile — which is the same deal as uploading a wallpaper in the
 Appearance panel yourself.
 
@@ -118,8 +128,24 @@ than silently stop showing wallpapers; re-read its
 `lib/client.js` against the version in `config/plugins.lock.json` when raising
 Appearance.
 
+Placement leans on one further thing about that plugin: its layer
+`#dsw-appearance-bg` paints the picture with `background-position: center`
+written into its own sheet, with no variable behind it and no setting in front of
+it. This plugin adds two rules over the top — `::before` for a wallpaper, `video`
+for a clip — that read `--dpw-bg-position` off the document, and they carry
+`!important` because that is the only dependable way a sheet you do not own
+overrules a sheet you do. The property is written only for a picture that was
+actually placed, and it goes on the document element rather than the body, which
+this plugin watches instead of writing. A wallpaper nobody placed here therefore
+draws exactly as it did before, and if Appearance grows a placement control of its
+own that writes an inline style, that one wins on its own terms and these two
+rules quietly stop mattering.
+
 ## Not covered
 
-Background *videos* stay the appearance plugin's own business; the portal has no
-video wallpapers. Two tabs of the same browser may both poll — the ack is
+Background *videos* stay the appearance plugin's own business — the portal has no
+video wallpapers — though the placement rules cover its video layer as well, so a
+clip is framed by the same origin as a picture. A send carries the file and its
+sampled colors, not the framing it was given in the portal: place it once here and
+this browser remembers it. Two tabs of the same browser may both poll — the ack is
 idempotent, so the picture arrives once.

@@ -32,6 +32,20 @@ window.__ModuleLoader__.load({
     const APPEARANCE_DB_VERSION = 2
     const APPEARANCE_IMAGE_STORE = 'images'
     const APPEARANCE_SETTINGS_KEY = 'dsh-ui-appearance.settings'
+    /**
+     * The appearance plugin's background layer, which paints a wallpaper on its
+     * own `::before` and a video background on its `<video>`. Its sheet hard-codes
+     * `background-position: center` and offers no knob, so the two rules in CSS
+     * below take the origin from here instead — checked against dsh-ui-appearance
+     * 0.1.28, like the storage it writes into.
+     */
+    const BG_LAYER_ID = 'dsw-appearance-bg'
+    /** Set on the document to move a wallpaper inside its cover crop. */
+    const BG_POSITION_VAR = '--dpw-bg-position'
+    /** Where each wallpaper sits in that crop — this browser, per wallpaper. */
+    const ORIGINS_KEY = 'dsh-portal-wallpapers.origins'
+    /** The middle of the crop, which is what the appearance plugin does unaided. */
+    const CENTER = { x: 50, y: 50 }
     /** Received wallpapers, keyed by the queue entry that carried them. */
     const LIBRARY_DB = 'dsh-portal-wallpapers'
     const LIBRARY_STORE = 'images'
@@ -59,6 +73,23 @@ window.__ModuleLoader__.load({
       switched: 'Showing {name}.',
       waiting: 'Waiting for {count} more wallpaper(s) from the portal.',
       portalAt: 'Portal: {url}',
+      // Placement, in the words the portal's own origin grid uses, so the two
+      // panels describe one idea the same way.
+      placementTitle: 'Background placement',
+      placementDescription: 'Where this wallpaper sits while the window is a different shape than the picture. The grid pins it to an edge; the sliders place it anywhere between.',
+      placementAt: '{x}% {y}%',
+      placementHorizontal: 'Horizontal',
+      placementVertical: 'Vertical',
+      placementReset: 'Back to center',
+      anchorTopLeft: 'Upper left',
+      anchorTopCenter: 'Upper center',
+      anchorTopRight: 'Upper right',
+      anchorMiddleLeft: 'Left',
+      anchorCenter: 'Center',
+      anchorMiddleRight: 'Right',
+      anchorBottomLeft: 'Lower left',
+      anchorBottomCenter: 'Lower center',
+      anchorBottomRight: 'Lower right',
       // Storage trouble and network trouble get separate sentences, because
       // only one of them is fixed by waiting.
       errStorageLibrary: 'This browser could not open its wallpaper store; private-window tabs block it.',
@@ -88,6 +119,21 @@ window.__ModuleLoader__.load({
       switched: '正在显示 {name}。',
       waiting: '仍在等待门户中的 {count} 张壁纸。',
       portalAt: '门户:{url}',
+      placementTitle: '壁纸位置',
+      placementDescription: '当窗口比例与壁纸本身不同时,该壁纸在画面中的位置。网格用于贴边定位,滑块可在锚点之间任意摆放。',
+      placementAt: '{x}% {y}%',
+      placementHorizontal: '水平',
+      placementVertical: '垂直',
+      placementReset: '回到中心',
+      anchorTopLeft: '左上',
+      anchorTopCenter: '上中',
+      anchorTopRight: '右上',
+      anchorMiddleLeft: '左侧',
+      anchorCenter: '居中',
+      anchorMiddleRight: '右侧',
+      anchorBottomLeft: '左下',
+      anchorBottomCenter: '下中',
+      anchorBottomRight: '右下',
       errStorageLibrary: '浏览器无法打开壁纸存储;无痕窗口会阻止它。',
       errStorageAppearance: '无法读取外观插件的设置,因此未作修改。先打开一次它的面板,再检查。',
       tooLarge: '已跳过 {name}:该文件对浏览器壁纸来说过大。',
@@ -121,6 +167,13 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = `
+/* The whole of the placement feature: the appearance plugin's own sheet puts the
+   wallpaper at the center of its crop, and only !important says otherwise to a
+   sheet this plugin does not own — specificity alone would be decided by which
+   stylesheet the browser happened to see last. Both rules read one property,
+   which is set only for a wallpaper this plugin has placed. */
+#${BG_LAYER_ID}::before{background-position:var(${BG_POSITION_VAR},50% 50%)!important}
+#${BG_LAYER_ID} video{object-position:var(${BG_POSITION_VAR},50% 50%)!important}
 .dpw-row{border-bottom:.5px solid var(--dsw-alias-border-l2);justify-content:space-between;align-items:flex-start;gap:24px;padding:16px 0;display:flex}
 .dpw-main{min-width:0;display:flex;flex-direction:column;gap:4px}
 .dpw-title{font-size:14px;line-height:20px}
@@ -132,6 +185,20 @@ window.__ModuleLoader__.load({
 .dpw-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .dpw-thumb-current{border-color:var(--dsw-alias-border-accent);box-shadow:0 0 0 2px var(--dsw-alias-bg-accent-tertiary)}
 .dpw-thumb-empty{color:var(--dsw-alias-label-tertiary);font-size:11px;display:grid;place-items:center;height:100%}
+.dpw-place{border-top:.5px solid var(--dsw-alias-border-l2);margin-top:14px;padding-top:12px;display:flex;flex-direction:column;gap:8px}
+.dpw-place-head{justify-content:space-between;align-items:baseline;gap:12px;display:flex}
+.dpw-place-body{align-items:center;gap:18px;display:flex}
+.dpw-place-grid{grid-template-columns:repeat(3,26px);grid-template-rows:repeat(3,26px);gap:3px;display:grid}
+.dpw-anchor{border:1px solid var(--dsw-alias-border-l2);background:transparent;cursor:pointer;border-radius:5px;padding:0;display:grid;place-items:center}
+.dpw-anchor::after{content:'';background:var(--dsw-alias-label-tertiary);border-radius:50%;width:5px;height:5px}
+.dpw-anchor:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dpw-anchor[aria-pressed=true]{border-color:var(--dsw-alias-border-accent);background:var(--dsw-alias-bg-accent-tertiary)}
+.dpw-anchor[aria-pressed=true]::after{background:var(--dsw-alias-label-primary)}
+.dpw-sliders{min-width:0;flex:1;display:flex;flex-direction:column;gap:6px}
+.dpw-slider{grid-template-columns:64px:minmax(0,1fr):36px;align-items:center;gap:8px;display:grid}
+.dpw-slider label{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+.dpw-slider input{accent-color:var(--dsw-alias-border-accent);width:100%}
+.dpw-slider output{color:var(--dsw-alias-label-secondary);font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
 .dpw-actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .dpw-check{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;padding:3px 10px;cursor:pointer}
 .dpw-check:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
@@ -360,6 +427,111 @@ window.__ModuleLoader__.load({
       return { ok: true, appearanceKey: key }
     }
 
+    /* --------------------------------------------------------------------- *
+     * Background placement — where a wallpaper sits inside its cover crop.   *
+     *                                                                        *
+     * dsh-ui-appearance has no notion of placement: its sheet says the       *
+     * wallpaper goes at the center of its crop, and that is that. The two    *
+     * rules in CSS read an origin from here instead, so a wallpaper can be   *
+     * pinned to a corner or slid anywhere between, with that plugin unaware *
+     * and a wallpaper this plugin never placed left exactly as it was. The   *
+     * shape of the control and the numbers behind it are the Service         *
+     * Portal's own — one origin on 0..100 per axis, kept per wallpaper and   *
+     * per browser, because that is a thing a person decides for one picture *
+     * on one screen, not a thing to synchronise.                            *
+     * --------------------------------------------------------------------- */
+
+    const clampAxis = (value) => {
+      const n = Math.round(Number(value))
+      return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : CENTER.x
+    }
+
+    /** The center is not stored: not-stored is what the appearance plugin does. */
+    const isCenter = (point) => point === undefined || point === null
+      || (clampAxis(point.x) === CENTER.x && clampAxis(point.y) === CENTER.y)
+
+    /** The stored origins; a damaged store reads as no origins rather than as a throw. */
+    function readOrigins() {
+      let raw
+      try {
+        raw = JSON.parse(localStorage.getItem(ORIGINS_KEY) ?? '{}')
+      } catch (_corrupt) {
+        return {}
+      }
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+      const origins = {}
+      for (const [key, value] of Object.entries(raw)) {
+        if (value === null || typeof value !== 'object') continue
+        const point = { x: clampAxis(value.x), y: clampAxis(value.y) }
+        if (!isCenter(point)) origins[key] = point
+      }
+      return origins
+    }
+
+    function writeOrigins(origins) {
+      try {
+        localStorage.setItem(ORIGINS_KEY, JSON.stringify(origins))
+      } catch (_quota) {}
+    }
+
+    /**
+     * Which wallpaper an origin belongs to. A received one is keyed by the
+     * portal's id, because that survives a re-send and re-storing, and a picture
+     * uploaded in the Appearance panel can only be keyed by the record holding
+     * it — which is stable until it is deleted.
+     */
+    const originKey = (record) => String(record.id ?? '') !== ''
+      ? String(record.id)
+      : `ap:${String(record.appearanceKey ?? '')}`
+
+    /** What this browser is showing, as of the last time anyone looked. */
+    let shownKey = null
+
+    /** The wallpaper behind the Harness, as far as this plugin can tell. */
+    function showingRecord(records, showing) {
+      if (showing === '') return null
+      return records.find((record) => String(record.appearanceKey ?? '') === showing)
+        ?? { id: '', appearanceKey: showing }
+    }
+
+    /**
+     * Put the wallpaper that is showing where its owner put it, and keep the
+     * store to the wallpapers that still exist: an origin whose wallpaper was
+     * deleted in the portal or trimmed out of the library is a leak that still
+     * costs an address, not a memory of a choice.
+     * @returns the placement the settings row should offer.
+     */
+    function syncPlacement(records) {
+      const origins = readOrigins()
+      const showing = currentAppearanceImage()
+      const shown = showingRecord(records, showing)
+      shownKey = showing
+      const keep = new Set(records.map(originKey))
+      if (shown !== null) keep.add(originKey(shown))
+      let pruned = false
+      for (const key of Object.keys(origins)) {
+        if (keep.has(key)) continue
+        delete origins[key]
+        pruned = true
+      }
+      if (pruned) writeOrigins(origins)
+      const key = shown === null ? '' : originKey(shown)
+      const point = key === '' ? CENTER : (origins[key] ?? CENTER)
+      applyPlacement(point)
+      return { key, x: point.x, y: point.y }
+    }
+
+    /**
+     * Hand the origin to the two rules in CSS. It goes on the document element,
+     * not on the body: watching the body is how a background changed elsewhere
+     * is noticed, and writing there would be watching oneself.
+     */
+    function applyPlacement(point) {
+      const style = document.documentElement.style
+      if (isCenter(point)) style.removeProperty(BG_POSITION_VAR)
+      else style.setProperty(BG_POSITION_VAR, `${clampAxis(point.x)}% ${clampAxis(point.y)}%`)
+    }
+
     /* -------------------------------------------------------------- *
      * The received-wallpaper library: this plugin's own storage.      *
      * -------------------------------------------------------------- */
@@ -551,6 +723,7 @@ window.__ModuleLoader__.load({
         draft.source = source
         draft.queued = remaining
         draft.records = reuse(draft.records, records)
+        draft.placement = syncPlacement(records)
         draft.checkedAt = Date.now()
         if (notice !== null) {
           draft.notice = notice
@@ -629,7 +802,53 @@ window.__ModuleLoader__.load({
         : h('img', { src: url, alt: '', loading: 'lazy' })
     }
 
-    function Row({ useState, usePrefs, setPref, check, show, t }) {
+    /**
+     * The origin picker: nine anchors — the four corners, the four edge centers
+     * and the middle — and two sliders for anywhere between them, laid out like
+     * the portal's so a wallpaper can be framed the same way in both places.
+     * `onChange` on a range input is the input event, so dragging is live: the
+     * wallpaper moves while the slider moves, which is the only way a control
+     * like this can be aimed.
+     */
+    function Placement({ point, onPoint, t }) {
+      const anchors = [
+        [0, 0, 'anchorTopLeft'], [CENTER.x, 0, 'anchorTopCenter'], [100, 0, 'anchorTopRight'],
+        [0, CENTER.y, 'anchorMiddleLeft'], [CENTER.x, CENTER.y, 'anchorCenter'], [100, CENTER.y, 'anchorMiddleRight'],
+        [0, 100, 'anchorBottomLeft'], [CENTER.x, 100, 'anchorBottomCenter'], [100, 100, 'anchorBottomRight'],
+      ]
+      const axis = (name, key) => h('div', { className: 'dpw-slider' },
+        h('label', { htmlFor: `dpw-origin-${name}` }, t(key)),
+        h('input', {
+          id: `dpw-origin-${name}`,
+          type: 'range',
+          min: 0,
+          max: 100,
+          step: 1,
+          value: point[name],
+          onChange: (event) => void onPoint({ ...point, [name]: Number(event.target.value) }),
+        }),
+        h('output', {}, `${point[name]}%`))
+      return h('div', { className: 'dpw-place' },
+        h('div', { className: 'dpw-place-head' },
+          h('div', { className: 'dpw-title' }, t('placementTitle')),
+          h('div', { className: 'dpw-description' }, format(t('placementAt'), { x: point.x, y: point.y }))),
+        h('div', { className: 'dpw-description' }, t('placementDescription')),
+        h('div', { className: 'dpw-place-body' },
+          h('div', { className: 'dpw-place-grid', role: 'group', 'aria-label': t('placementTitle') },
+            anchors.map(([x, y, key]) => h('button', {
+              key,
+              type: 'button',
+              className: 'dpw-anchor',
+              'aria-label': t(key),
+              'aria-pressed': point.x === x && point.y === y ? 'true' : undefined,
+              onClick: () => void onPoint({ x, y }),
+            }))),
+          h('div', { className: 'dpw-sliders' }, axis('x', 'placementHorizontal'), axis('y', 'placementVertical'))),
+        isCenter(point) ? null : h('div', { className: 'dpw-place-actions' },
+          h('button', { type: 'button', className: 'dpw-check', onClick: () => void onPoint(CENTER) }, t('placementReset'))))
+    }
+
+    function Row({ useState, usePrefs, setPref, check, show, place, t }) {
       const state = useState((value) => value)
       const prefs = usePrefs((value) => value)
       React.useEffect(() => { void check() }, [])
@@ -652,7 +871,11 @@ window.__ModuleLoader__.load({
                 'aria-current': current ? 'true' : undefined,
                 onClick: () => void show(record.key),
               }, h(Thumb, { blob: record.thumb }))
-            }))),
+            })),
+          // Framing belongs to the wallpaper on screen, so the picker appears
+          // with one — and edits that one, which is how the portal works too.
+          state.placement.key === '' ? null
+            : h(Placement, { point: state.placement, onPoint: place, t })),
         h('div', { className: 'dpw-actions' },
           h(Switch, { checked: prefs.enabled, label: t('settingTitle'), onChange: (next) => void setPref('enabled', next) }),
           h('div', { className: 'dpw-sub' }, h(Switch, {
@@ -679,6 +902,7 @@ window.__ModuleLoader__.load({
         source: '',
         queued: 0,
         records: [],
+        placement: { key: '', x: CENTER.x, y: CENTER.y },
         checkedAt: 0,
         notice: { kind: 'none' },
       })
@@ -740,10 +964,74 @@ window.__ModuleLoader__.load({
         const kept = await trimLibrary(record.key, ownKeys)
         state.update((draft) => {
           draft.records = reuse(draft.records, kept)
+          draft.placement = syncPlacement(kept)
           draft.notice = { kind: 'switched', name: record.name }
           draft.error = ''
         })
       }
+
+      /**
+       * Move the wallpaper that is showing, for this wallpaper and this browser.
+       * Every drag lands: the store is a handful of numbers, and a wallpaper
+       * aimed while it moves is the whole point of the control.
+       */
+      const place = (point) => {
+        const current = state.getSnapshot().placement
+        if (current.key === '') return
+        const stored = readOrigins()
+        const next = { x: clampAxis(point.x), y: clampAxis(point.y) }
+        if (isCenter(next)) delete stored[current.key]
+        else stored[current.key] = next
+        writeOrigins(stored)
+        applyPlacement(next)
+        state.update((draft) => {
+          draft.placement = { ...draft.placement, x: isCenter(next) ? CENTER.x : next.x, y: isCenter(next) ? CENTER.y : next.y }
+        })
+      }
+
+      /**
+       * Re-read what is showing and put it back where it belongs. Needed because
+       * the background can change without this plugin: the Appearance panel can
+       * point at another picture, or upload one of its own.
+       */
+      const resync = async () => {
+        let records
+        try {
+          records = await libraryAll()
+        } catch (_blocked) {
+          return
+        }
+        for (const record of records) if (record.appearanceKey) ownKeys.add(record.appearanceKey)
+        state.update((draft) => { draft.placement = syncPlacement(records) })
+      }
+
+      // The Appearance plugin applies a background by writing custom properties
+      // on the body, so that attribute is what changes when a background is
+      // switched or uploaded elsewhere; a `storage` event only covers the other
+      // tabs, and the next poll would be up to two minutes late.
+      const followBackground = () => {
+        let queued = false
+        const rerun = () => {
+          if (queued) return
+          queued = true
+          void Promise.resolve().then(() => { queued = false; void resync() })
+        }
+        const observer = typeof MutationObserver === 'function'
+          ? new MutationObserver(rerun)
+          : null
+        observer?.observe(document.body, { attributes: true, attributeFilter: ['style'] })
+        const onStorage = (event) => { if (event?.key === APPEARANCE_SETTINGS_KEY) rerun() }
+        window.addEventListener('storage', onStorage)
+        void resync()
+        return () => {
+          observer?.disconnect()
+          window.removeEventListener('storage', onStorage)
+          // The wallpaper is the appearance plugin's to draw; only the origin
+          // this plugin lent it is ours to take back.
+          applyPlacement(CENTER)
+        }
+      }
+      ctx.effect(followBackground, 'portal wallpapers: placement')
 
       const onVisible = () => {
         if (document.visibilityState === 'visible') void run()
@@ -764,7 +1052,7 @@ window.__ModuleLoader__.load({
         // Directly below the Appearance row (order 1000) that owns the result.
         order: 1001,
         locale: LOCALE,
-        inject: () => ({ hooks: { state, prefs }, setPref, check, show }),
+        inject: () => ({ hooks: { state, prefs }, setPref, check, show, place }),
       }, Row))
     }
 

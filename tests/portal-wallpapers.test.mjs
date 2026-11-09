@@ -220,7 +220,13 @@ test('the ack is forwarded and the portal answers for itself', async () => {
  * ------------------------------------------------------------------ */
 
 /** A minimal browser: enough localStorage, IndexedDB, DOM and fetch to run the client. */
-function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearance } = {}) {
+/** A `style` object that records custom properties — all the plugin writes there. */
+const styleOf = (store) => ({
+  setProperty: (name, value) => { store.set(name, String(value)); },
+  removeProperty: (name) => { store.delete(name); },
+});
+
+function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearance, origins } = {}) {
   const storage = new Map();
   const databases = new Map();
   const dispatched = [];
@@ -229,6 +235,13 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
   /** Every object URL this browser minted, and whether it is still live. */
   const urls = new Map();
   let nextUrl = 0;
+  /** Custom properties written on the document element: the placement itself. */
+  const bgVars = new Map();
+  /** The body observers the plugin opened, and the window listeners it keeps. */
+  const observers = [];
+  const listeners = new Map();
+  /** Every style sheet the plugin appended, as the browser received it. */
+  const sheets = [];
   /** The mounted instance whose hooks the fake React is answering, if any. */
   const hooks = { host: null };
 
@@ -315,11 +328,23 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
     document: {
       visibilityState: 'visible',
       getElementById: () => null,
-      createElement: () => ({ set textContent(_v) {}, }),
-      head: { appendChild: () => {} },
+      createElement: (tag) => ({ tag, textContent: '' }),
+      head: { appendChild: (element) => { sheets.push(String(element?.textContent ?? '')); } },
       addEventListener: () => {},
       removeEventListener: () => {},
+      // The appearance plugin applies a background by writing custom properties
+      // here, and this plugin reads one back off the document element.
+      body: { style: {} },
+      documentElement: { style: styleOf(bgVars) },
     },
+    // The plugin watches the body for exactly that; the fake never fires one.
+    MutationObserver: class MutationObserver {
+      constructor(callback) { this.callback = callback; observers.push(this); }
+      observe(target, options) { this.seen = { target, options }; }
+      disconnect() { this.disconnected = true; }
+    },
+    addEventListener: (type, handler) => { listeners.set(type, handler); },
+    removeEventListener: (type) => { listeners.delete(type); },
     URL: {
       // Object URLs as a browser keeps them: live until something revokes them,
       // and an <img> still holding a revoked one draws a broken picture. Which
@@ -357,6 +382,7 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
   if (prefs !== undefined) context.localStorage.setItem('dsh-portal-wallpapers.settings', JSON.stringify(prefs));
   if (appearance !== undefined) context.localStorage.setItem('dsh-ui-appearance.settings', JSON.stringify(appearance));
   if (rawAppearance !== undefined) context.localStorage.setItem('dsh-ui-appearance.settings', rawAppearance);
+  if (origins !== undefined) context.localStorage.setItem('dsh-portal-wallpapers.origins', JSON.stringify(origins));
   context.window = context;
   context.globalThis = context;
 
@@ -388,6 +414,11 @@ function fakeBrowser({ queued = [], portal = {}, prefs, appearance, rawAppearanc
     rows: new Map(),
     urls,
     hooks,
+    bgVars,
+    observers,
+    listeners,
+    origins: () => JSON.parse(storage.get('dsh-portal-wallpapers.origins') ?? '{}'),
+    sheets,
     localeStrings: strings,
     localeNamespaces: () => namespaces,
   };
@@ -557,6 +588,7 @@ const rowProps = (browser) => {
     setPref: injected.setPref,
     check: injected.check,
     show: injected.show,
+    place: injected.place,
     t: (key) => browser.localeStrings[key] ?? key,
   };
 };
@@ -590,6 +622,108 @@ test('a received wallpaper shows in the strip, and keeps showing next visit', as
   assert.equal(browser.urls.get(second.src), 'live', 'and the picture shows');
 });
 
+/** Elements of a rendered tree that are the origin controls. */
+const sliders = (tree) => findAll(tree, (node) => node.type === 'input').map((node) => node.props);
+const anchors = (tree) => findAll(tree, (node) => node.props?.className === 'dpw-anchor').map((node) => node.props);
+const placementOf = (tree) => findAll(tree, (node) => node.props?.className === 'dpw-place');
+
+test('the placement overrides the appearance plugin’s own centering, both layers', () => {
+  const browser = fakeBrowser();
+  const css = browser.sheets.join('\n');
+  for (const [selector, property] of [
+    ['#dsw-appearance-bg::before', 'background-position'],
+    ['#dsw-appearance-bg video', 'object-position'],
+  ]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rule = (css.match(new RegExp(`${escaped}\\{[^}]*\\}`)) ?? [''])[0];
+    assert.ok(rule.includes(`${property}:var(--dpw-bg-position`), `${selector} takes the origin this plugin owns`);
+    // Their sheet says center, and which stylesheet wins on specificity alone
+    // depends on which one the browser was handed last.
+    assert.ok(rule.endsWith('!important}'), `${selector} outranks a sheet this plugin does not own`);
+  }
+});
+
+test('a wallpaper keeps its place in the crop, for that wallpaper and browser', async () => {
+  const browser = fakeBrowser({ queued: [entry()] });
+  await waitFor(() => browser.acks.length > 0, 'the wallpaper was received');
+  await settle();
+
+  const row = rowMeta(browser);
+  const props = rowProps(browser);
+
+  // Center is what the appearance plugin does on its own, so it is not stored
+  // and not written as a property: nothing this plugin did not place is touched.
+  let visit = mount(row.component, props, browser);
+  assert.equal(placementOf(visit.tree).length, 1, 'a wallpaper on screen can be placed');
+  const [west, north] = sliders(visit.tree);
+  assert.deepEqual([Number(west.value), Number(north.value)], [50, 50], 'it starts at the center of the crop');
+  assert.equal(browser.bgVars.get('--dpw-bg-position'), undefined, 'the center is no property');
+
+  // Dragging is live: the origin is written on the page and remembered at once.
+  // Each drag is its own render pass, because a real React pass follows an input.
+  const drag = (axis, value) => {
+    const pass = mount(row.component, props, browser);
+    sliders(pass.tree)[axis].onChange({ target: { value: String(value) } });
+    pass.unmount();
+  };
+  drag(0, 68);
+  drag(1, 22);
+  assert.equal(browser.bgVars.get('--dpw-bg-position'), '68% 22%', 'the wallpaper moves with the slider');
+  assert.deepEqual(browser.origins(), { [ID]: { x: 68, y: 22 } }, 'one origin, keyed by the portal’s wallpaper id');
+  visit.unmount();
+
+  // The next visit reads it back — same wallpaper, same framing, no round trip.
+  // A new page starts with nothing written on it, so this can only pass by
+  // reading the store.
+  browser.bgVars.delete('--dpw-bg-position');
+  visit = mount(row.component, props, browser);
+  const [westAgain, northAgain] = sliders(visit.tree);
+  assert.deepEqual([Number(westAgain.value), Number(northAgain.value)], [68, 22], 'the framing survives closing Settings');
+  await settle();
+  assert.equal(browser.bgVars.get('--dpw-bg-position'), '68% 22%', 'and is put back on the page');
+
+  // An anchor is a shortcut for an exact point, not a different kind of state.
+  const upperRight = anchors(visit.tree).find((anchor) => anchor['aria-label'] === 'anchorTopRight');
+  upperRight.onClick();
+  assert.equal(browser.bgVars.get('--dpw-bg-position'), '100% 0%', 'the corner is the corner of the crop');
+  assert.deepEqual(browser.origins(), { [ID]: { x: 100, y: 0 } });
+  const pressed = anchors(visit.tree).filter((anchor) => anchor['aria-pressed'] === 'true');
+  assert.equal(pressed.length, 0, 'an anchor is only lit when the origin is exactly there');
+  visit.unmount();
+
+  // Back to center means back to what the appearance plugin does unaided: no
+  // property, and no entry left behind to outlive the choice.
+  visit = mount(row.component, props, browser);
+  const reset = findAll(visit.tree, (node) => node.props?.className === 'dpw-check' && String(node.children ?? '') === 'placementReset')
+    .map((node) => node.props);
+  reset[0].onClick();
+  assert.equal(browser.bgVars.has('--dpw-bg-position'), false, 'the property goes back to the appearance plugin');
+  assert.deepEqual(browser.origins(), {}, 'the center is not stored');
+  visit.unmount();
+});
+
+test('an origin is forgotten once its wallpaper is gone', async () => {
+  const browser = fakeBrowser({ queued: [entry()] });
+  await waitFor(() => browser.acks.length > 0, 'the wallpaper was received');
+  await settle();
+
+  const props = rowProps(browser);
+  const visit = mount(rowMeta(browser).component, props, browser);
+  sliders(visit.tree)[0].onChange({ target: { value: '30' } });
+  sliders(visit.tree)[1].onChange({ target: { value: '40' } });
+  visit.unmount();
+
+  // A wallpaper deleted in the portal leaves its origin behind until the next
+  // sync, which is where the wallpaper list says it no longer exists.
+  browser.storage.set('dsh-portal-wallpapers.origins', JSON.stringify({
+    [ID]: { x: 30, y: 40 },
+    [OTHER]: { x: 10, y: 90 },
+  }));
+  await props.check();
+  await settle();
+  assert.deepEqual(browser.origins(), { [ID]: { x: 30, y: 40 } }, 'the shown wallpaper keeps its place');
+});
+
 test('the client adds one settings row beneath the Appearance row', () => {
   const browser = fakeBrowser();
   const row = rowMeta(browser);
@@ -598,7 +732,7 @@ test('the client adds one settings row beneath the Appearance row', () => {
   assert.equal(row.order, 1001);
   assert.equal(typeof row.component, 'function');
   const injected = row.inject();
-  assert.deepEqual(Object.keys(injected).sort(), ['check', 'hooks', 'setPref', 'show']);
+  assert.deepEqual(Object.keys(injected).sort(), ['check', 'hooks', 'place', 'setPref', 'show']);
   assert.deepEqual(Object.keys(injected.hooks).sort(), ['prefs', 'state']);
 });
 
@@ -684,6 +818,10 @@ test('the client agrees with the host about every route it calls', () => {
   assert.match(source, /const APPEARANCE_DB_VERSION = 2/);
   assert.match(source, /const APPEARANCE_IMAGE_STORE = 'images'/);
   assert.match(source, /const APPEARANCE_SETTINGS_KEY = 'dsh-ui-appearance\.settings'/);
+  // And the layer it paints on, whose sheet this plugin overrides to place one.
+  assert.match(source, /const BG_LAYER_ID = 'dsw-appearance-bg'/);
+  assert.match(source, /const BG_POSITION_VAR = '--dpw-bg-position'/);
+  assert.match(source, /const ORIGINS_KEY = 'dsh-portal-wallpapers\.origins'/);
   // Both halves must describe the same bounded storage.
   assert.match(source, /const MAX_ITEMS = (\d+)/);
   assert.match(source, /const MAX_TOTAL_BYTES = (\d+ \* 1024 \* 1024)/);

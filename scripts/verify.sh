@@ -136,6 +136,7 @@ for expected in \
   'dsh-local-speech-input@link:' \
   'dsh-loop-detector@1.0.0' \
   'dsh-plugin-task-notification@0.2.1' \
+  'dsh-portal-wallpapers@link:' \
   'dsh-ego-browser@0.8.6' \
   'dsh-session-pin@0.7.21' \
   'dsh-ui-appearance@0.1.28'

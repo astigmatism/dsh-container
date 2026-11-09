@@ -69,7 +69,7 @@ step after an operator updates a selected deployment through Service Portal.
   captured voice host, with separate file-based keys and locked deployment
   metadata in `config/speech.lock.json`.
 
-The locked web profile contains these eleven plugins:
+The locked web profile contains these twelve plugins:
 
 1. `@zoytown/dsh-token` 0.1.3 with a narrowly anchored session-format-v3
    compatibility patch, installed but disabled by default because its
@@ -90,6 +90,8 @@ The locked web profile contains these eleven plugins:
     terminal and image/PDF rendering use the upstream Harness implementations
 11. `dsh-follow-up-suggestions` 0.1.0 (local, in `seed/profile/plugins/`),
     adapted from `shaoeric/dsh-suggest` (MIT) for the 0.2 APIs
+12. `dsh-portal-wallpapers` 0.1.0 (local, in `seed/profile/plugins/`), receives
+    wallpapers sent from the Service Portal and hands them to Appearance
 
 The profile also disables DeepSeek's keyed web search and installs the captured
 keyless DuckDuckGo/Bing fallback provider. See `config/plugins.lock.json` and
@@ -119,6 +121,16 @@ and which are installed but deliberately inactive.
   Session log. See the plugin
   [README](seed/profile/plugins/dsh-follow-up-suggestions/README.md) for
   configuration, including an optional fixed model.
+- **Wallpapers from the Service Portal.** Wallpaper management in the portal has
+  **Send to the DeepSeek Harness**: one wallpaper, or a whole slot at once.
+  Sends wait in a queue on the portal; the Harness picks them up in the
+  background, and they become the browser's background at once through the
+  Appearance plugin's own storage — no reload. Received pictures stay
+  switchable in **Settings → General → Wallpapers sent from the Service Portal**,
+  where the feature can also be turned off. The portal address comes from
+  `PORTAL_BASE_URL`, else the host the Harness is served from. See the plugin
+  [README](seed/profile/plugins/dsh-portal-wallpapers/README.md) for the three
+  routes and for every bound that keeps the queue and the browser bounded.
 - **Busy Enter steers.** A prompt sent while the agent is working steers the
   running Turn instead of queueing behind it. Cmd/Ctrl+Enter queues instead.
   The profile sets `ui-conversation.busyEnter: steer`. Remote Web pages (LAN

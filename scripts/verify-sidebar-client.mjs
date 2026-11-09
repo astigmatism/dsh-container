@@ -32,7 +32,8 @@ if (process.argv.includes('--live')) {
     assert.equal(result.ok, true, result.error?.message);
     const maintained = new Set(['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
       'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
-      'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar', 'dsh-follow-up-suggestions']);
+      'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar', 'dsh-follow-up-suggestions',
+      'dsh-portal-wallpapers']);
     for (const row of result.value.entries) {
       if (!row.enabled) continue; // Explicitly disabled user plugins stay disabled.
       if (maintained.has(row.moduleName) || /dsh-(web-search-free|router-model-discovery)\.js$/.test(row.moduleName ?? '')) {
@@ -61,6 +62,20 @@ if (process.argv.includes('--live')) {
     assert.equal(preference.status, 200, 'follow-up suggestion preference route');
     assert.equal(preference.body.ok, true);
     assert.equal(typeof preference.body.enabled, 'boolean');
+    // Service Portal wallpapers: browser half installed, and its queue route
+    // answering as this plugin's. There is no portal to reach in here, so what
+    // proves ownership is that the route is not a 404 or a routing failure.
+    await page.locator('#dsh-portal-wallpapers-style').waitFor({ state: 'attached' });
+    const queue = await page.evaluate(async () => {
+      const reply = await fetch('/api/portal-wallpapers/queue', { cache: 'no-store' });
+      return { status: reply.status, body: await reply.json().catch(() => null) };
+    });
+    // The queue answers 200 and carries its own trouble, so this holds whether
+    // or not a portal is reachable from here — what is being proven is that the
+    // route belongs to the plugin and answers, rather than 404ing.
+    assert.equal(queue.status, 200, 'wallpaper queue route answers');
+    assert.equal(typeof queue.body?.ok, 'boolean', 'wallpaper queue route answer');
+    assert.equal(queue.body?.ok === true, Array.isArray(queue.body?.queued), 'wallpaper queue answer shape');
     assert.deepEqual(errors, []);
     console.log('Verified enabled plugin and preset mounts, composed chat, speech, appearance and follow-up suggestion browser integrations. Native terminal lifecycle is covered by the isolated --live gate.');
   } catch (error) {

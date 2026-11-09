@@ -146,3 +146,16 @@
 - insert:
     - id: follow-up-suggestions
       name: 'dsh-follow-up-suggestions'
+
+# Wallpapers sent from the Service Portal become this browser's background via
+# the dsh-ui-appearance plugin's own storage. The portal is read through the
+# plugin's host routes because the https page may not call its plain-http API
+# directly. Empty portalBaseURL resolves $PORTAL_BASE_URL, then the host this
+# Harness was served from over plain http — correct wherever the portal shares
+# the host, which is how this deployment runs. See
+# profiles/web/plugins/dsh-portal-wallpapers/README.md.
+- insert:
+    - id: portal-wallpapers
+      name: 'dsh-portal-wallpapers'
+      config:
+        portalBaseURL: ''

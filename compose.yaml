@@ -47,6 +47,11 @@ services:
       # in trusted application-validation deployments that need LAN/container
       # targets; ego otherwise blocks private hosts and subresources.
       DSH_BROWSER_ALLOW_PRIVATE_HOSTS: "${DSH_BROWSER_ALLOW_PRIVATE_HOSTS:-false}"
+      # Service Portal origin for the wallpaper export queue (plugin
+      # dsh-portal-wallpapers). Unset means "the host this Harness is served
+      # from, plain http", which is the usual layout; set it when the portal
+      # lives on another machine.
+      PORTAL_BASE_URL: "${PORTAL_BASE_URL:-}"
       # The newest dsh-token release has a repeatable multi-gigabyte native
       # memory failure while refolding session artifacts. Keep it fail-closed
       # unless an operator deliberately accepts that risk.

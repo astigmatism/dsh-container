@@ -51,6 +51,9 @@ importers:
       dsh-plugin-task-notification:
         specifier: github:Cocowwy/dsh-plugin-task-notification#f10cd6869b7a50e55780627a6d55bbb310fd59b4
         version: https://codeload.github.com/Cocowwy/dsh-plugin-task-notification/tar.gz/f10cd6869b7a50e55780627a6d55bbb310fd59b4
+      dsh-portal-wallpapers:
+        specifier: link:./plugins/dsh-portal-wallpapers
+        version: link:plugins/dsh-portal-wallpapers
       dsh-session-pin:
         specifier: 0.7.21
         version: 0.7.21(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/schemastery@3.19.0)

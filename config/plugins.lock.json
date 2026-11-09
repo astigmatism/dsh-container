@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-11-08 (Harness 0.2.2-rc.1; every third-party plugin raised to its current release)",
+  "capturedAt": "2026-11-09 (Harness 0.2.2-rc.1; dsh-portal-wallpapers added, receiving Service Portal wallpaper sends through dsh-ui-appearance)",
   "dsh": "0.2.2-rc.1 (dsh-v0.2.2-rc.1; 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db)",
   "profile": "web",
   "plugins": {
@@ -10,6 +10,7 @@
     "dsh-local-speech-input": "0.1.0 (local)",
     "dsh-loop-detector": "1.0.0 (local patch)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
+    "dsh-portal-wallpapers": "0.1.0 (local, seed/profile/plugins; Service Portal wallpaper export)",
     "dsh-session-pin": "0.7.21 (session/workspace navigation patch)",
     "dsh-ui-appearance": "0.1.28 (settings icon verification; dark-mode dialog fix)",
     "dsh-better-sidebar": "0.26.1",

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = re.compile(r"^ *for expected in \\\n(.*?)^ *do$", re.MULTILINE | re.DOTALL)
 ENTRY = re.compile(r"'([^']+)'")
 # Bundled from the repository, so an inventory names these by their link target.
-LINKED = {"dsh-follow-up-suggestions", "dsh-local-speech-input"}
+LINKED = {"dsh-follow-up-suggestions", "dsh-local-speech-input", "dsh-portal-wallpapers"}
 
 
 def gate(path):

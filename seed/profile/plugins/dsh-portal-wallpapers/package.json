@@ -1,0 +1,38 @@
+{
+  "name": "dsh-portal-wallpapers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Receive wallpapers sent from the Service Portal and apply them through the Appearance plugin",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-alpha.5": "compatible",
+        "0.2.2-rc.1": "compatible"
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@
     "dsh-local-speech-input": "link:../../../dsh-local-speech",
     "dsh-loop-detector": "1.0.0",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification#f10cd6869b7a50e55780627a6d55bbb310fd59b4",
+    "dsh-portal-wallpapers": "link:./plugins/dsh-portal-wallpapers",
     "dsh-session-pin": "0.7.21",
     "dsh-ui-appearance": "0.1.28",
     "dsh-container-profile": "link:./managed",

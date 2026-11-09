@@ -60,6 +60,9 @@ case "${1:-}" in
       "$project_dir/tests/local-inference-contract.test.mjs" \
       "$project_dir/tests/dsh-context-compaction-policy.test.mjs" \
       "$project_dir/tests/router-client-wire.test.mjs"
+    # Service Portal wallpaper hand-off (plugin dsh-portal-wallpapers): host
+    # routes against a faked portal, browser half against a faked browser.
+    node --test "$project_dir/tests/portal-wallpapers.test.mjs"
     exit 0
     ;;
   -h|--help)
@@ -159,6 +162,8 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check seed/profile/plugins/dsh-follow-up-suggestions/client.js
     node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/index.js
     node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/suggestions.js
+    node --check seed/profile/plugins/dsh-portal-wallpapers/client.js
+    node --input-type=module --check < seed/profile/plugins/dsh-portal-wallpapers/index.js
     node --check seed/plugins/dsh-web-search-free.js
     node --input-type=module --check < seed/plugins/dsh-router-model-discovery.js
     node --check scripts/patch-dsh-resident-availability.mjs
@@ -313,6 +318,7 @@ if [ "$build" -eq 1 ]; then
     'dsh-local-speech-input@link:' \
     'dsh-loop-detector@1.0.0' \
     'dsh-plugin-task-notification@0.2.1' \
+    'dsh-portal-wallpapers@link:' \
     'dsh-ego-browser@0.8.6' \
     'dsh-session-pin@0.7.21' \
     'dsh-ui-appearance@0.1.28'

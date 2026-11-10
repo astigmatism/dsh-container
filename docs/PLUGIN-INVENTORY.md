@@ -17,6 +17,7 @@ Everything below is the state at the Harness `0.2.2-rc.1` pin.
 | --- | --- | --- | --- |
 | `@deepseek-ai/dsh-base` | `0.2.2-rc.1` (upstream core) | Runtime base every profile needs | — |
 | `@deepseek-ai/dsh-web-app` | `0.2.2-rc.1` (upstream core) | Browser/HTTPS web surface behind the gateway | `patch-dsh-web-runtime-compat.mjs` re-provides the `webRuntime` cordis service upstream dropped; `patch-dsh-web-auth.mjs` keeps the launch-token/cookie boundary |
+| `@deepseek-ai/dsh-web-frontend` | `0.2.2-rc.1` (upstream core; the served bundle, not a profile bundle) | The browser bundle the transcript is rendered in, markdown and TeX included | `patch-dsh-markdown-money-math.mjs` keeps two dollar amounts from becoming one equation; `verify.sh` proves the chunk `index.html` loads carries it |
 | `dsh-local-speech-input` | local, `seed/profile/plugins/…` symlinked from `plugin/dsh-local-speech` | **Dictation.** Mic button in the composer → gateway `/local-stt/transcriptions`; spoken replies through `/local-tts/speech` | a required deployment invariant, not an optional extra |
 | `dsh-plugin-task-notification` | `0.2.1` @ commit `f10cd6869b7a50e55780627a6d55bbb310fd59b4` | Task-finished notification reaches the operator across the tunnel | commit-pinned, unpatched |
 | `dsh-context` | `0.82.2` | Context usage/insight panel used to keep long dictation sessions inside the router budget | preset policy patch keeps its compaction rows honest |

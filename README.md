@@ -152,6 +152,42 @@ three 35-second boundaries (longer than the plugin's 30-second refresh), and
 fails on monotonic growth, excessive RSS/growth, an OOM flag, a restart or
 recreation, or any write to the disabled plugin's durable index.
 
+### Two prices are not an equation
+
+A conversation about hardware quotes says `$1,250` and `$1,699.99` in one
+sentence. Harness parses markdown with `micromark-extension-math`, whose
+`$…$` rule carries **no adjacency requirement at all**: it opens at the first
+`$` and closes at the next one whatever surrounds either delimiter, so that
+sentence became a single inline equation holding
+`1,250 just got riskier than the Denver ASUS at`. KaTeX lays that out one
+character per line, and because commas and letters are valid TeX the renderer's
+`throwOnError:false` retry painted it instead of raising, so nothing ever
+reported it. The same pair in adjacent table cells mangles a cost table.
+
+`scripts/patch-dsh-markdown-money-math.mjs` gives the shipped bundle pandoc's
+`tex_math_dollars` rule - the rule GFM-style renderers use for exactly this
+failure: **a `$…$` span is math only when the character after the opening `$`
+run is not whitespace, the character before the closing `$` run is not
+whitespace, and the character after the closing `$` run is not an ASCII digit.**
+Any violation rejects the whole span, so the sentence stays literal text and
+scanning resumes one character after the opening `$`. Ambiguity always resolves
+to prose; there is no partial math guess.
+
+- Stays text: `$1,250 … $1,699.99`, `costs $5 or $10`, every cell of a price
+  table, `$HOME` and `$PATH` in one paragraph, `$ 5`, `5$`, `$ x $`.
+- Still math: `$x^2$`, `$a+b$`, `$$x^2$$`. So **no agent formatting rule
+  changes**, and `\$` keeps escaping - the patch reuses the shipped escape
+  guard, replaces one text tokenizer, and leaves display `$$…$$` blocks,
+  `\(…\)`, `\[…\]`, code spans and ```math fences to their own constructs.
+
+`tests/dsh-markdown-money-math-patch.test.mjs` drives the released tokenizer
+itself and pins every case above. Drop the patch when a Harness release
+registers a guarded math text extension
+(`packages/client/ui-primitives/src/markdown/parse.ts` calls `math()` with no
+options and no extension point); the image build fails on the drifted anchor
+instead of silently dropping the behaviour, and `scripts/verify.sh` proves a
+running deployment serves the patched chunk.
+
 ## Native terminal workflow
 
 Harness owns the terminal in the right sidebar. Open a conversation,

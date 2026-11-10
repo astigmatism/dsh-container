@@ -153,6 +153,15 @@ if ! compose exec -T harness node /opt/dsh-build/patch-dsh-file-previews.mjs \
   exit "$configuration_exit"
 fi
 
+# Prove the browser bundle the served index.html actually loads still refuses to
+# read two prices as one equation. The asset lives in the image layer, so an
+# out-of-tree restore or a container recreated from an older image shows up here
+# rather than as a silently mangled transcript.
+if ! compose exec -T harness node /opt/dsh-build/patch-dsh-markdown-money-math.mjs --check; then
+  echo "The deployed money-safe markdown math patch is missing from the served bundle." >&2
+  exit "$configuration_exit"
+fi
+
 # Exercise the installed PTY as the service UID and the mounted sidebar API.
 # The read-only client probe also works when the user has disabled agent tools.
 if ! compose exec -T -e DSH_PROFILE_ROOT=/data/dsh/profiles/web harness \

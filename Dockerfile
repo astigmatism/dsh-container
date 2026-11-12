@@ -97,6 +97,7 @@ COPY scripts/patch-dsh-web-auth.mjs /opt/dsh-build/patch-dsh-web-auth.mjs
 COPY scripts/patch-dsh-web-runtime-compat.mjs /opt/dsh-build/patch-dsh-web-runtime-compat.mjs
 COPY scripts/patch-dsh-session-title-reasoning.mjs /opt/dsh-build/patch-dsh-session-title-reasoning.mjs
 COPY scripts/patch-dsh-busy-enter-steer.mjs /opt/dsh-build/patch-dsh-busy-enter-steer.mjs
+COPY scripts/patch-dsh-voice-background.mjs /opt/dsh-build/patch-dsh-voice-background.mjs
 COPY scripts/patch-dsh-token-session-format.mjs /opt/dsh-build/patch-dsh-token-session-format.mjs
 COPY scripts/patch-dsh-markdown-money-math.mjs /opt/dsh-build/patch-dsh-markdown-money-math.mjs
 COPY plugin/dsh-ego-adapter /opt/dsh-ego-adapter
@@ -119,6 +120,8 @@ RUN node /opt/dsh-build/patch-dsh-llm-pi-ai.mjs \
     && node /opt/dsh-build/patch-dsh-session-title-reasoning.mjs --check \
     && node /opt/dsh-build/patch-dsh-busy-enter-steer.mjs \
     && node /opt/dsh-build/patch-dsh-busy-enter-steer.mjs --check \
+    && node /opt/dsh-build/patch-dsh-voice-background.mjs \
+    && node /opt/dsh-build/patch-dsh-voice-background.mjs --check \
     && node /opt/dsh-build/patch-dsh-markdown-money-math.mjs \
     && node /opt/dsh-build/patch-dsh-markdown-money-math.mjs --check \
     && grep -Fq 'dsh-container-web-launch-token-v1' /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js

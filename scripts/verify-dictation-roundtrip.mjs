@@ -6,8 +6,9 @@
  * login form, a session created over the browser's own RPC surface, the Voice
  * Input plugin's capture row, and the recognizer leg from Harness to an
  * OpenAI-compatible transcription endpoint (the qualification speech service,
- * started by the boot check). The three outcomes a user can meet are all
- * asserted: a transcript that lands in the draft, a service failure that stays
+ * started by the boot check). The outcomes a user can meet are all asserted: a
+ * transcript that lands in the draft, a recognizer that fails once and is handed
+ * the same recording back without bothering anyone, a service failure that stays
  * in the capture row with a way to retry, and a microphone that cannot produce
  * audio at all. The microphone is also proved to be released afterwards.
  */
@@ -157,8 +158,27 @@ try {
   assert.equal((await fixtureState()).received, 1, 'one recording reached the speech service');
   assert.match(await composer.textContent(), transcriptPattern);
 
-  // 2. A service failure stays visible with a retry, and changes no text.
-  await fixtureState({ fail: true });
+  // 2. A recognizer that fails once gets the same recording back with no help
+  //    from the user: the take is re-sent, not re-recorded.
+  await fixtureState({ fail: false, failOnce: 1, reset: true });
+  await composer.fill('');
+  await record();
+  await page.waitForFunction(
+    text => (document.querySelector('[data-composer-input][contenteditable="true"]')?.textContent ?? '').includes(text),
+    TRANSCRIPT,
+    { timeout: 40000 },
+  );
+  const resent = await fixtureState();
+  assert.equal(resent.rejected, 1, 'the first attempt was rejected');
+  assert.equal(resent.received, 1, 'the re-sent recording was accepted');
+  assert.deepEqual(resent.sizes.length === 2 && new Set(resent.sizes).size === 1, true,
+    `the same take has to be re-sent, saw uploads ${JSON.stringify(resent.sizes)}`);
+  assert.equal(await page.locator('[data-voice-activity="feedback"]').count(), 0,
+    'a take that recovered on its own must not ask the user to record it again');
+
+  // 3. A service that stays down is re-sent a bounded number of times and then
+  //    fails visibly, with a retry, changing no text.
+  await fixtureState({ fail: true, reset: true });
   const before = await composer.textContent();
   await record();
   await page.waitForSelector('[data-voice-activity="feedback"]', { timeout: 30000 });
@@ -168,16 +188,17 @@ try {
   assert.equal(await composer.textContent(), before, 'a failed recording inserts nothing');
   assert.equal(await page.locator('[data-voice-activity="feedback"] button[aria-label="Record again"]').count(), 1,
     'a failed recording must offer to record again');
+  assert.equal((await fixtureState()).rejected, 3, 'a dead service is re-sent twice before the failure is reported');
 
-  // 3. A microphone that yields no audio fails without sending anything.
+  // 4. A microphone that yields no audio fails without sending anything.
   await page.evaluate(() => { window.__fixtureRecorderBroken = true; });
   await page.click('[data-voice-activity="feedback"] button[aria-label="Record again"]');
   const brokenReported = await page.waitForFunction(() => document.querySelector('[data-voice-activity="feedback"], [data-voice-activity="error"]')?.textContent?.includes('Synthetic recorder failure') === true, null, { timeout: 15000 })
     .then(() => true).catch(() => false);
   if (!brokenReported) throw new Error(`a broken recorder reported nothing visible: ${await row.textContent()}`);
   const state = await fixtureState();
-  assert.equal(state.received, 1, 'a broken recorder sends no audio');
-  assert.equal(state.rejected, 1, 'only the unavailable service was rejected');
+  assert.equal(state.received, 0, 'a broken recorder sends no audio');
+  assert.equal(state.rejected, 3, 'only the attempts against the dead service were rejected');
   assert.ok(state.lastBytes > 500, `real microphone audio expected, saw ${state.lastBytes} bytes`);
   assert.equal(state.lastModel, 'synthetic-whisper', 'the recognizer must send the configured model');
   assert.equal(state.lastLanguage, '', 'automatic language detection sends no language field');
@@ -188,7 +209,7 @@ try {
     && window.__fixtureTracks.every(track => track.readyState === 'ended'), null, { timeout: 15000 });
   await page.evaluate(() => { window.__fixtureRecorderBroken = false; });
   assert.match(await composer.textContent(), new RegExp(TRANSCRIPT.replace(/[*+?^${}()|[\]\\]/g, '\\$&')));
-  console.log('Verified synthetic microphone capture through the authenticated HTTPS gateway and the recognizer leg: transcript inserted, service failure shown with a retry, a broken recorder refused without sending audio, and every microphone track released.');
+  console.log('Verified synthetic microphone capture through the authenticated HTTPS gateway and the recognizer leg: transcript inserted, a one-off recognizer failure re-sent as the same take, a dead service shown with a retry after bounded attempts, a broken recorder refused without sending audio, and every microphone track released.');
 } catch (error) {
   console.error(String(error?.stack ?? error).split(process.env.DSH_BOOT_TOKEN).join('<redacted>'));
   console.error((await page?.locator('body').innerText().catch(() => '') ?? '').slice(-3500));

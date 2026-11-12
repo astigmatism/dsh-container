@@ -12,6 +12,8 @@ fail() {
 for path in \
   scripts/verify-dictation-client.mjs \
   scripts/verify-dictation-backend.mjs \
+  scripts/patch-dsh-voice-background.mjs \
+  tests/dsh-voice-background-patch.test.mjs \
   scripts/reconcile-voice-bundles.mjs \
   plugin/dsh-speech-whisper/index.js \
   plugin/dsh-speech-whisper/provider.js \
@@ -97,5 +99,27 @@ grep -Fq 'defaultProvider: whisper-lan' "$project_dir/seed/profile/managed/cordi
   || fail "the profile does not select Whisper as the default recognizer"
 grep -Fq 'STT_API_KEY_FILE: /run/secrets/stt_api_key' "$project_dir/compose.yaml" \
   || fail "the dictation key is not mounted where the recognizer reads it"
+
+# Dictation belongs to the person, not to the window. Upstream cancelled a live
+# recording on window blur and on a hidden tab, discarding every chunk captured
+# before the click away, and discarded a take outright when the recognizer failed
+# once. Both are patched at image build and both are gated as behaviour.
+grep -Fq 'COPY scripts/patch-dsh-voice-background.mjs /opt/dsh-build/patch-dsh-voice-background.mjs' \
+  "$project_dir/Dockerfile" \
+  || fail "Harness image does not contain the background dictation patch"
+grep -Fq 'node /opt/dsh-build/patch-dsh-voice-background.mjs --check' "$project_dir/Dockerfile" \
+  || fail "the image build does not verify the background dictation patch was applied"
+grep -Fq '/opt/dsh-build/patch-dsh-voice-background.mjs --check' "$project_dir/scripts/check.sh" \
+  || fail "the check suite does not verify the background dictation patch in the built image"
+grep -Fq 'const blur = () => {' "$project_dir/scripts/patch-dsh-voice-background.mjs" \
+  || fail "the patch no longer pins the upstream focus-loss cancellation"
+grep -Fq 'transcribeWithRetry' "$project_dir/scripts/patch-dsh-voice-background.mjs" \
+  || fail "the patch no longer re-sends a failed take"
+grep -Fq 'the recording did not survive' "$project_dir/scripts/verify-dictation-client.mjs" \
+  || fail "the deployment verifier does not require a recording to survive clicking away"
+grep -Fq 'the same take has to be re-sent' "$project_dir/scripts/verify-dictation-roundtrip.mjs" \
+  || fail "the round trip does not require a failed take to be re-sent unchanged"
+grep -Fq 'failOnce' "$project_dir/scripts/qualification-speech-service.mjs" \
+  || fail "the synthetic speech service cannot steer a one-off recognizer failure"
 
 echo "ok - voice input controls, the live waveform, the recognizer transport, and the configured policy are verified at deployment"

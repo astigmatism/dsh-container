@@ -734,6 +734,16 @@ faster-whisper with the captured model. The local `sensevoice-local` recognizer
 is also in the roster; selecting it needs a one-time ~240 MB model download
 through the plugin's own details page and never leaves this machine.
 
+A recording belongs to the person, not to the window: clicking away to another
+application, or minimizing the browser, leaves the capture running, and the
+transcript arrives when the recording is stopped. Upstream ends a live recording
+at the first loss of focus and discards a take whenever recognition fails once,
+so this image patches both shapes (`scripts/patch-dsh-voice-background.mjs`): a
+take ends on Stop, Escape, a Session switch or a warned page unload, and a failed
+recognition is re-sent — the same audio, twice more — before any error is shown.
+The ceiling below still applies, so a recording left running in the background
+keeps its first five minutes.
+
 Deployment values come from the environment (`STT_BASE_URL`, `STT_MODEL`,
 `STT_TIMEOUT_MS`) and are read by this process, which is why
 `secrets/stt_api_key` is mounted here as well as into the gateway. An empty URL
@@ -798,8 +808,9 @@ current Harness composer and fails unless exactly one microphone control mounts
 and the retired one is gone. Every `deploy.sh` and `update-and-restart.sh` run
 also executes the same check against the deployed browser client with a fake
 microphone device: it starts a recording, requires the waveform to be redrawing
-from the live signal, requires the recording to settle into a transcript or an
-honest failure row, and then requires the authenticated `/local-stt/config`
+from the live signal, requires that recording to survive the page being
+backgrounded and losing window focus, requires it to settle into a transcript or
+an honest failure row, and then requires the authenticated `/local-stt/config`
 route, expected STT model, non-empty private key, and live STT health. An update
 cannot be reported successful if any part of that contract is missing.
 

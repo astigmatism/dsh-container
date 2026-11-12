@@ -218,6 +218,7 @@ docker run --rm --network none --read-only --tmpfs /tmp \
     node --check scripts/patch-dsh-web-runtime-compat.mjs
     node --check scripts/patch-dsh-session-title-reasoning.mjs
     node --check scripts/patch-dsh-busy-enter-steer.mjs
+    node --check scripts/patch-dsh-voice-background.mjs
     node --check scripts/patch-dsh-token-session-format.mjs
     node --check scripts/patch-dsh-ego-browser.mjs
     node --check scripts/patch-dsh-markdown-money-math.mjs
@@ -294,6 +295,8 @@ if [ "$build" -eq 1 ]; then
     /opt/dsh-build/patch-dsh-session-title-reasoning.mjs --check
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-busy-enter-steer.mjs --check
+  docker run --rm --network none --read-only --entrypoint node "$harness_image" \
+    /opt/dsh-build/patch-dsh-voice-background.mjs --check
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \
     /opt/dsh-build/patch-dsh-web-runtime-compat.mjs --check
   docker run --rm --network none --read-only --entrypoint node "$harness_image" \

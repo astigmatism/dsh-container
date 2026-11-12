@@ -18,7 +18,7 @@ Everything below is the state at the Harness `0.2.2-rc.1` pin.
 | `@deepseek-ai/dsh-base` | `0.2.2-rc.1` (upstream core) | Runtime base every profile needs | — |
 | `@deepseek-ai/dsh-web-app` | `0.2.2-rc.1` (upstream core) | Browser/HTTPS web surface behind the gateway | `patch-dsh-web-runtime-compat.mjs` re-provides the `webRuntime` cordis service upstream dropped; `patch-dsh-web-auth.mjs` keeps the launch-token/cookie boundary |
 | `@deepseek-ai/dsh-web-frontend` | `0.2.2-rc.1` (upstream core; the served bundle, not a profile bundle) | The browser bundle the transcript is rendered in, markdown and TeX included | `patch-dsh-markdown-money-math.mjs` keeps two dollar amounts from becoming one equation; `verify.sh` proves the chunk `index.html` loads carries it |
-| `@deepseek-ai/dsh-experimental-voice-input-bundle` | `0.2.2-rc.1` (upstream experimental) | **Dictation UI.** Composer microphone with a live waveform, capture/transcription/retry rows, provider and language selection | required deployment invariant; verified by rendering the composer with a fake microphone device (`scripts/verify-dictation-client.mjs`) |
+| `@deepseek-ai/dsh-experimental-voice-input-bundle` | `0.2.2-rc.1` (upstream experimental) | **Dictation UI.** Composer microphone with a live waveform, capture/transcription/retry rows, provider and language selection | `patch-dsh-voice-background.mjs` keeps a recording alive when the page loses focus and re-sends a failed take; required deployment invariant, verified by rendering the composer with a fake microphone device (`scripts/verify-dictation-client.mjs`) |
 | `dsh-speech-whisper` | local, `plugin/dsh-speech-whisper` | Registers the private faster-whisper host as the default recognizer for the bundle above | no patch; configuration is the Compose `STT_*` environment, proved by `tests/dsh-speech-whisper.test.mjs` |
 | `dsh-plugin-task-notification` | `0.2.1` @ commit `f10cd6869b7a50e55780627a6d55bbb310fd59b4` | Task-finished notification reaches the operator across the tunnel | commit-pinned, unpatched |
 | `dsh-context` | `0.82.2` | Context usage/insight panel used to keep long dictation sessions inside the router budget | preset policy patch keeps its compaction rows honest |
@@ -73,6 +73,34 @@ the bundle carries the capture row with its live waveform, a browser
 microphone path that ships the recording to the Host over the authenticated
 carrier, and a working provider roster. `dsh-local-speech-input` is retired
 against it, not against that older claim.
+
+## Dictation outlives the window: `patch-dsh-voice-background.mjs`
+
+The bundle records through `MediaRecorder` bound to the raw microphone stream,
+which Chromium keeps feeding while the tab is hidden or the window minimized, and
+then threw that recording away the moment the page lost focus: a `blur` listener
+cancelled any live take, and a `visibilitychange` listener cancelled anything not
+already transcribing. Clicking away to read a reference — the ordinary way to
+dictate while working — discarded every chunk captured up to that click, with no
+transcript and no error. The patch removes that self-inflicted cancellation: a
+take ends on Escape, Stop, a Session switch or the page unloading, and unloading
+warns instead of discarding silently. It also recognizes a recording through a
+helper that re-sends the same take twice (2 s, 5 s) before surfacing a failure,
+because a cold recognizer or one dropped frame of the speech Remote used to cost
+the whole paragraph, with "Record again" as the only answer.
+
+Deliberately unchanged: the settings device preview still releases its *preview*
+microphone while the tab is hidden — a different capture with nothing at stake —
+and the 300 s ceiling the Host advertises still truncates a recording that runs
+long. What no client patch can survive is the browser killing the page outright,
+which is why the ceiling stays modest and the microphone stays visible in the tab.
+
+Proven at three levels: `tests/dsh-voice-background-patch.test.mjs` against a
+verbatim excerpt of the pinned bundle (including the retry helper's abort and
+backoff behaviour), image qualification (`scripts/verify-dictation-roundtrip.mjs`
+against a fixture that answers 503 once, then succeeds, and compares upload
+sizes), and the deployment verifier, which backgrounds the page mid-recording and
+refuses a take that does not survive.
 
 ## Third-party sources, in one place
 

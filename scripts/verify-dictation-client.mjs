@@ -10,9 +10,10 @@ import { launchVerificationBrowser, verificationSessionRow } from './verificatio
  * composer's activity slot, so this checks what the user depends on rather than
  * one implementation detail: exactly one microphone control (never the retired
  * DOM-patched one and never two), a capture row whose waveform measures the live
- * microphone signal, and a transcript that reaches the draft or fails visibly.
- * Chromium's fake audio device stands in for a real microphone, so the waveform
- * assertion measures real analyser output instead of a static picture.
+ * microphone signal, a take that survives clicking away from the browser, and a
+ * transcript that reaches the draft or fails visibly. Chromium's fake audio
+ * device stands in for a real microphone, so the waveform assertion measures
+ * real analyser output instead of a static picture.
  */
 
 const tokenFile = process.env.DSH_WEB_LAUNCH_TOKEN_FILE || '/run/dsh-backend-auth/launch-token';
@@ -198,6 +199,37 @@ try {
     if (!seen.waveform) throw new Error('the capture row has no waveform while recording');
     if (seen.label !== LABEL.recording) throw new Error(`waveform is unlabeled: ${JSON.stringify(seen)}`);
     if (!seen.moving) throw new Error(`the waveform is not measuring the microphone: ${JSON.stringify(seen)}`);
+
+    // Now dictate the way this feature is used: click away to another window and
+    // keep talking. Upstream cancelled a live take on window blur and on a hidden
+    // tab, discarding every chunk captured up to that click, so this is the
+    // behaviour scripts/patch-dsh-voice-background.mjs exists to keep. The take
+    // has to still be recording when the page comes back.
+    const otherWindow = await context.newPage();
+    await otherWindow.goto('about:blank');
+    await otherWindow.bringToFront();
+    const forced = await page.evaluate(() => {
+      // A backgrounded page should already report itself hidden; emulate it when
+      // this Chromium does not, so the two events carry the state their retired
+      // listeners tested.
+      const emulate = !document.hidden;
+      if (emulate) Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      window.dispatchEvent(new Event('blur'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      return emulate;
+    });
+    await sleep(2000);
+    const survived = await page.evaluate(() => ({
+      recording: document.querySelector('[data-voice-activity="recording"]') !== null,
+      hidden: document.hidden,
+    }));
+    if (!survived.recording) {
+      throw new Error(`the recording did not survive ${survived.hidden ? 'a hidden tab' : 'a lost window focus'}`
+        + ` (emulated hidden tab: ${forced}); a click away must not discard dictation`);
+    }
+    await page.bringToFront();
+    await page.evaluate(() => { delete document.hidden; });
+    await otherWindow.close();
 
     await page.click(`[data-voice-activity="recording"] button[aria-label="${LABEL.stop}"]`);
     // A transcript that reached the draft, silence reported honestly, or a

@@ -97,6 +97,15 @@ still hard-fails on a version mismatch or a mixed-generation runtime tree.
   optional. What survives of the contract above is what the rewritten verifier
   asserts: exactly one microphone control in the composer, and a waveform that
   measurably moves while recording.
+  Added 2026-11-12: the bundle's client cancels a live recording on `window blur`
+  and on a hidden `document`, so dictation ended — taking the audio with it — the
+  moment the browser lost focus, and one recognizer failure threw the take away.
+  `patch-dsh-voice-background.mjs` (marker `dsh-voice-background-recording-v1`)
+  re-anchors those shapes on the `dsh-experimental-client-ui-voice-input` copy in
+  the *runtime* tree, which is the copy the browser loads, and re-sends a failed
+  take before reporting it. An upgrade that moves `disposeRecording`, the
+  `[sessionId]` effect, or the `speech/transcribe` call has to re-verify the
+  anchors: the script fails the build rather than shipping a silent microphone.
 - **Five patch scripts changed.** Three re-anchored (llm-pi-ai,
   unrestricted-policy, progress-status), one stopped extending an import Better
   Sidebar 0.30.1 already completes (sidebar workspace), and one became a

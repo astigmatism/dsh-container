@@ -12,6 +12,11 @@
  *
  * State is read and steered over HTTP because the process that needs it (the
  * browser verifier) is a different one from the process that answers recognition.
+ * `fail` makes the recognizer unavailable forever; `failOnce` makes exactly the
+ * next N attempts unavailable, which is how a verifier proves a client re-sends
+ * the same recording instead of asking the user to dictate it again. `sizes`
+ * reports the byte length of every upload, so a re-sent take is distinguishable
+ * from a new one.
  */
 import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -35,12 +40,25 @@ const state = {
   received: 0,
   rejected: 0,
   fail: false,
+  // Number of upcoming recognition attempts to reject before answering again:
+  // the shape of a cold recognizer or a one-off network blip, which the client
+  // is expected to survive by re-sending the same recording.
+  failOnce: 0,
   lastBytes: 0,
   lastModel: '',
   lastLanguage: '',
   lastAuthorized: false,
   lastError: '',
+  // Byte length of every upload, so a verifier can tell a re-sent take from a
+  // freshly recorded one.
+  sizes: [],
 };
+// Counters only: which attempts the verifier wants rejected is its own
+// instruction, so a reset never clears it.
+const clear = () => Object.assign(state, {
+  received: 0, rejected: 0, lastBytes: 0, lastModel: '', lastLanguage: '',
+  lastAuthorized: false, lastError: '', sizes: [],
+});
 const persist = async () => {
   if (stateDir === '') return;
   await writeFile(path.join(stateDir, 'state.json'), JSON.stringify(state), { mode: 0o600 });
@@ -62,7 +80,8 @@ const server = createServer(async (request, response) => {
       });
       const wanted = JSON.parse(body || '{}');
       if (typeof wanted.fail === 'boolean') state.fail = wanted.fail;
-      if (wanted.reset === true) Object.assign(state, { received: 0, rejected: 0, lastBytes: 0, lastError: '' });
+      if (Number.isInteger(wanted.failOnce) && wanted.failOnce >= 0) state.failOnce = wanted.failOnce;
+      if (wanted.reset === true) clear();
       await persist();
       return json(response, 200, state);
     }
@@ -82,9 +101,15 @@ const server = createServer(async (request, response) => {
   if (!authorized) failures.push(`synthetic speech key missing (got ${JSON.stringify(request.headers.authorization ?? null)})`);
   if (!/^multipart\/form-data;/.test(request.headers['content-type'] ?? '')) failures.push('multipart upload expected');
   if (body.length <= 500) failures.push(`real microphone audio expected, received ${body.length} bytes`);
-  if (state.fail) failures.push('unavailable');
+  if (state.fail || state.failOnce > 0) {
+    // A recognizer that answers again on the next attempt: only an unchanged
+    // recording proves the client re-sent the take instead of asking for a new one.
+    state.failOnce = Math.max(0, state.failOnce - 1);
+    failures.push('unavailable');
+  }
   state.lastBytes = body.length;
   state.lastAuthorized = authorized;
+  state.sizes.push(body.length);
   // The provider sends `model` and omits `language` for automatic detection;
   // a real server rejects anything else, so a wrong shape must fail here too.
   state.lastModel = /name="model"\r\n\r\n([^\r]*)/.exec(text)?.[1] ?? '';
@@ -94,7 +119,10 @@ const server = createServer(async (request, response) => {
     state.rejected += 1;
     state.lastError = failures.join('; ');
     await persist();
-    return json(response, state.fail ? 503 : 400, { error: { message: `Synthetic STT unavailable: ${state.lastError}` } });
+    // A wrong upload is the client's bug (400); an unavailable recognizer is the
+    // service's, which is the failure a re-send can legitimately fix.
+    const contract = failures.some(failure => failure !== 'unavailable');
+    return json(response, contract ? 400 : 503, { error: { message: `Synthetic STT unavailable: ${state.lastError}` } });
   }
 
   state.received += 1;

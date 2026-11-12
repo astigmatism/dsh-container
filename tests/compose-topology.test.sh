@@ -63,6 +63,25 @@ depends_on = default["services"]["gateway"]["depends_on"]
 if depends_on.get("harness", {}).get("condition") != "service_healthy":
     raise SystemExit("gateway can start before the harness backend is ready")
 
+# The gateway answers on the published ports from inside the Harness network
+# namespace, so recreating one service orphans the other and every published
+# port is refused while both healthchecks stay green. README: "Recreate the whole
+# project, never one service." Any change to that arrangement must update it.
+gateway = default["services"]["gateway"]
+if gateway.get("network_mode") != "service:harness":
+    raise SystemExit(f"gateway no longer shares the Harness namespace: {gateway.get('network_mode')!r}")
+if gateway.get("ports"):
+    raise SystemExit("gateway publishes ports of its own, so a Harness-only recreate no longer strands it")
+if not harness.get("ports"):
+    raise SystemExit("harness publishes no ports, so nothing reaches the gateway any more")
+for overlay in (remote, external, managed):
+    overlay_gateway = overlay["services"]["gateway"]
+    if overlay_gateway.get("network_mode") != "service:harness" or overlay_gateway.get("ports"):
+        raise SystemExit("an overlay gives the gateway its own network identity")
+readme = (project / "README.md").read_text(encoding="utf-8")
+if "Recreate the whole project, never one service." not in readme:
+    raise SystemExit("README no longer states that this stack must be recreated as a whole")
+
 workspace = next(
     volume for volume in windows["services"]["harness"]["volumes"]
     if volume.get("target") == "/host"

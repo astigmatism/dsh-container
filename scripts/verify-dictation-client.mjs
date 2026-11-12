@@ -79,12 +79,12 @@ try {
   });
 
   const base = `http://127.0.0.1:${port}`;
-  const response = await page.goto(`${base}/?token=${token}`, {
-    waitUntil: 'domcontentloaded',
-    timeout: 30000,
-  });
-  if (!response?.ok()) throw new Error(`Harness browser returned HTTP ${response?.status()}`);
-  await page.waitForFunction(() => typeof window.__ModuleLoader__ === 'object', null, { timeout: 20000 });
+  // Collect the Session cookie through a plain request instead of loading the
+  // app first: a browser load followed by a reload aborts the client's own
+  // in-flight RPCs, and an aborted fetch is reported as a console error, which
+  // this verifier treats as a failure.
+  const handshake = await context.request.get(`${base}/?token=${token}`);
+  if (!handshake.ok()) throw new Error(`Harness login returned HTTP ${handshake.status()}`);
 
   // The microphone lives in the composer's activity slot, which the app renders
   // only inside an open Session, so open one through the same RPC surface the
@@ -105,7 +105,9 @@ try {
   await rpc('session/cancel', { sessionId });
   await rpc('session/rename', { sessionId, title });
 
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  const response = await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  if (!response?.ok()) throw new Error(`Harness browser returned HTTP ${response?.status()}`);
+  await page.waitForFunction(() => typeof window.__ModuleLoader__ === 'object', null, { timeout: 20000 });
   const sessionRow = verificationSessionRow(page, title);
   const navigationDeadline = Date.now() + 30000;
   while (true) {
@@ -213,11 +215,14 @@ try {
         if (text !== previous && text.trim() !== '') return 'draft';
         const row = document.querySelector('[data-voice-activity]');
         if (row === null) return 'closed';
+        // Checked before the retry affordance on purpose: an empty result offers
+        // "Record again" too, and "nothing intelligible was captured" is a
+        // different outcome from "the recognizer failed".
+        if (row.textContent.includes('No speech recognized')) return 'empty';
         const actions = [...row.querySelectorAll('button')]
           .map(button => (button.getAttribute('aria-label') ?? button.textContent ?? '').trim());
         if (actions.includes(retry)) return 'retry';
         if (actions.includes(insert)) return 'insert';
-        if (row.textContent.includes('No speech recognized')) return 'empty';
         return 'timeout';
       }, { previous: baseline, retry: LABEL.retry, insert: 'Insert text' });
     }
@@ -225,12 +230,22 @@ try {
       throw new Error('dictation never settled: still transcribing after 60 s, although the waveform was live');
     }
 
-    const phase = await page.evaluate(() => document.querySelector('[data-voice-activity]')?.getAttribute('data-voice-activity') ?? null);
-    if (phase === 'recording' || phase === 'requesting' || phase === 'transcribing') {
-      throw new Error(`the capture row stayed in phase "${phase}" after ${settled}`);
+    const outcome = await page.evaluate(() => {
+      const row = document.querySelector('[data-voice-activity]');
+      return {
+        phase: row?.getAttribute('data-voice-activity') ?? null,
+        message: row === null ? null : row.textContent.replace(/\s+/g, ' ').trim().slice(0, 200),
+      };
+    });
+    if (outcome.phase === 'recording' || outcome.phase === 'requesting' || outcome.phase === 'transcribing') {
+      throw new Error(`the capture row stayed in phase "${outcome.phase}" after ${settled}`);
     }
     if (errors.length > 0) throw new Error(errors.join('\n'));
-    console.log(`Verified the voice input waveform and dictation pipeline (settled: ${settled}).`);
+    // A synthetic microphone says nothing intelligible, so an empty result or a
+    // retry row is a working pipeline; quoting the row is what tells an operator
+    // which one happened and what the recognizer actually said.
+    console.log(`Verified the voice input waveform and dictation pipeline (settled: ${settled}`
+      + `${outcome.message === null ? '' : `; ${outcome.message}`}).`);
   }
 } catch (error) {
   const detail = String(error?.stack ?? error).split(token).join('<redacted>');

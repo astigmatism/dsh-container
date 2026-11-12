@@ -743,6 +743,18 @@ key. The longest accepted recording is the `api-speech-to-text` row in
 `seed/profile/managed/cordis.patch.yml`, kept equal to
 `STT_MAX_RECORD_SECONDS`.
 
+A maintained deployment reads neither file when it updates: adoption renders
+`compose.yaml` and `.env` once into the private operational `compose.json`, and
+that file then carries the Harness environment across every update. Adding one of
+these names for the first time therefore means editing and reviewing the
+operational configuration — see
+[`docs/portable-maintenance.md`](docs/portable-maintenance.md) — and
+`maintenance/main.py update --dry-run` validates the edit before it is used.
+Editing only `.env` moves the gateway's proxy and leaves dictation unconfigured,
+which looks like a broken microphone rather than a missing setting. Where the
+deployment already bind mounts the host home, `STT_API_KEY_FILE` may name the
+credential at its own path instead of mounting the same secret a second time.
+
 The gateway keeps its authenticated `/local-stt/transcriptions` and
 `/local-tts/speech` proxies. Dictation no longer needs them — they remain the
 deployment's proof that the voice host answers, and the TTS proxy defaults to
@@ -956,6 +968,25 @@ docker compose logs -f --tail=200
 docker compose restart
 docker compose down
 ```
+
+Recreate the whole project, never one service. The gateway shares the Harness
+network namespace (`network_mode: service:harness`) and publishes no ports of
+its own, so recreating only `harness` republishes 3081 and 3443 into the
+replacement's new namespace while the untouched gateway keeps answering in the
+orphaned one. Nothing listens on those ports in the new namespace, so every new
+connection is refused outright, and both healthchecks keep reporting the stack
+healthy because each probes `127.0.0.1` inside its own namespace. Use the
+unscoped form, then confirm the pair still shares one namespace:
+
+```sh
+docker compose up -d --force-recreate
+docker inspect --format '{{.Name}} {{.State.Pid}} {{.HostConfig.NetworkMode}}' \
+  deepseek-harness deepseek-harness-gateway
+```
+
+The gateway's mode must name the Harness container ID that is running now. If it
+names another ID, the gateway is serving an orphaned namespace and the published
+ports are dead even though `docker compose ps` looks correct.
 
 For external mode, include its overlay:
 

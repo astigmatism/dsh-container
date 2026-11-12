@@ -88,6 +88,15 @@ still hard-fails on a version mismatch or a mixed-generation runtime tree.
   `[data-composer-input][role="textbox"]` editor, and the trailing action group
   as the row's last child — the exact contract
   `plugin/dsh-local-speech/client.js` mounts on.
+  Superseded 2026-11-11: the bundle vendored in the runtime tree is not the
+  `0.1.7-alpha.1` copy npm still serves — at `0.2.2-rc.1` it carries the capture
+  row with its live waveform, a microphone path that hands the recording to the
+  Host over the authenticated carrier, and a usable provider roster. The profile
+  now enables it, `plugin/dsh-speech-whisper` registers the deployment's Whisper
+  host as the default recognizer, and `dsh-local-speech-input` is retired to
+  optional. What survives of the contract above is what the rewritten verifier
+  asserts: exactly one microphone control in the composer, and a waveform that
+  measurably moves while recording.
 - **Five patch scripts changed.** Three re-anchored (llm-pi-ai,
   unrestricted-policy, progress-status), one stopped extending an import Better
   Sidebar 0.30.1 already completes (sidebar workspace), and one became a

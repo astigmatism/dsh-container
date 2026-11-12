@@ -139,6 +139,7 @@ for expected in \
   'dsh-portal-wallpapers@link:' \
   'dsh-ego-browser@0.8.6' \
   'dsh-session-pin@0.7.21' \
+  'dsh-speech-whisper@link:' \
   'dsh-ui-appearance@0.1.28'
 do
   printf '%s\n' "$inventory" | grep -Fq "$expected" || {

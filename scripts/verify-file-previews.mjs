@@ -94,12 +94,16 @@ try {
   await symlink(`${root}/two/note.txt`, `${root}/one/escape.txt`);
   await context.request.get(`${base}/?token=${encodeURIComponent(secret)}`);
   const inventory = await rpc('pluginInventory/list');
-  for (const name of ['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
+  for (const name of ['dsh-context', 'dsh-favicon-status', 'dsh-speech-whisper',
     'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
     'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar']) {
     assert.ok(inventory.entries.some(row => row.moduleName === name && row.enabled && row.fiberPhase === 'active'),
       `${name} host plugin must mount`);
   }
+  // The replaced microphone stays installed for a one-toggle rollback, and must
+  // not mount beside the official Voice Input bundle.
+  const retired = inventory.entries.find(row => row.moduleName === 'dsh-local-speech-input');
+  assert.ok(retired === undefined || retired.enabled !== true, 'the retired microphone must not mount');
   const token = inventory.entries.find(row => row.moduleName === '@zoytown/dsh-token');
   assert.notEqual(token?.enabled, true);
   assert.notEqual(token?.fiberPhase, 'active');
@@ -135,9 +139,12 @@ try {
   await page.waitForFunction(() => window.__previewTestContext?.get('sidebarRight'));
   await page.waitForFunction(() => {
     const entries = [...window.__previewTestContext.loader.entries()];
-    return ['dsh-better-sidebar', 'dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
-      'dsh-ego-browser', 'dsh-session-pin', 'dsh-ui-appearance']
-      .every(name => entries.some(entry => entry.options.name === name && entry.fiber?.state === 2));
+    const mounted = name => entries.some(entry => entry.options.name === name && entry.fiber?.state === 2);
+    // The voice UI is contributed by an official package whose browser name is
+    // not this deployment's to pin, so it is matched on its namespace.
+    return ['dsh-better-sidebar', 'dsh-context', 'dsh-favicon-status',
+      'dsh-ego-browser', 'dsh-session-pin', 'dsh-ui-appearance'].every(mounted)
+      && entries.some(entry => (entry.options.name ?? '').includes('voice-input') && entry.fiber?.state === 2);
   });
   const tokenMounted = await page.evaluate(() => [...window.__previewTestContext.loader.entries()]
     .some(entry => entry.options.name === '@zoytown/dsh-token' && entry.fiber?.state === 2));

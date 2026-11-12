@@ -80,6 +80,24 @@ if harness["working_dir"] != "/host" or harness["environment"].get("HOME") != "/
     raise SystemExit("Harness does not default its workspace picker to /host")
 if harness["environment"].get("DSH_TOKEN_ENABLED") != "false":
     raise SystemExit("Harness does not fail closed when the unsafe token plugin is not explicitly enabled")
+# Voice input dictates through this process, so it needs the speech service
+# address and its key; the key arrives as a mounted file and is never an env
+# value that could reach a log or the browser.
+if harness["environment"].get("STT_API_KEY_FILE") != "/run/secrets/stt_api_key":
+    raise SystemExit("Harness does not read the dictation key from a mounted secret")
+if not any(secret.get("source") == "stt_api_key" for secret in harness.get("secrets", [])):
+    raise SystemExit("Harness has no stt_api_key secret, so dictation cannot authenticate")
+# One knob, two consumers: the recognizer and the gateway's /local-stt proxy must
+# never point at different speech services or use different timeouts.
+gateway = default["services"]["gateway"]
+for setting in ("STT_BASE_URL", "STT_MODEL", "STT_TIMEOUT_MS", "STT_API_KEY_FILE"):
+    if harness["environment"].get(setting) != gateway["environment"].get(setting):
+        raise SystemExit(
+            f"dictation is configured twice and disagrees on {setting}: "
+            f"harness {harness['environment'].get(setting)!r} vs gateway {gateway['environment'].get(setting)!r}"
+        )
+if not str(harness["environment"].get("STT_BASE_URL", "")).startswith(("http://", "https://")):
+    raise SystemExit("Harness does not take the dictation address from the deployment .env")
 
 session_volume = next(
     volume for volume in harness["volumes"]

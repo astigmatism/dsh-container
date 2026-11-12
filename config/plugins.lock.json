@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-11-09 (Harness 0.2.2-rc.1; dsh-portal-wallpapers added, receiving Service Portal wallpaper sends through dsh-ui-appearance)",
+  "capturedAt": "2026-11-11 (Harness 0.2.2-rc.1; dsh-speech-whisper added and the official voice input bundle enabled, retiring dsh-local-speech-input to optional)",
   "dsh": "0.2.2-rc.1 (dsh-v0.2.2-rc.1; 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db)",
   "profile": "web",
   "plugins": {
@@ -7,11 +7,12 @@
     "dsh-context": "0.82.2",
     "dsh-favicon-status": "0.1.0-rc.8",
     "dsh-follow-up-suggestions": "0.1.0 (local, seed/profile/plugins; adapted from shaoeric/dsh-suggest@ccbc98a)",
-    "dsh-local-speech-input": "0.1.0 (local)",
+    "dsh-local-speech-input": "0.1.0 (local, retired: still installed and selectable for rollback)",
     "dsh-loop-detector": "1.0.0 (local patch)",
     "dsh-plugin-task-notification": "0.2.1 (commit f10cd6869b7a50e55780627a6d55bbb310fd59b4)",
     "dsh-portal-wallpapers": "0.1.0 (local, seed/profile/plugins; Service Portal wallpaper export)",
     "dsh-session-pin": "0.7.21 (session/workspace navigation patch)",
+    "dsh-speech-whisper": "0.1.0 (local)",
     "dsh-ui-appearance": "0.1.28 (settings icon verification; dark-mode dialog fix)",
     "dsh-better-sidebar": "0.26.1",
     "dsh-ego-browser": "0.8.6 (container adapter v1)"

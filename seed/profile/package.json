@@ -11,6 +11,7 @@
     "dsh-follow-up-suggestions": "link:./plugins/dsh-follow-up-suggestions",
     "dsh-local-speech-input": "link:../../../dsh-local-speech",
     "dsh-loop-detector": "1.0.0",
+    "dsh-speech-whisper": "link:../../../dsh-speech-whisper",
     "dsh-plugin-task-notification": "github:Cocowwy/dsh-plugin-task-notification#f10cd6869b7a50e55780627a6d55bbb310fd59b4",
     "dsh-portal-wallpapers": "link:./plugins/dsh-portal-wallpapers",
     "dsh-session-pin": "0.7.21",
@@ -24,7 +25,8 @@
       "bundles": [
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
-        "dsh-local-speech-input",
+        "@deepseek-ai/dsh-experimental-voice-input-bundle",
+        "dsh-speech-whisper",
         "dsh-plugin-task-notification",
         "dsh-context",
         "dsh-session-pin",
@@ -55,7 +57,8 @@
       "@deepseek-ai/dsh-experimental-agent-team-profile",
       "@deepseek-ai/dsh-experimental-voice-input-bundle",
       "@deepseek-ai/dsh-experimental-auto-review",
-      "@deepseek-ai/dsh-experimental-schedule-bundle"
+      "@deepseek-ai/dsh-experimental-schedule-bundle",
+      "dsh-local-speech-input"
     ]
   }
 }

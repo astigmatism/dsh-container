@@ -15,6 +15,15 @@ mkdir -p "$runtime_home"
 # removals, upgrades, lockfile changes, and local plugin updates uniformly.
 "$profile_sync"
 
+# One-time microphone replacement: the preserved operator selection still names
+# the retired DOM-patched speech plugin, and adding the official voice bundle
+# alongside it would put two microphones in the composer. Substitute once, then
+# leave activation to the operator.
+voice_reconciler=${DSH_VOICE_RECONCILER:-/opt/dsh-build/reconcile-voice-bundles.mjs}
+if [ -f "$voice_reconciler" ]; then
+  node "$voice_reconciler" "$runtime_home"
+fi
+
 DSH_CANONICAL_SETTINGS=$canonical_settings \
 DSH_RUNTIME_SETTINGS=$runtime_home/settings.yaml \
 DSH_SETTINGS_UID=$(id -u) \

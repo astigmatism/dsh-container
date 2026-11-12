@@ -1,0 +1,24 @@
+{
+  "name": "dsh-speech-whisper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Registers the home-network OpenAI-compatible Whisper service as a DSH speech provider",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./provider": "./provider.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "provider.js",
+    "cordis.patch.yml",
+    "package.json"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

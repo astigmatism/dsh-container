@@ -232,6 +232,7 @@ async function rpc(method, args = {}) {
 
 try {
   await fs.symlink('/opt/dsh-local-speech', path.join(parent, 'dsh-local-speech'));
+  await fs.symlink('/opt/dsh-speech-whisper', path.join(parent, 'dsh-speech-whisper'));
   await exec('/usr/local/bin/dsh-sync-runtime-profile', { env: { ...process.env, DSH_HOME: runtime } });
   await fs.mkdir(path.dirname(tokenIndexPath), { recursive: true });
   await fs.writeFile(tokenIndexPath, tokenIndex, { mode: 0o600 });

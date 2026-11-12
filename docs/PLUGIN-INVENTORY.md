@@ -18,7 +18,8 @@ Everything below is the state at the Harness `0.2.2-rc.1` pin.
 | `@deepseek-ai/dsh-base` | `0.2.2-rc.1` (upstream core) | Runtime base every profile needs | — |
 | `@deepseek-ai/dsh-web-app` | `0.2.2-rc.1` (upstream core) | Browser/HTTPS web surface behind the gateway | `patch-dsh-web-runtime-compat.mjs` re-provides the `webRuntime` cordis service upstream dropped; `patch-dsh-web-auth.mjs` keeps the launch-token/cookie boundary |
 | `@deepseek-ai/dsh-web-frontend` | `0.2.2-rc.1` (upstream core; the served bundle, not a profile bundle) | The browser bundle the transcript is rendered in, markdown and TeX included | `patch-dsh-markdown-money-math.mjs` keeps two dollar amounts from becoming one equation; `verify.sh` proves the chunk `index.html` loads carries it |
-| `dsh-local-speech-input` | local, `seed/profile/plugins/…` symlinked from `plugin/dsh-local-speech` | **Dictation.** Mic button in the composer → gateway `/local-stt/transcriptions`; spoken replies through `/local-tts/speech` | a required deployment invariant, not an optional extra |
+| `@deepseek-ai/dsh-experimental-voice-input-bundle` | `0.2.2-rc.1` (upstream experimental) | **Dictation UI.** Composer microphone with a live waveform, capture/transcription/retry rows, provider and language selection | required deployment invariant; verified by rendering the composer with a fake microphone device (`scripts/verify-dictation-client.mjs`) |
+| `dsh-speech-whisper` | local, `plugin/dsh-speech-whisper` | Registers the private faster-whisper host as the default recognizer for the bundle above | no patch; configuration is the Compose `STT_*` environment, proved by `tests/dsh-speech-whisper.test.mjs` |
 | `dsh-plugin-task-notification` | `0.2.1` @ commit `f10cd6869b7a50e55780627a6d55bbb310fd59b4` | Task-finished notification reaches the operator across the tunnel | commit-pinned, unpatched |
 | `dsh-context` | `0.82.2` | Context usage/insight panel used to keep long dictation sessions inside the router budget | preset policy patch keeps its compaction rows honest |
 | `dsh-session-pin` | `0.7.21` | Pinning sessions and workspaces in the sidebar list | `patch-dsh-session-pin.mjs` (pinned-version navigation) |
@@ -42,8 +43,9 @@ Everything below is the state at the Harness `0.2.2-rc.1` pin.
 | Plugin | Version | Why it is not enabled |
 | --- | --- | --- |
 | `@zoytown/dsh-token` | `0.1.3` | Policy: full refolds with per-frame synchronous Zstandard decompression caused repeatable multi-gigabyte RSS growth, and `0.1.3` still declares an incompatible `0.1` peer range with an unqualified v4 session reader. Installed so the bundle stays enumerable, kept out of the bundle list; `verify-dsh-token-policy.mjs --effective-config disabled` enforces it, and `patch-dsh-token-session-format.mjs` keeps the session-format shim in place for a future requalification |
+| `dsh-local-speech-input` | local, `plugin/dsh-local-speech` | Retired by the official Voice Input bundle, not broken: it patched a button beside the model selector, gave no feedback while recording, and posted to the gateway. Both controls together mean two microphones, so startup substitutes for it once per data directory (`scripts/reconcile-voice-bundles.mjs`). Installed and selectable for a one-toggle rollback |
 
-## Official optional bundles available and not enabled
+## Official optional bundles
 
 `@deepseek-ai/dsh-experimental-agent-team-profile`,
 `@deepseek-ai/dsh-experimental-voice-input-bundle`,
@@ -52,11 +54,25 @@ Everything below is the state at the Harness `0.2.2-rc.1` pin.
 
 They are cordis patch-bundles that leave the dumped config unchanged, and
 `tests/optional-bundle-composition.test.mjs` proves each selection composes.
-The voice-input bundle is **not** a replacement for dictation: it is stale at
-`0.1.7-alpha.1`, and enabling it alongside
-`dsh-local-speech-input` would put two microphones in the composer.
+The voice-input bundle is the exception: it contributes browser modules rather
+than only wiring, it ships at the exact runtime version so it needs no seed
+dependency, and it is **enabled** — it is the dictation UI (see the bundle table).
+It stays listed here because `dshContainer.optionalBundles` is what lets the
+profile sync keep a bundle an operator selects, and `dsh-local-speech-input`
+hangs off the same list for the same reason after being retired: the
+substitution removes it from the selection at startup, and this is what makes
+re-enabling it one toggle instead of a manual manifest edit. Enabling both at
+once puts two microphones in the composer, which
+`scripts/verify-dictation-client.mjs` rejects.
 `dsh-playwright` was dropped from the profile in an earlier release and is no
 longer installed.
+
+Earlier releases recorded the voice-input bundle as stale at `0.1.7-alpha.1` and
+its recognizers as unusable. That was true of the 0.1.x line: at `0.2.2-rc.1`
+the bundle carries the capture row with its live waveform, a browser
+microphone path that ships the recording to the Host over the authenticated
+carrier, and a working provider roster. `dsh-local-speech-input` is retired
+against it, not against that older claim.
 
 ## Third-party sources, in one place
 

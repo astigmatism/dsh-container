@@ -137,6 +137,7 @@ RUN chmod -R a+rX /opt/dsh-maintenance \
     && python3 -B /opt/dsh-maintenance/main.py self-test
 
 COPY plugin/dsh-local-speech /opt/dsh-local-speech
+COPY plugin/dsh-speech-whisper /opt/dsh-speech-whisper
 COPY entrypoint.sh /usr/local/bin/dsh-entrypoint
 COPY scripts/nvidia-smi-proxy.sh /usr/local/bin/nvidia-smi
 COPY scripts/host-exec.sh /usr/local/bin/host-exec
@@ -148,6 +149,7 @@ COPY scripts/verify-dictation-client.mjs /opt/dsh-build/verify-dictation-client.
 COPY config/settings.yaml /opt/dsh-defaults/settings.yaml
 COPY config/legacy-profile-alpha1.yaml /opt/dsh-defaults/legacy-profile-alpha1.yaml
 COPY scripts/migrate-harness-02-profile.mjs /opt/dsh-build/migrate-harness-02-profile.mjs
+COPY scripts/reconcile-voice-bundles.mjs /opt/dsh-build/reconcile-voice-bundles.mjs
 COPY scripts/migrate-profile-settings.mjs /opt/dsh-build/migrate-profile-settings.mjs
 
 RUN node /opt/dsh-build/verify-local-model-profiles.mjs /opt/dsh-defaults/settings.yaml
@@ -208,12 +210,18 @@ RUN cd /opt/dsh-seed/profiles/web \
     && grep -Fq 'dsh-ego-browser@0.8.6' /opt/dsh-seed/plugin-inventory.txt \
     && grep -Fq 'dsh-ego-container-v1' node_modules/dsh-ego-browser/lib/index.js \
     && grep -Fq 'dsh-session-pin@0.7.21' /opt/dsh-seed/plugin-inventory.txt \
+    && grep -Fq 'dsh-speech-whisper@link:' /opt/dsh-seed/plugin-inventory.txt \
+    && dsh --profile web --dump-config | grep -Fq 'name: dsh-speech-whisper' \
+    && dsh --profile web --dump-config | grep -Fq 'defaultProvider: whisper-lan' \
+    && dsh --profile web --dump-config | grep -Fq '@deepseek-ai/dsh-experimental-client-ui-voice-input' \
+    && dsh --profile web --dump-config | grep -Fq 'maxDurationSeconds: 300' \
     && grep -Fq 'dsh-ui-appearance@0.1.28' /opt/dsh-seed/plugin-inventory.txt \
     && mkdir -p /data \
     && ln -s /opt/dsh-local-speech /data/dsh-local-speech \
+    && ln -s /opt/dsh-speech-whisper /data/dsh-speech-whisper \
     && chmod 0755 /usr/local/bin/dsh-entrypoint /usr/local/bin/nvidia-smi /usr/local/bin/host-exec /usr/local/bin/host-enter /usr/local/bin/dsh-sync-runtime-profile /usr/local/bin/dsh-initialize-persisted-settings /usr/local/bin/dsh-verify-plugin-boot \
     && chown -R node:node /opt/dsh-seed /opt/dsh-defaults /opt/dsh-pnpm-store \
-    && chmod -R a+rX /opt/dsh-seed /opt/dsh-defaults /opt/dsh-local-speech /opt/dsh-ego-adapter \
+    && chmod -R a+rX /opt/dsh-seed /opt/dsh-defaults /opt/dsh-local-speech /opt/dsh-speech-whisper /opt/dsh-ego-adapter \
     && chmod -R a+rwX /opt/dsh-pnpm-store \
     && apt-get purge -y --auto-remove cmake make g++ \
     && rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp
@@ -228,6 +236,7 @@ COPY scripts/verify-native-terminal-client.mjs /opt/dsh-build/verify-native-term
 COPY scripts/qualification-ego-host.mjs /opt/dsh-build/qualification-ego-host.mjs
 COPY gateway /opt/dsh-qualification/gateway
 COPY scripts/verify-dictation-roundtrip.mjs /opt/dsh-build/verify-dictation-roundtrip.mjs
+COPY scripts/qualification-speech-service.mjs /opt/dsh-build/qualification-speech-service.mjs
 COPY scripts/verify-ego-idle.mjs /opt/dsh-build/verify-ego-idle.mjs
 COPY scripts/verify-ego-persistence.mjs /opt/dsh-build/verify-ego-persistence.mjs
 COPY scripts/verify-ego-client.mjs /opt/dsh-build/verify-ego-client.mjs

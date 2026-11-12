@@ -63,6 +63,11 @@ case "${1:-}" in
     # Service Portal wallpaper hand-off (plugin dsh-portal-wallpapers): host
     # routes against a faked portal, browser half against a faked browser.
     node --test "$project_dir/tests/portal-wallpapers.test.mjs"
+    # Voice input: the Whisper recognizer's transport against a faked speech
+    # service, and the one-time bundle substitution that retires the old
+    # microphone without ever fighting an operator's later choice.
+    node --test "$project_dir/tests/dsh-speech-whisper.test.mjs" \
+      "$project_dir/tests/voice-bundle-activation.test.mjs"
     exit 0
     ;;
   -h|--help)
@@ -159,6 +164,11 @@ docker run --rm --network none --read-only --tmpfs /tmp \
   "$node_image" -eu -c '
     node --check gateway/server.mjs
     node --check plugin/dsh-local-speech/client.js
+    node --check plugin/dsh-speech-whisper/index.js
+    node --check plugin/dsh-speech-whisper/provider.js
+    node --check scripts/reconcile-voice-bundles.mjs
+    node --check scripts/verify-dictation-roundtrip.mjs
+    node --check scripts/qualification-speech-service.mjs
     node --check seed/profile/plugins/dsh-follow-up-suggestions/client.js
     node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/index.js
     node --input-type=module --check < seed/profile/plugins/dsh-follow-up-suggestions/suggestions.js
@@ -324,6 +334,7 @@ if [ "$build" -eq 1 ]; then
     'dsh-portal-wallpapers@link:' \
     'dsh-ego-browser@0.8.6' \
     'dsh-session-pin@0.7.21' \
+    'dsh-speech-whisper@link:' \
     'dsh-ui-appearance@0.1.28'
   do
     printf '%s\n' "$inventory" | grep -Fq "$expected" || {

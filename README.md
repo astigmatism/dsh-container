@@ -720,10 +720,33 @@ and trusting the local CA on the browser device; ordinary Harness use does not.
 ## Speech-to-text and text-to-speech
 
 The captured `.env.example` points at the private voice host on `192.168.1.22`.
-The speech button sends recordings only to the authenticated gateway at
-`/local-stt/transcriptions`; the gateway adds the STT key and forwards them to
-faster-whisper. The corresponding TTS proxy is `/local-tts/speech`, defaulting
-to model `tts-1` and Kokoro voice `af_heart` when a client omits them.
+
+Dictation is the official Harness **Voice Input** plugin
+(`@deepseek-ai/dsh-experimental-voice-input-bundle`), enabled in the profile
+bundle list. Its microphone sits between the model selector and Send; clicking
+it opens a capture row whose waveform is redrawn 20 times a second from the
+measured microphone level, and stopping inserts the transcript at the caret so
+it can be edited before sending. Recordings travel to Harness over the same
+authenticated carrier every other browser call uses — as 16 kHz mono PCM16 WAV,
+never as a browser-side third-party request. Harness hands the recording to the
+`whisper-lan` recognizer (`plugin/dsh-speech-whisper`), which forwards it to
+faster-whisper with the captured model. The local `sensevoice-local` recognizer
+is also in the roster; selecting it needs a one-time ~240 MB model download
+through the plugin's own details page and never leaves this machine.
+
+Deployment values come from the environment (`STT_BASE_URL`, `STT_MODEL`,
+`STT_TIMEOUT_MS`) and are read by this process, which is why
+`secrets/stt_api_key` is mounted here as well as into the gateway. An empty URL
+or key leaves the recognizer registered but not ready: the microphone then opens
+the plugin's own guidance instead of recording, and the browser never sees the
+key. The longest accepted recording is the `api-speech-to-text` row in
+`seed/profile/managed/cordis.patch.yml`, kept equal to
+`STT_MAX_RECORD_SECONDS`.
+
+The gateway keeps its authenticated `/local-stt/transcriptions` and
+`/local-tts/speech` proxies. Dictation no longer needs them — they remain the
+deployment's proof that the voice host answers, and the TTS proxy defaults to
+model `tts-1` and Kokoro voice `af_heart` when a client omits them.
 
 The home-network STT token is intentionally tracked so a fresh Harness
 deployment has working dictation. The distinct TTS token remains ignored:
@@ -734,9 +757,9 @@ deployment has working dictation. The distinct TTS token remains ignored:
 An empty URL or key disables only that speech service. Deployment verification
 checks the authenticated disabled response when the STT URL is empty; a
 configured URL still requires its key and a healthy backend. The Docker build context
-excludes `secrets/`, so neither key is built into an image, returned in the
-`/local-stt/config` or `/local-tts/config` responses, sent to the browser, or
-mounted into Harness. Compose mounts the required key only into the gateway.
+excludes `secrets/`, so neither key is built into an image or returned in the
+`/local-stt/config` or `/local-tts/config` responses. Compose mounts the STT
+key into Harness and the gateway; the TTS key only into the gateway.
 
 To replace the tracked STT token from an OpenWebUI SQLite database without
 printing it:
@@ -759,12 +782,20 @@ Run a live TTS-to-STT round trip against the configured voice services:
 ```
 
 Dictation is a required deployment invariant. Image qualification renders the
-current Harness composer and fails unless the local microphone control mounts.
-Every `deploy.sh` and `update-and-restart.sh` run also executes the same check
-against the deployed browser client, then requires the authenticated
-`/local-stt/config` route, expected STT model, non-empty private key, and live
-STT health. An update cannot be reported successful if any part of that
-contract is missing.
+current Harness composer and fails unless exactly one microphone control mounts
+and the retired one is gone. Every `deploy.sh` and `update-and-restart.sh` run
+also executes the same check against the deployed browser client with a fake
+microphone device: it starts a recording, requires the waveform to be redrawing
+from the live signal, requires the recording to settle into a transcript or an
+honest failure row, and then requires the authenticated `/local-stt/config`
+route, expected STT model, non-empty private key, and live STT health. An update
+cannot be reported successful if any part of that contract is missing.
+
+The replaced microphone (`dsh-local-speech-input`, a DOM-patched button that
+recorded to the gateway with no visual feedback) stays installed and selectable
+in the plugin manager for one-toggle rollback. Startup performs the substitution
+once per data directory, and never again: after that the operator owns which
+voice bundles are enabled.
 
 ## Moving existing runtime state
 

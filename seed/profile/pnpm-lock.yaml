@@ -57,6 +57,9 @@ importers:
       dsh-session-pin:
         specifier: 0.7.21
         version: 0.7.21(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/schemastery@3.19.0)
+      dsh-speech-whisper:
+        specifier: link:../../../dsh-speech-whisper
+        version: link:../../../dsh-speech-whisper
       dsh-ui-appearance:
         specifier: 0.1.28
         version: 0.1.28(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/schemastery@3.19.0)

@@ -60,6 +60,17 @@ services:
       # (docs/llm-router-contract.md §2). Defaults to the host's TLS address,
       # then the container hostname, so router history can tell Harnesses apart.
       HARNESS_CLIENT_INSTANCE: "${HARNESS_CLIENT_INSTANCE:-${HARNESS_TLS_IP:-}}"
+      # Dictation backend for the Voice Input plugin. The composer's microphone
+      # speaks to Harness over its authenticated carrier; this process forwards
+      # the recording to the OpenAI-compatible Whisper service, so the same
+      # settings the gateway proxy publishes live here too (only the key file is
+      # read here, and it is never passed to the browser). Empty URL or key
+      # leaves the provider registered but not ready, and the plugin details say
+      # so; the local SenseVoice recognizer stays selectable.
+      STT_BASE_URL: "${STT_BASE_URL:-}"
+      STT_MODEL: "${STT_MODEL:-large-v3-turbo}"
+      STT_TIMEOUT_MS: "${STT_TIMEOUT_MS:-120000}"
+      STT_API_KEY_FILE: /run/secrets/stt_api_key
     volumes:
       - ./data/dsh:/data/dsh
       - ./data/backend-auth:/run/dsh-backend-auth
@@ -72,6 +83,10 @@ services:
       - /etc/passwd:/etc/passwd:ro
       - /etc/group:/etc/group:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    secrets:
+      # Mounted read-only by Docker from ./secrets/stt_api_key; the speech
+      # provider reads it at activation. Empty file means "not configured".
+      - stt_api_key
     ports:
       - "${HARNESS_BIND_ADDRESS:-127.0.0.1}:${HARNESS_HTTPS_PORT:-3443}:3443"
       - "${HARNESS_BIND_ADDRESS:-127.0.0.1}:${HARNESS_CA_PORT:-3081}:3081"

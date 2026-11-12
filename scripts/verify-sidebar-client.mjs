@@ -30,7 +30,7 @@ if (process.argv.includes('--live')) {
     assert.equal(response.status(), 200, 'live plugin inventory');
     const { result } = await response.json();
     assert.equal(result.ok, true, result.error?.message);
-    const maintained = new Set(['dsh-context', 'dsh-favicon-status', 'dsh-local-speech-input',
+    const maintained = new Set(['dsh-context', 'dsh-favicon-status', 'dsh-speech-whisper',
       'dsh-loop-detector', 'dsh-ego-browser', 'dsh-plugin-task-notification',
       'dsh-session-pin', 'dsh-ui-appearance', 'dsh-better-sidebar', 'dsh-follow-up-suggestions',
       'dsh-portal-wallpapers']);
@@ -51,7 +51,11 @@ if (process.argv.includes('--live')) {
     assert.ok(loaded?.ok(), 'authenticated browser document');
     await page.waitForFunction(() => typeof window.__ModuleLoader__ === 'object');
     await page.locator('[data-composer-input]').first().waitFor();
-    await page.locator('[data-local-speech-button]').first().waitFor();
+    // Voice input: the retired DOM-patched microphone must be gone everywhere.
+    // The replacement lives in the composer's activity slot, which the app only
+    // renders inside an open Session, so its positive assertions run where a
+    // Session exists (verify-dictation-roundtrip.mjs, verify-dictation-client.mjs).
+    assert.equal(await page.locator('[data-local-speech-button]').count(), 0, 'the retired microphone is still mounted');
     await page.locator('style[data-plugin="dsh-ui-appearance"]').waitFor({ state: 'attached' });
     // Follow-up suggestions: browser half installed, Host preference route answering.
     await page.locator('#dsh-follow-up-suggestions-style').waitFor({ state: 'attached' });

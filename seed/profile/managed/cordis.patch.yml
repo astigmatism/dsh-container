@@ -159,3 +159,28 @@
       name: 'dsh-portal-wallpapers'
       config:
         portalBaseURL: ''
+
+# Voice input: the official bundle (@deepseek-ai/dsh-experimental-voice-input-bundle)
+# contributes the speech service, the local SenseVoice recognizer, the
+# authenticated speech Remote, and the composer microphone with its live
+# waveform. This deployment dictates through the home voice host, so the
+# profile selects the Whisper recognizer this image ships
+# (plugin/dsh-speech-whisper) as the default. SenseVoice stays in the roster and
+# only needs its ~240 MB download if it is selected explicitly. A patch replaces
+# the whole config, so both upstream fields are restated: `language: auto` is
+# the upstream default and the picker's "Auto-detect" entry.
+- id: speech-to-text
+  config:
+    defaultProvider: whisper-lan
+    language: auto
+
+# The recording ceiling the browser advertises and the Host enforces, from the
+# speech Remote row. Upstream ships 4 MiB / 120 s; dictation through the gateway
+# proxy allowed STT_MAX_RECORD_SECONDS (300), and canonical 16 kHz mono PCM16
+# costs 32000 bytes a second, so 300 s is 9600044 bytes including the header.
+# SenseVoice keeps its own 4 MiB intake ceiling, so selecting it shortens a
+# single recording unless that row's maxAudioBytes is raised as well.
+- id: api-speech-to-text
+  config:
+    maxAudioBytes: 9600044
+    maxDurationSeconds: 300

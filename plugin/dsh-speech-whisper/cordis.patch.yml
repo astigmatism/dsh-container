@@ -1,0 +1,5 @@
+# Adds the home-network Whisper recognizer to the speech service roster. The
+# profile selects it as the default recognizer; see seed/profile/managed.
+- insert:
+    - id: speech-whisper
+      name: dsh-speech-whisper

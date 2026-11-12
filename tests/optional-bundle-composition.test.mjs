@@ -37,6 +37,9 @@ test('official optional bundles compose when selected and stay absent otherwise'
     assert.ok(!base.includes('@zoytown/dsh-token'), 'incompatible Token stays inactive by default');
 
     for (const bundle of optional) {
+      // A bundle this profile already enables is not a selection to trial: it is
+      // in every dump above, and appending it again would mount it twice.
+      if (pkg.dsh.profile.bundles.includes(bundle)) continue;
       const config = dump([bundle]);
       assert.ok(!config.includes('@zoytown/dsh-token'), `${bundle} must not activate the incompatible Token`);
       try {
